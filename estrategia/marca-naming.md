@@ -225,3 +225,27 @@
 2. Si quieres algo más corto/global: **`Kauka`** (local estilizado) o un acuñado del Camino B (`Qorve`/`Zurvo`).
 3. **Deja de perseguir palabras latinas eufónicas** — el mercado de IA ya las agotó.
 4. **Método de decisión (sin excepción):** elige **2–3 finalistas** → Kiro corre dominio (`.ai`/`.com`/`.co`) + marca (SIC) + handles de redes → decides con datos. Cuando me des tus finalistas, hago las 3 verificaciones de una.
+
+
+---
+
+# Ronda 5 — Reset (4-jul-2026)
+
+> El fundador **rechazó todos** los candidatos de las Rondas 1–4. En vez de seguir disparando nombres al azar (y quemando opciones), reseteamos y **definimos primero la dirección**. Pintar más nombres sin criterio es justo lo que hay que evitar.
+
+## Preguntas para converger (el fundador responde y Kiro genera con foco)
+
+1. **Idioma/sonido:** ¿español, inglés, o inventado neutro?
+2. **Estilo:** ¿corto y abstracto (Sonos, Klarna) · con significado (Cauce, Norte) · o local (Cauca/Popayán)?
+3. **¿Incluye a los dos fundadores** en el concepto, o es neutro de marca?
+4. **Tono:** ¿serio/corporativo · cálido/humano · técnico/futurista?
+5. **Terminación:** ¿te molesta o te gusta el sufijo `-ai`/`-ia`? ¿lo quieres evitar?
+6. **Prueba del "grito":** di 3 nombres que te gusten de CUALQUIER industria (aunque estén tomados). Con eso deduzco tu gusto real.
+
+## Aprendizaje acumulado (no repetir errores)
+
+- ❌ Palabras eufónicas latinas en IA → **saturadas** (verificado 4 veces).
+- ✅ Mayor probabilidad de estar libre: **local (Cauca) + acuñado raro + compuesto único**.
+- 🔒 Regla firme: **2–3 finalistas → verificación de dominio + SIC + redes → decisión.** Sin las 3, no hay nombre.
+
+> ⏳ En espera de las respuestas del fundador para una Ronda 6 dirigida.

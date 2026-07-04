@@ -1,67 +1,77 @@
-# Costo por Lead Calificado — Modelo y Plantilla
+# Costo por Lead y Modelo de Planes — el Prospector
 
-> Objetivo: responder con rigor a **"¿cuánto me cuesta cada lead calificado del Prospector?"** para poder cotizar a Catalina (y a cualquier cliente) sin trabajar a pérdida.
+> ✅ **Datos REALES aportados por el fundador (jul-2026)**, verificados sobre facturación de las plataformas. Reemplaza la estimación modelada anterior. Referencia: **TRM $4.000 COP/USD**.
 >
-> 🔴 **Estado (4-jul-2026): estimación modelada, NO medición real.** El fundador ha corrido pruebas en **capa gratuita** (costo real = $0 hasta ahora). Este documento proyecta lo que costaría **en plan pago** con el consumo de un job típico. Para cerrar el número real, falta llenar la plantilla de §4 con los datos exactos de una corrida.
+> ⚠️ Nota crítica de estructura de negocio: este modelo asume que **quien paga el stack se queda el margen**. Hoy eso no está definido (ver [`../../estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)). Si operas bajo comisión del 15%, **estos márgenes NO son tuyos**.
 
-## 1. La conclusión primero (lo que importa para el ROI)
+## 1. Stack pagado (solo 3 plataformas)
 
-El costo por lead del Prospector **NO está dominado por las llamadas a las APIs por empresa** (eso es de centavos), sino por el **piso fijo de suscripciones mensuales**. Por eso:
+| Plataforma | Plan | Costo/mes (USD) | COP (~) | Para qué |
+|------------|------|-----------------|---------|----------|
+| Tavily | Project | $30 | ~$120.000 | Descubrir empresas, noticias/triggers, buscar contactos |
+| Apify | Starter | $29 | ~$116.000 | Scraping LinkedIn (solo modo profundo/empresas) |
+| Hunter | Starter | $49 | ~$196.000 | Correos verificados |
+| **Stack completo (empresas)** | — | **$108** | **~$432.000** | Los 3 servicios |
+| Stack solo personas (sin Apify) | — | $79 | ~$316.000 | Tavily + Hunter |
 
-> **El costo por lead depende sobre todo del VOLUMEN, no de la tecnología.** A bajo volumen el costo por lead es alto (el piso fijo se reparte entre pocos leads); a volumen alto, cae rápido hacia el costo variable (casi cero).
+> Vercel, Supabase, Modal y Groq operan en **capa gratuita** → no suman costo.
 
-Esto tiene una implicación comercial directa: **cotizar por lead solo tiene sentido con volumen comprometido.** Para un piloto pequeño con Catalina, conviene cotizar **precio cerrado del piloto**, no "precio por lead".
+## 2. Límites (el cuello de botella lo pone Hunter)
 
-## 2. Precios unitarios (verificados jul-2026, ver [validación §6](../validacion/validacion-fuentes.md))
+| Plataforma | Cupo/mes | Capacidad real |
+|------------|----------|----------------|
+| **Hunter** | 2.000 créditos | **~1.500 contactos verificados → LÍMITE MAESTRO** |
+| Tavily | 4.000 créditos | ~950 empresas profundas · o ~5.000 búsquedas rápidas |
+| Apify | ~$29 de uso | ~1.300 empresas (solo profundo) |
 
-| Servicio | Unidad | Costo | Naturaleza |
-|----------|--------|-------|------------|
-| Tavily | crédito (búsqueda básica=1, avanzada=2, extract≈1) | Gratis 1.000/mes; luego ~USD $0.008/crédito *(asumido, confirmar plan)* | Variable |
-| Groq (Llama 4 Scout) | 1M tokens | $0.11 entrada / $0.34 salida | Variable (centavos) |
-| Apify | compute unit (CU) | ~$0.20/CU (una búsqueda = fracción de CU) | Variable |
-| Hunter.io | suscripción + créditos (verify 0.5 cr/email) | Starter ~$34/mes anual | **Fijo** (piso mensual) |
-| Apollo.io | suscripción + créditos (email 1 cr, tel 5–8 cr) | Basic ~$49/mes anual | **Fijo** (piso mensual) |
+**Tope del sistema: ~1.500 contactos verificados/mes.** Tavily y Apify tienen holgura.
 
-> ⚠️ Recordatorio de validación: el costo real de Apollo/Hunter suele correr **2–3×** el precio de lista al sumar overages. Presupuestar con colchón.
+## 3. Costo marginal por lead (lo que consume de cupos ya pagados)
 
-## 3. Modelo estimado (con supuestos explícitos)
+| Tipo de lead | Consumo | Costo | COP (~) |
+|--------------|---------|-------|---------|
+| Contacto rápido (persona) | 0,8 cr Tavily + 1,3 cr Hunter | ~$0,04 | ~$155 |
+| Contacto profundo (empresa) | 1,2 cr Tavily + Apify + 1,3 cr Hunter | ~$0,05 | ~$190 |
+| Empresa completa (~3,5 contactos) | 4,2 cr Tavily + $0,022 Apify + ~4 cr Hunter | ~$0,16 | ~$625 |
 
-**Supuestos** (ajustar con datos reales):
-- Un job procesa **~20 empresas** descubiertas.
-- Consumo variable por empresa: Tavily ~12 créditos (~$0.10) + Groq (~$0.01) + Apify (~$0.05) ≈ **~$0.16/empresa**.
-- **Tasa de rendimiento:** ~1 lead calificado por cada **4–5 empresas** → ~**4–5 leads calificados por job**.
-- Piso fijo mensual si operas en pago: Hunter (~$34) + Apollo (~$49) ≈ **~$83/mes** (+ Tavily plan si superas los 1.000 gratis).
+**Costo real por lead = stack mensual ÷ total de contactos del mes:**
+- Media capacidad (750 contactos): **~$576 COP/lead**
+- Plena capacidad (1.500 contactos): **~$290 COP/lead**
 
-**Costo variable por lead:** ~$0.16 × 4.5 empresas/lead ≈ **~$0.70/lead** (dominado por Tavily+Apify; enriquecimiento marginal dentro del plan).
+> Cuanto más se llena el stack, más barato el lead. **1 cliente = caro; 3+ = el costo por lead se desploma.**
 
-**Costo total por lead = piso fijo / leads del mes + variable:**
+## 4. Planes de venta propuestos
 
-| Leads calificados / mes | Fijo por lead (~$83) | + Variable (~$0.70) | **Costo total por lead** |
-|-------------------------|----------------------|---------------------|--------------------------|
-| 10 | $8.30 | $0.70 | **≈ $9** |
-| 50 | $1.66 | $0.70 | **≈ $2.4** |
-| 100 | $0.83 | $0.70 | **≈ $1.5** |
-| 250 | $0.33 | $0.70 | **≈ $1.0** |
+| Plan | Modalidad | Precio/mes | Cupo | Costo/lead (tú) |
+|------|-----------|------------|------|------------------|
+| Natural | Persona (rápido) | $149.000 (~$37) | 150 contactos | ~$155 |
+| Negocio | Empresa (profundo) | $390.000 (~$98) | 150 leads | ~$190 |
+| Growth | Empresa (profundo) | $790.000 (~$198) | 450 leads | ~$190 |
+| Business | Empresa (profundo) | $1.900.000 (~$475) | 1.200 leads | ~$190 |
 
-> **Lectura:** el costo por lead calificado cae aproximadamente en la banda **$1.5 – $9 USD**, y el número exacto lo decide el **volumen mensual**, no el pipeline. Sin volumen comprometido, cada lead sale caro.
+> Referencia de mercado: **Enginy** (plataforma casi idéntica) cobra desde **€799/mes (~$3,4M COP)** → hay amplio margen de precio por debajo del competidor.
 
-## 4. Plantilla para el NÚMERO REAL (llenar con tu job)
+## 5. Combinaciones que soporta el stack actual (respetando ~1.500 contactos)
 
-Para reemplazar la estimación por el dato duro, necesito de una corrida real estos **6 números**:
+| Combinación | Contactos | Stack | Ingreso/mes | Ganancia | Margen |
+|-------------|-----------|-------|-------------|----------|--------|
+| 8 Naturales (sin Apify) | 1.200 | $316.000 | $1.192.000 | $876.000 | ~73% |
+| 1 Growth + 3 Negocios | 900 | $432.000 | $1.960.000 | $1.528.000 | ~78% |
+| 1 Growth + 4 Negocios + 2 Naturales | 1.350 | $432.000 | $2.648.000 | $2.216.000 | ~84% |
+| 1 Business | 1.200 | $432.000 | $1.900.000 | $1.468.000 | ~77% |
 
-| Dato | Valor de tu job | Notas |
-|------|-----------------|-------|
-| Empresas procesadas en el job | ______ | Cuántas descubrió/procesó |
-| Créditos Tavily consumidos | ______ | Visible en el dashboard de Tavily |
-| Compute units (CU) de Apify | ______ | Dashboard de Apify |
-| Créditos Hunter/Apollo usados | ______ | Emails/teléfonos enriquecidos |
-| Tokens Groq (entrada/salida) | ______ / ______ | Aprox., del log del job |
-| **Leads CALIFICADOS resultantes** (`es_calificado=true`) | ______ | El denominador clave |
+## 6. Conclusiones (del informe real)
 
-Con eso calculo: `costo_variable_total / leads_calificados` = **costo variable real por lead**, y le sumo el piso fijo del plan que elijas para el costo total.
+1. Solo se pagan 3 plataformas: **$108/mes**. Todo lo demás es gratis.
+2. El tope es **Hunter (~1.500 contactos verificados/mes)**.
+3. Cada lead cuesta **~$155–190 COP marginal**; diluido baja a **~$290 COP** a plena capacidad.
+4. El stack sostiene **~8 clientes pequeños o 3–4 Growth**, con margen **73–84%**.
+5. Persona natural no usa Apify → arranca con stack de solo **$79/mes**.
+6. **Palanca de margen:** enriquecer solo al **decisor principal** por empresa (1 contacto en vez de 3–4) **triplica** la capacidad de Hunter.
 
-## 5. Recomendación del coach
+## 7. ⚠️ Lectura crítica del coach (lo que el informe no dice)
 
-1. **Para el piloto de Catalina: cotiza precio cerrado del piloto** (no por lead). Aún no hay volumen ni ICP para justificar un precio unitario.
-2. **Corre 1 job real y llena §4** antes de proponer cualquier plan mensual. Es el dato que separa una cotización seria de una adivinanza.
-3. Cuando definas pricing recurrente, el margen sano exige **volumen mínimo comprometido** (para diluir el piso fijo). Piensa en planes tipo "X leads/mes" con mínimo, no "pago por lead" abierto.
+- **El límite es comercial, no técnico.** El sistema soporta ~$2,6M COP/mes de ingreso con el stack mínimo. El reto no es capacidad: es **conseguir y retener esos 3–8 clientes**.
+- **El margen depende de QUIÉN paga el stack y QUIÉN cobra la venta.** Con margen 73–84% *para el dueño del negocio*. Bajo un esquema de **comisión del 15%**, tu parte sería una fracción pequeña (ver análisis en [`situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md) §3). No confundir el margen del negocio con tu ingreso.
+- **Cuidado con el "costo cero" de Groq/Supabase/Modal:** es real a bajo volumen, pero si escalas, esas capas gratuitas tienen tope y empezarán a costar. Re-medir al crecer.
+- **Hunter como cuello de botella = riesgo de dependencia.** Si Hunter sube precios o cambia cupos, tu economía unitaria se mueve. Tener plan B de verificación de correos.

@@ -13,21 +13,30 @@
 | ⏳ | **Workana — esperar validación de la cuenta** | Membresía pagada. Una vez activa, empezar a postular. Ver [`canal-workana.md`](canal-workana.md) |
 | 🔴 | **Workana — aplicar cambios al perfil** | Cambiar título, agregar el Prospector, subir tarifa, pegar "Sobre mí", sumar proyectos. Ver [`perfil-workana-analisis.md`](perfil-workana-analisis.md) |
 
+## 🔥🔥 CRÍTICO — Situación contractual y sociedad (nuevo, 4-jul-2026)
+
+| Estado | Pendiente | Detalle |
+|--------|-----------|---------|
+| 🔴 | **Subir el contrato al repo** | Solo así se revisan cláusulas de IP, no-competencia, confidencialidad y terminación. El último mensaje NO trajo el contrato, solo el informe de costos |
+| 🟡 | **Abogado laboral — ¿pago incompleto y relación encubierta?** | Trabajó 11-may a ~23-jun con pago incompleto y terminación sin aviso. Posible "contrato realidad". Podrían deberle dinero |
+| 🔴 | **Decidir sobre la oferta del 15% de comisión** | Análisis: estructuralmente mala tal cual (techo ~$300–400k COP/mes, y peor si asume gastos). Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
+| 🔴 | **Definir opción: A (producto propio) / B (15% con condiciones) / C (renegociar) / D (cobrar y separarse)** | Recomendación del coach: A. Ver análisis completo |
+
 ## 🟡 Requieren un tercero (no resoluble por IA)
 
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
 | 🟡 | **Sesión con un contador** | Confirmar IVA (no responsable bajo 3.500 UVT ≈ COP $183,3M), RST sí/no, flujo de exportación de servicios, y valor oficial de UVT 2026. Ver [`facturacion-y-contratos-colombia.md`](facturacion-y-contratos-colombia.md) |
 | 🟡 | **Asesoría legal Habeas Data** | Para prospección B2B a escala (Ley 1581/2012 + Ley 1266/2008 + Decreto 1377/2013; autoridad: SIC). Ver [validación §7](../docs/validacion/validacion-fuentes.md) |
-| 🟡 | **Verificar IP y no-competencia del contrato de origen** | ¿El contrato de prestación de servicios cedió los derechos patrimoniales del motor? ¿Hay cláusula de no-competencia/confidencialidad? Define si se puede comercializar "el Prospector" como propio. Ver [perfil-fundador](../docs/fundamentos/perfil-fundador.md) §Decisión de posicionamiento |
-| 🔴 | **Medir consumo real del Prospector en 1 job** | Requiere correr el sistema. Cierra el número de costo por lead calificado. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) §4 |
+| 🟡 | **Verificar IP y no-competencia del contrato de origen** | ¿El contrato cedió los derechos patrimoniales del motor? ¿Hay no-competencia/confidencialidad? Define si se puede comercializar "el Prospector" como propio. Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
+| ✅ | **Costo por lead — RESUELTO con datos reales** | ~$155–190 COP marginal, ~$290 COP a plena capacidad; stack $108/mes; tope Hunter ~1.500 contactos. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) |
 
 ## 🏷️ Marca / Identidad
 
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
 | ⏳ | **Elegir nombre del emprendimiento** | El fundador definirá "en estos días". Top candidatos en [`marca-naming.md`](marca-naming.md) |
-| 🔴 | **Nueva dirección de naming (Ronda 4)** | Verificado 3× que los nombres eufónicos en IA están tomados (*Cierzo→Cizo*, *Velaria→Velari/Volaria*, *Norvalia→Novalia*). Nueva estrategia: **local/Cauca** (favorito: *Pubenza*) o acuñado raro. Ver [`marca-naming.md`](marca-naming.md) Ronda 4 |
+| ⏳ | **Naming — RESET (Ronda 5)** | El fundador rechazó todos los candidatos (Rondas 1–4). Pendiente: responder las 6 preguntas de dirección para una Ronda 6 dirigida. Ver [`marca-naming.md`](marca-naming.md) Ronda 5 |
 | 🔴 | **Validar el nombre elegido** | 3 chequeos: dominio (.ai/.com/.co) + marca (SIC) + handles de redes. Kiro puede correr la verificación web cuando haya 2–3 finalistas |
 | 🔴 | **Definir perfil de Yulieth + nombre de marca** | Para completar [`presentacion-fundadores.md`](../docs/fundamentos/presentacion-fundadores.md) (espacio `[ ]`) |
 | 🔴 | **Pulir prueba social pública** | LinkedIn + GitHub con casos visibles (el Prospector). Ver [validación §5](../docs/validacion/validacion-fuentes.md) |
