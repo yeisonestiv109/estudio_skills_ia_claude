@@ -17,10 +17,11 @@
 
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
-| 🔴 | **Subir el contrato al repo** | Solo así se revisan cláusulas de IP, no-competencia, confidencialidad y terminación. El último mensaje NO trajo el contrato, solo el informe de costos |
-| 🟡 | **Abogado laboral — ¿pago incompleto y relación encubierta?** | Trabajó 11-may a ~23-jun con pago incompleto y terminación sin aviso. Posible "contrato realidad". Podrían deberle dinero |
-| 🔴 | **Decidir sobre la oferta del 15% de comisión** | Análisis: estructuralmente mala tal cual (techo ~$300–400k COP/mes, y peor si asume gastos). Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
-| 🔴 | **Definir opción: A (producto propio) / B (15% con condiciones) / C (renegociar) / D (cobrar y separarse)** | Recomendación del coach: A. Ver análisis completo |
+| ✅ | **Contrato recibido y analizado** | Cláusulas clave en [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) §2. Hallazgo: **la IP del Prospector es de la contratante (cláusula 8ª)** |
+| 🔴 | **Definir tu producto propio como build NUEVO e independiente** | No puedes vender el Prospector de la contratante. Vía B = producto nuevo, arquitectura propia, nombre nuevo, respetando confidencialidad (7ª, 2 años) |
+| 🟡 | **Abogado laboral — reclamar pago incompleto** | Terminación sin aviso de 15 días (incumple 3ª) + pago incompleto → te deben honorarios causados. ¿"Contrato realidad"? |
+| 🔴 | **Aclarar si Catalina/TBBC son clientes conocidos por el contrato** | Si sí → cláusula 9ª (no-competencia, 12 meses) impide servirles de forma independiente hasta ~2027 |
+| 🔴 | **Decidir sobre la oferta del 15%** | Coherente con que el IP es de ellos, pero economía pobre (techo ~$300–400k COP/mes). Recomendación: **A (producto propio) + D (cobrar lo adeudado)**. Ver análisis |
 
 ## 🟡 Requieren un tercero (no resoluble por IA)
 
@@ -28,7 +29,7 @@
 |--------|-----------|---------|
 | 🟡 | **Sesión con un contador** | Confirmar IVA (no responsable bajo 3.500 UVT ≈ COP $183,3M), RST sí/no, flujo de exportación de servicios, y valor oficial de UVT 2026. Ver [`facturacion-y-contratos-colombia.md`](facturacion-y-contratos-colombia.md) |
 | 🟡 | **Asesoría legal Habeas Data** | Para prospección B2B a escala (Ley 1581/2012 + Ley 1266/2008 + Decreto 1377/2013; autoridad: SIC). Ver [validación §7](../docs/validacion/validacion-fuentes.md) |
-| 🟡 | **Verificar IP y no-competencia del contrato de origen** | ¿El contrato cedió los derechos patrimoniales del motor? ¿Hay no-competencia/confidencialidad? Define si se puede comercializar "el Prospector" como propio. Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
+| 🟡 | **Abogado IP/comercial — límites del build independiente** | IP ya resuelto (es de la contratante). Pregunta abierta: ¿qué tan distinto debe ser tu nuevo build para no rozar confidencialidad (cláusula 7ª, 2 años)? Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
 | ✅ | **Costo por lead — RESUELTO con datos reales** | ~$155–190 COP marginal, ~$290 COP a plena capacidad; stack $108/mes; tope Hunter ~1.500 contactos. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) |
 
 ## 🏷️ Marca / Identidad

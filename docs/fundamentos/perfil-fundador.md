@@ -42,7 +42,7 @@ Pieza central del posicionamiento. Define quién es, qué sabe hacer y cómo se 
 - Perfil analítico y organizado (encaja con backend, arquitectura y diagnóstico de negocio).
 - Capacidad de traducir requerimientos de negocio a arquitecturas escalables y costo-eficientes.
 - Dominio de automatizaciones con y sin IA, sabiendo cuándo conviene cada una.
-- **El Prospector — producto propio en evolución:** motor de prospección B2B que diseñé y construí de punta a punta, y que sigo desarrollando de forma independiente para clientes propios (distintos a los del contrato de origen).
+- **Motor de prospección B2B con IA — diseñado y construido de punta a punta** (bajo contrato; la IP es de la contratante). Demuestra capacidad de llevar un producto de IA de cero a MVP en producción. El **producto propio de Vía B será un build nuevo e independiente** (ver nota de posicionamiento abajo).
 
 ## Servicios vendibles que se derivan del perfil (alta demanda)
 
@@ -55,17 +55,15 @@ Pieza central del posicionamiento. Define quién es, qué sabe hacer y cómo se 
 ## Notas críticas a resolver (credibilidad)
 
 - ⚠️ **Fechas solapadas en el CV:** el contrato (2024–may 2026), OmniRetail (ene–abr 2026) y Mediscribe (nov 2025–mar 2026) se solapan, y eres estudiante (grado esperado 2026). Enmarcarlos honestamente como **roles freelance/contract/part-time concurrentes** para evitar dudas de credibilidad.
-- ⚠️ **Prueba social pública:** asegurar LinkedIn y GitHub pulidos, con repos/casos visibles (el Prospector como caso estrella, sin exponer datos de clientes).
+- ⚠️ **Prueba social pública:** asegurar LinkedIn y GitHub pulidos, con casos visibles (build independiente propio, sin exponer datos de clientes ni activos de la contratante).
 
-### 🔑 Decisión de posicionamiento: "experiencia" vs "producto propio" (análisis jul-2026)
+### 🔑 Decisión de posicionamiento: "experiencia" vs "producto propio" (análisis jul-2026, con contrato a la vista)
 
-El origen del Prospector fue un MVP que construí **de punta a punta bajo un contrato de prestación de servicios**. Kiro separó dos cosas que NO son lo mismo:
+Se revisó el contrato real. La **cláusula 8ª cede expresamente toda la IP** (código, flujos, modelos) a la contratante. Por tanto:
 
-1. **La experiencia (siempre reclamable):** que lo diseñé y construí íntegramente es un hecho y es tu mejor prueba de ingeniería en producción. En CV/LinkedIn/Workana se presenta como **rol de contrato** donde construí el motor de punta a punta. No necesitas nombrar al contratante.
-2. **La propiedad del producto (requiere verificación legal):** vender "el Prospector" como **producto propio** a clientes nuevos es legítimo como **evolución independiente**, PERO depende de dos cláusulas del contrato:
-   - **Cesión de derechos patrimoniales:** en Colombia (Ley 23/1982, Decisión Andina 351) la autoría/derechos morales son siempre tuyos, pero los **derechos patrimoniales** solo se transfieren al contratante si el contrato lo dice **expresamente y por escrito**. Si el contrato NO cedió expresamente la IP, es posible que los derechos económicos sigan siendo tuyos. Si SÍ los cedió, la versión original es del contratante.
-   - **No-competencia / confidencialidad:** revisar si hay cláusula que limite ofrecer un producto similar.
+1. **La experiencia SÍ es tuya (reclámala):** que **diseñaste y construiste un motor de prospección B2B de punta a punta** es un hecho y tu mejor prueba de ingeniería. En CV/LinkedIn/Workana va como **rol de contrato** que construiste completo, sin nombrar a la contratante y sin exponer su código/arquitectura.
+2. **La propiedad del producto NO es tuya:** no puedes comercializar ese Prospector como producto propio. Tu **Vía B exige un build nuevo, desde cero, con arquitectura propia y nombre nuevo**, respetando:
+   - **Confidencialidad (cláusula 7ª, 2 años):** no reutilizar arquitectura/flujos/metodología de la contratante hasta ~2028.
+   - **No-competencia (cláusula 9ª, 12 meses):** no servir a clientes que conociste por el contrato.
 
-> **Recomendación del coach:** ✅ Sí, posiciona el Prospector como **producto propio en evolución** para tu Vía B — pero **antes de comercializarlo con marca**, revisa esas dos cláusulas del contrato (idealmente con el mismo abogado del pendiente de Habeas Data). Mientras tanto: vende **tu versión propia** (tu código/evolución, sin reutilizar activos ni datos del contratante) y **nunca** conectes clientes del contrato de origen. Esto ya lo tienes claro; solo hay que blindarlo por escrito.
->
-> 📌 Esto queda como pendiente en el checklist: **"Verificar cláusulas de IP y no-competencia del contrato de origen."**
+> **Recomendación del coach (corrige la versión anterior de este doc):** en el mensaje pasado sugerí que la IP "podría ser tuya"; el contrato demuestra lo contrario. Posiciónate por la **experiencia** (construiste el motor), no por la **propiedad**. Para Vía B, construye **tu propio producto independiente**. Análisis completo y opciones en [`../../estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md).
