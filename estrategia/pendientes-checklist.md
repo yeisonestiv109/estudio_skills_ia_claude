@@ -18,7 +18,8 @@
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
 | ✅ | **Contrato recibido y analizado** | Cláusulas clave en [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) §2. Hallazgo: **la IP del Prospector es de la contratante (cláusula 8ª)** |
-| 🔴 | **Definir tu producto propio como build NUEVO e independiente** | No puedes vender el Prospector de la contratante. Vía B = producto nuevo, arquitectura propia, nombre nuevo, respetando confidencialidad (7ª, 2 años) |
+| 🔴 | **Definir tu producto propio como build NUEVO e independiente** | No puedes vender el Prospector de la contratante. Vía B = producto nuevo, arquitectura propia, nombre nuevo, respetando confidencialidad (7ª, 2 años). Guía técnica: [`arquitectura-y-paradigmas.md`](../docs/tecnico/arquitectura-y-paradigmas.md) |
+| ⏳ | **ECC — evaluado (cherry-pick)** | No adoptar entero. Usar AgentShield + minar `rules/common` + patrones. Ver [`evaluacion-ecc.md`](../docs/tecnico/evaluacion-ecc.md) |
 | 🟡 | **Abogado laboral — reclamar pago incompleto** | Terminación sin aviso de 15 días (incumple 3ª) + pago incompleto → te deben honorarios causados. ¿"Contrato realidad"? |
 | ✅ | **Catalina — situación legal aclarada** | Contacto propio (Popayán), NO cliente de la contratante → cláusula 9ª N/A. Vía libre con build independiente (cláusula 7ª) |
 | 🔴 | **Decidir sobre la oferta del 15%** | Coherente con que el IP es de ellos, pero economía pobre (techo ~$300–400k COP/mes). Recomendación: **A (producto propio) + D (cobrar lo adeudado)**. Ver análisis |
