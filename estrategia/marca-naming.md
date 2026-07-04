@@ -174,3 +174,54 @@
 3. **Método de decisión, sin excepción:** el fundador elige 2–3 finalistas → se validan las **3 verificaciones** (dominio `.ai`/`.com`/`.co` + marca en SIC + handles de redes). Sin esas 3, no hay decisión.
 
 > ⏳ **Pendiente:** el fundador dijo que definirá el nombre "en estos días". Cuando dé sus 2–3 finalistas, Kiro corre la verificación de dominio/marca/redes de cada uno y cierra el tema.
+
+
+---
+
+# Ronda 4 — Cambio de estrategia de naming (4-jul-2026)
+
+> Kiro re-validó por web los "favoritos seguros" de la Ronda 2/3. **Resultado contundente: también tienen colisiones.** Ya son tres rondas confirmando el mismo patrón.
+
+## ⚠️ Colisiones nuevas detectadas
+
+| Candidato | Colisión encontrada | Veredicto |
+|-----------|---------------------|-----------|
+| **Velaria** | `velariai.co` ("architecting intelligence in production" — **casi nuestro pitch**), **Velaura AI**, **Volaria AI** ("AI-driven automation & workflow" — competidor directo), Velaris, Velora HR | 🔴 **Descartar.** La raíz "vel-" está saturada en IA |
+| **Norvalia** | `novalia-solutions.com` (partner de integración de IA), Nuvia (Qualcomm) | 🟡 Cercano a "Novalia". Riesgo medio |
+| **Cauvia** | `cuvia.com` (biotech), `caviaai.com` (IA para grants) | 🟡 Fonéticamente cercano a "Cavia/Cuvia" |
+
+## 🧭 Conclusión estratégica (importante)
+
+**Los nombres "bonitos" con sonido latino/tech ya están tomados en IA.** Verificado 3 veces: *Cierzo→Cizo*, *Velaria→Velari/Volaria*, *Norvalia→Novalia*. Perseguir más palabras de ese estilo es perder el tiempo. Quedan **dos caminos ganadores y defendibles:**
+
+- **Camino A — Identidad local del Cauca (raíz + historia única):** nombres anclados a tu origen. Difíciles de colisionar en IA, con storytelling potente ("desde el Cauca para el mundo") y más fáciles de registrar en la SIC.
+- **Camino B — Acuñado deliberadamente raro:** combinaciones no-diccionario, poco eufónicas para un buscador, que se "poseen" con logo + historia (tipo Twilio, Klarna, Xero).
+
+## ✅ Ronda 4 — Candidatos (nueva dirección)
+
+> Todos 🟡 **pendientes de las 3 verificaciones** (dominio + SIC + redes). No verificados aún salvo nota.
+
+### Camino A — Local / Cauca (recomendado por diferenciación)
+
+| Nombre | Historia / ángulo | Nota |
+|--------|-------------------|------|
+| **Pubenza** | Nombre ancestral del **valle de Popayán** (Valle de Pubenza). Único, local, pronunciable, con relato: *"inteligencia desde el valle de Pubenza"* | 🟢 Muy probablemente libre en IA. **Mi favorito de esta ronda** |
+| **Cauce** | El curso del río → "encauzar el negocio con IA"; guiño al Cauca | Palabra común: verificar marca sí o sí, pero gran historia |
+| **Puracé** | Volcán/páramo emblemático del Cauca → fuerza, energía, referente | Distintivo; verificar pronunciación fuera de Colombia |
+| **Kauka** | Estilización de "Cauca" → identidad regional con grafía de marca | Coined + local, muy ownable |
+
+### Camino B — Acuñado raro (máxima disponibilidad)
+
+| Nombre | Por qué | Nota |
+|--------|---------|------|
+| **Qorve** | No-diccionario, sonido tech, grafía única | Verificar |
+| **Zurvo** | Corto, raro, brandeable | Verificar |
+| **Vexor** | Fuerte, "vector/vex", tono de motor/ingeniería | Verificar (revisar usos previos) |
+| **Nuqo** | Muy corto, extraño, memorable | Verificar |
+
+## Recomendación del coach (Ronda 4)
+
+1. **Nueva dirección #1: `Pubenza`** — local, único, con historia, casi seguro libre en IA. Es lo más difícil de copiar y lo más "tuyo".
+2. Si quieres algo más corto/global: **`Kauka`** (local estilizado) o un acuñado del Camino B (`Qorve`/`Zurvo`).
+3. **Deja de perseguir palabras latinas eufónicas** — el mercado de IA ya las agotó.
+4. **Método de decisión (sin excepción):** elige **2–3 finalistas** → Kiro corre dominio (`.ai`/`.com`/`.co`) + marca (SIC) + handles de redes → decides con datos. Cuando me des tus finalistas, hago las 3 verificaciones de una.

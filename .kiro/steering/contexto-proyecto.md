@@ -63,6 +63,17 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 - **Marco legal:** Habeas Data (Ley 1581/2012) en scraping y cold email; respetar ToS.
 - **Fondo de emergencia primero** (3–6 meses); reinvertir solo el excedente.
 - **Stack orquestado por fase:** Kiro → Claude Code → Antigravity → Claude Code (CI/CD).
+- **Filtro BANT/MEDDPICC de propuestas:** si una propuesta no ataca al menos una de las 3 reglas de oro (ganar dinero / ahorrar tiempo / ahorrar dinero), **se rechaza**.
+
+## Protocolo de arquitectura y "Vibe Coding" (5 pilares operativos)
+
+Reglas que Kiro sigue al construir software o gestionar este repo:
+
+1. **Memoria modular conectada:** prohibido hipertrofiar un solo archivo. La memoria se reparte: `.kiro/steering/contexto-proyecto.md` (filosofía y reglas) · `docs/tecnico/` (stack y producto) · `estrategia/pendientes-checklist.md` (dashboard).
+2. **Diseño basado en evidencia visual:** ante capturas/maquetas, generar código front/back modular y listo para desplegar, adaptado a móvil.
+3. **Autonomía con control de errores (modo auto):** probar flujos e integraciones de forma iterativa, anticipar fallas y corregir dependencias antes de la entrega — solo en entornos reversibles.
+4. **Integración externa eficiente:** priorizar APIs limpias (webhooks, pasarelas de pago, CRMs, Doctoralia, Dentalink).
+5. **Cumplimiento legal LATAM/Colombia:** todo scraping/extracción/prospección respeta la Ley 1581/2012 (Habeas Data); sin datos de personas naturales sin base legal explícita.
 
 ## Regla de mantenimiento de esta memoria
 

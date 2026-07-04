@@ -22,7 +22,7 @@ Pieza central del posicionamiento. Define quién es, qué sabe hacer y cómo se 
 
 | Empresa | Rol | Periodo | Aporte clave |
 |---------|-----|---------|--------------|
-| **Proyecto propio — el Prospector** (Remoto) | Lead AI Engineer — Agentic Workflows & Voice AI | 2024 – may 2026 | Voice Agent de última milla en tiempo real (LLM); motor de automatización B2B con LangGraph; backend FastAPI + PostgreSQL; optimización de costo/latencia de tokens |
+| **Contrato de prestación de servicios** (Remoto) | Lead AI Engineer — Agentic Workflows & Voice AI | 2024 – may 2026 | Diseño y construcción **de punta a punta** del MVP de un motor de prospección B2B (origen del Prospector); Voice Agent de última milla en tiempo real (LLM); automatización con LangGraph; backend FastAPI + PostgreSQL; optimización de costo/latencia de tokens |
 | **OmniRetail** (Remoto) | Cloud AI Developer — RAG & Serverless | ene 2026 – abr 2026 | Pipelines RAG para datos transaccionales (lógica tipo fintech); arquitecturas event-driven en AWS; microservicios con Docker |
 | **Mediscribe** (Remoto) | Backend Software Engineer — NLP & Data Pipelines | nov 2025 – mar 2026 | Pipelines Python para extracción/clasificación de datos clínicos sensibles con NLP; alta disponibilidad y gobernanza de datos |
 
@@ -42,7 +42,7 @@ Pieza central del posicionamiento. Define quién es, qué sabe hacer y cómo se 
 - Perfil analítico y organizado (encaja con backend, arquitectura y diagnóstico de negocio).
 - Capacidad de traducir requerimientos de negocio a arquitecturas escalables y costo-eficientes.
 - Dominio de automatizaciones con y sin IA, sabiendo cuándo conviene cada una.
-- Producto propio construido de punta a punta: **el Prospector**.
+- **El Prospector — producto propio en evolución:** motor de prospección B2B que diseñé y construí de punta a punta, y que sigo desarrollando de forma independiente para clientes propios (distintos a los del contrato de origen).
 
 ## Servicios vendibles que se derivan del perfil (alta demanda)
 
@@ -54,6 +54,18 @@ Pieza central del posicionamiento. Define quién es, qué sabe hacer y cómo se 
 
 ## Notas críticas a resolver (credibilidad)
 
-- ⚠️ **Fechas solapadas en el CV:** el rol del Prospector (2024–may 2026), OmniRetail (ene–abr 2026) y Mediscribe (nov 2025–mar 2026) se solapan, y eres estudiante (grado esperado 2026). En propuestas/entrevistas conviene enmarcarlos honestamente como roles freelance/contract/part-time concurrentes para evitar dudas de credibilidad.
+- ⚠️ **Fechas solapadas en el CV:** el contrato (2024–may 2026), OmniRetail (ene–abr 2026) y Mediscribe (nov 2025–mar 2026) se solapan, y eres estudiante (grado esperado 2026). Enmarcarlos honestamente como **roles freelance/contract/part-time concurrentes** para evitar dudas de credibilidad.
 - ⚠️ **Prueba social pública:** asegurar LinkedIn y GitHub pulidos, con repos/casos visibles (el Prospector como caso estrella, sin exponer datos de clientes).
-- ⚠️ **Nota de marca (jul-2026):** se retiró del repo la referencia a un antiguo empleador; la experiencia del motor de prospección se reencuadra como **producto propio (el Prospector)**. Confirmar con el fundador cómo quiere presentar esta experiencia en CV/LinkedIn/Workana (producto propio vs. contrato con tercero) y mantener coherencia en todos los canales.
+
+### 🔑 Decisión de posicionamiento: "experiencia" vs "producto propio" (análisis jul-2026)
+
+El origen del Prospector fue un MVP que construí **de punta a punta bajo un contrato de prestación de servicios**. Kiro separó dos cosas que NO son lo mismo:
+
+1. **La experiencia (siempre reclamable):** que lo diseñé y construí íntegramente es un hecho y es tu mejor prueba de ingeniería en producción. En CV/LinkedIn/Workana se presenta como **rol de contrato** donde construí el motor de punta a punta. No necesitas nombrar al contratante.
+2. **La propiedad del producto (requiere verificación legal):** vender "el Prospector" como **producto propio** a clientes nuevos es legítimo como **evolución independiente**, PERO depende de dos cláusulas del contrato:
+   - **Cesión de derechos patrimoniales:** en Colombia (Ley 23/1982, Decisión Andina 351) la autoría/derechos morales son siempre tuyos, pero los **derechos patrimoniales** solo se transfieren al contratante si el contrato lo dice **expresamente y por escrito**. Si el contrato NO cedió expresamente la IP, es posible que los derechos económicos sigan siendo tuyos. Si SÍ los cedió, la versión original es del contratante.
+   - **No-competencia / confidencialidad:** revisar si hay cláusula que limite ofrecer un producto similar.
+
+> **Recomendación del coach:** ✅ Sí, posiciona el Prospector como **producto propio en evolución** para tu Vía B — pero **antes de comercializarlo con marca**, revisa esas dos cláusulas del contrato (idealmente con el mismo abogado del pendiente de Habeas Data). Mientras tanto: vende **tu versión propia** (tu código/evolución, sin reutilizar activos ni datos del contratante) y **nunca** conectes clientes del contrato de origen. Esto ya lo tienes claro; solo hay que blindarlo por escrito.
+>
+> 📌 Esto queda como pendiente en el checklist: **"Verificar cláusulas de IP y no-competencia del contrato de origen."**

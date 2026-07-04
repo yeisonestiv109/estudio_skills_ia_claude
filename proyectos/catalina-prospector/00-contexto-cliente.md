@@ -8,6 +8,18 @@
 - Su interés inicial es el **Prospector de leads** (nuestro producto propio, Vía B).
 - Catalina **tiene otro emprendimiento**, y es por/para ese emprendimiento que le interesa el Prospector.
 - Existe ya una relación/canal de conversación previa con ella (viene de otro contexto que el fundador maneja aparte).
+- **Ya hubo una primera reunión** y se corrió una **prueba genérica** del Prospector (no calibrada a su negocio). El ICP específico de Catalina **quedó pendiente**.
+
+## Plan antes de la próxima reunión (definido 4-jul-2026)
+
+Antes de volver a reunirnos con Catalina, hay que **afinar el Prospector con un caso de prueba real** para llegar con evidencia, no con una demo genérica:
+
+- [ ] **Correr un job de prueba usando datos públicos de TBBC** (lo que encontremos en internet) como sujeto de prueba/benchmark para calibrar triggers, calidad de decisor y copy.
+- [ ] Con ese job, **llenar la plantilla de costo por lead** ([`../../docs/tecnico/costo-por-lead.md`](../../docs/tecnico/costo-por-lead.md) §4) → tener el número real.
+- [ ] Ajustar el *pain framework* y el geo-fit según lo que falle en la prueba.
+- [ ] Llegar a la reunión con Catalina con: una **demo calibrada** + un **rango de costo/precio de piloto** defendible.
+
+> 📌 Aquí TBBC se usa **solo como sujeto de prueba con datos públicos** para pulir el producto. El proyecto SEO de TBBC lo maneja el fundador aparte; no se mezclan.
 
 ## Lo que NO sabemos aún (pendiente de confirmar — preguntar)
 
