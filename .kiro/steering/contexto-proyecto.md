@@ -44,7 +44,10 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 - El Prospector construido bajo contrato (referencia; **IP de la contratante**) → [`docs/tecnico/prospector.md`](../../docs/tecnico/prospector.md)
 - **Arquitectura y paradigmas del build nuevo e independiente** → [`docs/tecnico/arquitectura-y-paradigmas.md`](../../docs/tecnico/arquitectura-y-paradigmas.md)
 - Costo por lead (datos reales) → [`docs/tecnico/costo-por-lead.md`](../../docs/tecnico/costo-por-lead.md)
-- Evaluación de ECC (cherry-pick, no adoptar entero) → [`docs/tecnico/evaluacion-ecc.md`](../../docs/tecnico/evaluacion-ecc.md)
+- Stack y orquestación (Antigravity/Kiro/Stitch + MCPs) → [`docs/tecnico/stack-y-orquestacion.md`](../../docs/tecnico/stack-y-orquestacion.md)
+- Guía práctica de Kiro (specs/steering/hooks/MCP/automatizaciones) → [`docs/tecnico/kiro-guia-practica.md`](../../docs/tecnico/kiro-guia-practica.md)
+- Evaluación de ECC (cherry-pick; **tiene adaptador Kiro**) → [`docs/tecnico/evaluacion-ecc.md`](../../docs/tecnico/evaluacion-ecc.md)
+- Modelo de agencia de IA unipersonal (go-to-market) → [`estrategia/modelo-agencia-ia-unipersonal.md`](../../estrategia/modelo-agencia-ia-unipersonal.md)
 - Stack SDLC con IA (Kiro/Claude/Antigravity) → [`docs/tecnico/stack-sdlc-ia.md`](../../docs/tecnico/stack-sdlc-ia.md)
 - Hacks de agentes de IA → [`docs/tecnico/hacks-agentes-ia.md`](../../docs/tecnico/hacks-agentes-ia.md)
 - Validación de fuentes (dato real vs hype) → [`docs/validacion/validacion-fuentes.md`](../../docs/validacion/validacion-fuentes.md)
@@ -69,7 +72,8 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 - **IA crítica, no complaciente.**
 - **Marco legal:** Habeas Data (Ley 1581/2012) en scraping y cold email; respetar ToS.
 - **Fondo de emergencia primero** (3–6 meses); reinvertir solo el excedente.
-- **Stack orquestado por fase:** Kiro → Claude Code → Antigravity → Claude Code (CI/CD).
+- **Stack actual (sin Claude Code todavía):** **Kiro** (centro de comando: specs/steering/hooks/MCP) + **Antigravity Pro CLI `agy`** (ejecutor/agentes paralelos) + **Google Stitch** (diseño UI). Claude Code se paga después. Detalle → [`docs/tecnico/stack-y-orquestacion.md`](../../docs/tecnico/stack-y-orquestacion.md).
+- **Reparto de trabajo:** el fundador dirige/prospecta/valida/corrige y halla el cuello de botella que paga el cliente; Kiro/Antigravity ejecutan (construyen, diseñan, verifican, documentan).
 - **Filtro BANT/MEDDPICC de propuestas:** si una propuesta no ataca al menos una de las 3 reglas de oro (ganar dinero / ahorrar tiempo / ahorrar dinero), **se rechaza**.
 
 ## Protocolo de arquitectura y "Vibe Coding" (5 pilares operativos)

@@ -33,7 +33,25 @@
 - **Instalación invasiva:** modifica `~/.claude` globalmente y **corre hooks/scripts**. Su propio README advierte usar **solo fuentes oficiales** (riesgo de malware en mirrors). → revisar hooks antes de habilitarlos.
 - **Bloat de contexto:** 277 skills / 67 agents. Adoptarlo entero **satura el contexto** (ellos mismos advierten que demasiados MCP se comen la ventana). Instalar **selectivo**.
 - **Es la config opinada de un solo autor**, no un estándar de industria.
-- **No aplica a Kiro.** ECC apunta a Claude Code/Cursor/Codex/etc. Para este entorno (Kiro) sirve como **referencia**, no como instalación.
+
+## 2.b Corrección: ECC SÍ tiene adaptador nativo para Kiro
+
+En el análisis anterior dije "no aplica a Kiro". **Me corrijo:** ECC incluye un adaptador **`.kiro/`** instalable en cualquier proyecto Kiro con `./install.sh` (copia **no destructiva**, no sobreescribe tus archivos). Inventario del adaptador Kiro:
+
+- **33 agentes** (JSON para CLI + MD para IDE): `planner`, `architect`, `code-reviewer`, `security-reviewer`, `python-reviewer`, `database-reviewer`, `performance-optimizer`, `refactor-cleaner`, `doc-updater`, `build-error-resolver`, etc.
+- **43 skills**: `fastapi-patterns`, `backend-patterns`, `api-design`, `postgres-patterns`, `database-migrations`, `security-review`, `tdd-workflow`, `verification-loop`, `deployment-patterns`, `docker-patterns`, `agentic-engineering`, `autonomous-loops`, `deep-research`, `strategic-compact`, `python-patterns`/`-testing`, etc.
+- **22 steering files** (auto: `coding-style`, `security`, `testing`, `git-workflow`, `patterns`, `performance`, `lessons-learned`; fileMatch por lenguaje; manual: `dev/review/research-mode`).
+- **13 IDE hooks** (`.kiro.hook`): `quality-gate`, `typecheck-on-edit`, `tdd-reminder`, `security-check-on-create`, `python-lint-on-edit`, `extract-patterns`, `session-summary`, `git-push-review`, etc.
+- **2 scripts** (`quality-gate.sh`, `format.sh`) + `mcp.json.example`.
+
+### Qué cherry-pickear del adaptador Kiro (para NUESTRO stack Python/backend)
+
+- **Steering:** `coding-style`, `security`, `testing`, `git-workflow`, `patterns`, `performance` como base para pulir los nuestros (adaptar, no copiar ciego).
+- **Skills:** `fastapi-patterns`, `backend-patterns`, `api-design`, `postgres-patterns`, `database-migrations`, `security-review`, `tdd-workflow`, `verification-loop`, `deployment-patterns`, `docker-patterns`, `agentic-engineering`, `autonomous-loops`, `deep-research`.
+- **Agentes:** `planner`, `architect`, `python-reviewer`, `database-reviewer`, `security-reviewer`, `performance-optimizer`.
+- **Hooks:** `quality-gate`, `python-lint-on-edit`, `security-check-on-create`, `extract-patterns` (ver [guía práctica de Kiro](kiro-guia-practica.md) §3).
+
+> **Cómo instalarlo con criterio:** clonar ECC, `cd .kiro && ./install.sh /ruta/proyecto`, y **revisar/podar** lo que no usemos (evitar bloat de 43 skills + 33 agentes). Revisar los hooks/scripts antes de habilitarlos (corren comandos). Es copia no destructiva, pero igual **instalar selectivo**.
 
 ## 3. Cómo lo usamos (recomendación concreta)
 
