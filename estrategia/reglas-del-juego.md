@@ -6,7 +6,7 @@ Reglas operativas para empezar hoy. Pocas, claras y verificables. **Si una decis
 
 - **Fondo de emergencia primero.** Antes de reinvertir agresivo, asegurar 3–6 meses de gastos. Reinvertir solo el excedente (corrige la versión peligrosa de "Stay Broke").
 - **Regla del 20%.** Cada lunes defino las 2–3 tareas que mueven ingresos o aprendizaje real. Esas van primero; el resto se delega, automatiza o elimina.
-- **Medir el dinero por unidad.** En todo servicio/producto conozco mi costo por entrega y mi margen. En Glovar: costo por lead calificado vigilado siempre.
+- **Medir el dinero por unidad.** En todo servicio/producto conozco mi costo por entrega y mi margen. En el Prospector: costo por lead calificado vigilado siempre.
 
 ## Ventas y posicionamiento
 

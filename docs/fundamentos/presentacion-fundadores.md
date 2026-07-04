@@ -1,6 +1,6 @@
 # Presentación de los Fundadores y Casos de Éxito
 
-Pieza reutilizable para presentar el emprendimiento ante clientes (primer uso: que Catalina Rúa nos presente ante la gerencia de TBBC). Tono: claro, conciso, orientado a resultados de negocio (ganar dinero, ahorrar tiempo, ahorrar dinero). **No se inventan métricas ni se exponen datos de clientes.**
+Pieza reutilizable para presentar el emprendimiento ante clientes (uso actual: presentar el Prospector a **Catalina Rúa**, clienta potencial interesada en el producto para su propio emprendimiento — ver [`proyectos/catalina-prospector/`](../../proyectos/catalina-prospector/README.md)). Tono: claro, conciso, orientado a resultados de negocio (ganar dinero, ahorrar tiempo, ahorrar dinero). **No se inventan métricas ni se exponen datos de clientes.**
 
 > ⚠️ **Pendiente de completar:** el nombre de la marca/emprendimiento (espacio `[ ]`). Si aún no existe, considerar definirlo: presentarse con nombre propio da más solidez que "dos freelancers".
 

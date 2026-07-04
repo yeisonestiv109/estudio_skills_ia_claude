@@ -11,7 +11,7 @@ Usar la IA como **vehículo** (no como producto) para resolver problemas de alto
 | Vía | Objetivo | Horizonte | Riesgo |
 |-----|----------|-----------|--------|
 | **A — Freelance / servicios** | Generar caja, experiencia y portafolio reales | Corto plazo (0–6 meses) | Bajo (solo tiempo) |
-| **B — Proyectos B2B / producto** | Margen alto, escalable, activos propios (ej. Glovar Prospector) | Medio-largo plazo (6–24 meses) | Medio |
+| **B — Proyectos B2B / producto** | Margen alto, escalable, activos propios (ej. el Prospector) | Medio-largo plazo (6–24 meses) | Medio |
 
 **La regla:** la Vía A paga las cuentas y compra experiencia; la Vía B construye el patrimonio. Nunca abandonar B por estar "ocupado" en A.
 

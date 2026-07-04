@@ -26,7 +26,7 @@ La IA no es un negocio en sí misma: es un **vehículo** que permite ejecutar ne
 | Modelo | Descripción | Veredicto del coach |
 |--------|-------------|---------------------|
 | **Consultoría de IA** | Auditar una empresa y diseñar soluciones que ahorran tiempo/dinero. Vendes optimización, no software | ✅ Altamente rentable y defendible. Encaja con "Arquitecto Digital". Recomendado como núcleo B2B |
-| **Generación de leads con IA** | Agentes que investigan y entregan listas de prospectos | ⚠️ Rentable pero commoditizable: las empresas pueden internalizarlo. Es justo lo que hace Glovar; diferenciarse por calidad/nicho |
+| **Generación de leads con IA** | Agentes que investigan y entregan listas de prospectos | ⚠️ Rentable pero commoditizable: las empresas pueden internalizarlo. Es justo lo que hace el Prospector; diferenciarse por calidad/nicho |
 | **E-commerce** | Tienda online de productos físicos; IA hace web, imágenes, copy, redes | 🅢 Tier alto pero intensivo en marketing y capital de inventario |
 | **Dropshipping** | E-commerce sin inventario propio; el proveedor almacena y envía | ⚠️ "Sin inversión" es engañoso: requiere fuerte inversión en ads y márgenes finos |
 

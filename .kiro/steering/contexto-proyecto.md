@@ -12,7 +12,7 @@ Eres el **copiloto estratégico y técnico** de Yeison. Operas bajo tres directr
 
 ## La tesis en una frase
 
-Usar la IA como **vehículo** (no producto) para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales**. Modelo de **dos velocidades**: Vía A (freelance/Workana) financia y da experiencia; Vía B (productos B2B como Glovar Prospector) construye el patrimonio.
+Usar la IA como **vehículo** (no producto) para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales**. Modelo de **dos velocidades**: Vía A (freelance/Workana) financia y da experiencia; Vía B (productos B2B como el Prospector) construye el patrimonio.
 
 ## El fundador (resumen)
 
@@ -30,19 +30,26 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 
 ### Estrategia y ejecución
 - Reglas del juego (no negociables) → [`estrategia/reglas-del-juego.md`](../../estrategia/reglas-del-juego.md)
+- Hoja de ruta freelance→B2B → [`estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../estrategia/hoja-de-ruta-freelance-a-b2b.md)
+- Canal Workana + análisis de perfil → [`estrategia/canal-workana.md`](../../estrategia/canal-workana.md) · [`estrategia/perfil-workana-analisis.md`](../../estrategia/perfil-workana-analisis.md)
+- Guía freelance 30 días · Facturación (Colombia) · Productividad/CRM · Propósitos y mentores → `estrategia/`
+- Naming de la marca (⏳ nombre por decidir) → [`estrategia/marca-naming.md`](../../estrategia/marca-naming.md)
 - Dashboard de pendientes → [`estrategia/pendientes-checklist.md`](../../estrategia/pendientes-checklist.md)
 
-### Técnico y validación (⏳ pendientes de contenido)
-- `docs/tecnico/` (stack SDLC IA, Glovar Prospector, hacks de agentes) — aún sin contenido.
-- `docs/validacion/validacion-fuentes.md` — aún sin contenido.
+### Técnico y validación
+- El Prospector (arquitectura del producto) → [`docs/tecnico/prospector.md`](../../docs/tecnico/prospector.md)
+- Stack SDLC con IA (Kiro/Claude/Antigravity) → [`docs/tecnico/stack-sdlc-ia.md`](../../docs/tecnico/stack-sdlc-ia.md)
+- Hacks de agentes de IA → [`docs/tecnico/hacks-agentes-ia.md`](../../docs/tecnico/hacks-agentes-ia.md)
+- Validación de fuentes (dato real vs hype) → [`docs/validacion/validacion-fuentes.md`](../../docs/validacion/validacion-fuentes.md)
 
-### Cliente B2B
-- `proyectos/tbbc/` — **primer cliente B2B (The BitBang Company).** ⏳ Sin contenido cargado todavía; requiere data real del fundador (auditoría, propuesta, inteligencia de cliente, plan de contacto).
+### Cliente / oportunidad B2B activa
+- `proyectos/catalina-prospector/` — **Catalina Rúa, clienta potencial del Prospector** para su propio emprendimiento. Playbooks de Módulo 4 y 5 afinados. Ver [`README`](../../proyectos/catalina-prospector/README.md).
+- ⚠️ El proyecto SEO de **TBBC lo maneja el fundador aparte**, fuera de este repo. No mezclar.
 
 ## Los 5 Módulos del Vendedor Híbrido (marco oficial de ventas)
 
 1. Fundamentos del vendedor híbrido (omnicanal + CRM + propuesta de valor).
-2. Segmentación y prospección estratégica (ICP + multicanal; aquí entra Glovar).
+2. Segmentación y prospección estratégica (ICP + multicanal; aquí entra el Prospector).
 3. Contacto y calificación (primer acercamiento personalizado + BANT/MEDDPICC + escucha activa).
 4. Desarrollo de la entrevista de ventas (diagnóstico profundo + demo por valor + manejo de objeciones + cierre).
 5. Relaciones a largo plazo (onboarding + postventa + up/cross-sell → retención y referidos).

@@ -4,9 +4,9 @@
 
 ## Tesis del proyecto
 
-Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales** (vendemos resultados, no tareas). Modelo de **dos velocidades**: el freelance financia y da experiencia (corto plazo); los proyectos B2B (ej. Glovar Prospector) construyen el patrimonio (medio-largo plazo).
+Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales** (vendemos resultados, no tareas). Modelo de **dos velocidades**: el freelance financia y da experiencia (corto plazo); los proyectos B2B (ej. el Prospector) construyen el patrimonio (medio-largo plazo).
 
-## Mapa del repositorio (estructura objetivo)
+## Mapa del repositorio
 
 ```
 .
@@ -22,47 +22,41 @@ Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, 
 │   │   ├── 03-estrategia-ventas-prospeccion.md  ← incluye los 5 Módulos del Vendedor Híbrido
 │   │   ├── 04-ia-conceptos-y-modelos-negocio.md
 │   │   ├── perfil-fundador.md        ← quién es Yeison y cómo se posiciona
-│   │   └── presentacion-fundadores.md ← pieza para presentar el emprendimiento ante clientes
+│   │   └── presentacion-fundadores.md ← pieza para presentar el emprendimiento
 │   ├── tecnico/
 │   │   ├── stack-sdlc-ia.md          ← orquestación Kiro/Claude/Antigravity
-│   │   ├── glovar-prospector.md      ← arquitectura del producto B2B
+│   │   ├── prospector.md             ← arquitectura del producto B2B (el Prospector)
 │   │   └── hacks-agentes-ia.md       ← hacks de productividad con agentes de IA
-│   ├── fuentes/                      ← documentos fuente (guías freelance)
 │   └── validacion/
 │       └── validacion-fuentes.md     ← qué es dato verificado vs hype
 └── estrategia/
     ├── reglas-del-juego.md           ← reglas no negociables
-    ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases (ajustado a Workana + Popayán)
+    ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases (Workana + Popayán)
     ├── canal-workana.md              ← validación y estrategia del canal freelance
     ├── perfil-workana-analisis.md    ← análisis crítico del perfil de Workana
     ├── guia-freelance-30-dias.md     ← síntesis de la guía Freelance + IA (reto 30 días)
     ├── facturacion-y-contratos-colombia.md ← cómo facturar, IVA, exportación, contratos
-    ├── productividad-y-automatizacion.md ← CRM propio, costo Glovar, automatizar tareas
-    ├── marca-naming.md               ← naming de la marca (técnicas + top 10 + lista negra)
+    ├── productividad-y-automatizacion.md ← CRM propio, costo del Prospector, automatizar
+    ├── marca-naming.md               ← naming de la marca (técnicas + top + lista negra + Ronda 3)
     ├── pendientes-checklist.md       ← 📋 DASHBOARD único de tareas abiertas
     └── propositos-y-mentores.md      ← norte, mentores y camino enfocado
 
 proyectos/
-└── tbbc/                             ← PRIMER CLIENTE B2B (The BitBang Company)
-    ├── README.md                     ← estado e índice del proyecto
-    ├── 00-inteligencia-cliente.md    ← perfil de TBBC, liderazgo y relaciones
-    ├── 01-auditoria-seo.md           ← resumen ejecutable de la auditoría
-    ├── 02-propuesta-servicios.md     ← propuesta + análisis crítico del coach
-    ├── 03-ciclo-de-vida.md           ← ciclo de vida del proyecto de inicio a fin
-    ├── 04-plan-de-contacto.md        ← cómo re-contactar a Catalina (CGO)
-    └── fuentes/                      ← PDFs originales (auditoría + estrategia)
+└── catalina-prospector/             ← PRIMERA OPORTUNIDAD B2B DEL PROSPECTOR
+    ├── README.md                     ← estado e índice de la oportunidad
+    ├── 00-contexto-cliente.md        ← qué sabemos y qué NO de Catalina Rúa
+    ├── 01-playbook-m4-entrevista.md  ← Módulo 4: diagnóstico, demo, objeciones, cierre
+    └── 02-playbook-m5-relacion.md    ← Módulo 5: onboarding, postventa, retención, referidos
 ```
-
-> ⚠️ **Estado de construcción real:** este mapa es la **estructura objetivo**. A la fecha solo están construidos los archivos con contenido validado (ver `estrategia/pendientes-checklist.md`). Los archivos marcados como ⏳ pendientes aún no tienen contenido y **no deben inventarse**: requieren fuentes o input del fundador.
 
 ## Por dónde empezar
 
 1. Lee la [Visión y Enfoque](docs/fundamentos/00-vision-y-enfoque.md).
 2. Conoce el [Perfil del Fundador](docs/fundamentos/perfil-fundador.md) — el posicionamiento.
 3. Interioriza los 4 pilares (`docs/fundamentos/`), incluido el de ventas con los 5 Módulos.
-4. Revisa la Validación de fuentes — qué es real y qué es hype *(pendiente)*.
-5. Aterriza en Propósitos y mentores, las [Reglas del juego](estrategia/reglas-del-juego.md) y la Hoja de ruta.
-6. Trabaja el primer cliente B2B en Proyecto TBBC y el canal freelance en Canal Workana *(pendientes)*.
+4. Revisa la [Validación de fuentes](docs/validacion/validacion-fuentes.md) — qué es real y qué es hype.
+5. Aterriza en [Propósitos y mentores](estrategia/propositos-y-mentores.md), las [Reglas del juego](estrategia/reglas-del-juego.md) y la [Hoja de ruta](estrategia/hoja-de-ruta-freelance-a-b2b.md).
+6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md) y el canal freelance en [Canal Workana](estrategia/canal-workana.md).
 
 ## Principios operativos
 
@@ -73,7 +67,7 @@ proyectos/
 
 ## Estado
 
-- ✅ Base de conocimiento **fundamentos** consolidada (los 4 pilares + perfil + presentación + reglas).
-- ✅ 5 Módulos del Vendedor Híbrido incorporados en el pilar de ventas.
-- ⏳ Documentos técnicos, validación de fuentes, resto de estrategia y proyecto TBBC: **pendientes de contenido** (centralizado en el [Checklist de Pendientes](estrategia/pendientes-checklist.md)).
-- 🎯 Prioridad: cargar la data real de TBBC (Fase 1) y activar Workana.
+- ✅ Base de conocimiento consolidada y validada (jun-2026, re-verificada 4-jul-2026): 4 pilares + técnico + validación + estrategia.
+- ✅ 5 Módulos del Vendedor Híbrido, guía freelance, facturación (Colombia) y hacks de IA incorporados.
+- ✅ Referencia al antiguo empleador retirada; producto propio renombrado a **el Prospector**.
+- ⏳ Tareas abiertas centralizadas en el [Checklist de Pendientes](estrategia/pendientes-checklist.md). Prioridad: avanzar **Catalina/Prospector** y activar **Workana**.

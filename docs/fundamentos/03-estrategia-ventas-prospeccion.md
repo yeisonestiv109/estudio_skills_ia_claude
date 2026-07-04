@@ -27,7 +27,7 @@ Identificar y filtrar de forma inteligente a los prospectos antes del primer con
 
 - **Perfil de Cliente Ideal (ICP):** definir con precisión qué empresas/personas obtienen el mayor valor de tu solución.
 - **Criterios de segmentación:** industria, tamaño de empresa, facturación, ubicación, comportamiento digital.
-- **Búsqueda multicanal:** bases de datos, redes profesionales y señales de mercado para localizar a los tomadores de decisión. (Aquí entra Glovar Prospector.)
+- **Búsqueda multicanal:** bases de datos, redes profesionales y señales de mercado para localizar a los tomadores de decisión. (Aquí entra el Prospector.)
 
 ### Módulo 3 · Contacto y Calificación de Prospectos
 
@@ -78,7 +78,7 @@ Prospección (M2) → Calificación (M3) → Contacto/Diagnóstico (M3–M4) →
 ### 3. Scraping (extracción automática de datos)
 
 - Ejemplo: extraer de Google Maps una lista (Excel) de cientos de restaurantes de una ciudad, filtrar los que no tienen web y ofrecerles crearla.
-- Es la base técnica de **Glovar Prospector**.
+- Es la base técnica de **el Prospector**.
 
 > ⚠️ **Advertencia legal del coach (Colombia / LATAM):** el scraping y el cold email tienen límites legales reales. Antes de operar a escala revisa:
 >
