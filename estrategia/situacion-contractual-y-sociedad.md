@@ -58,15 +58,18 @@ Usando los planes reales del [modelo de costos](../docs/tecnico/costo-por-lead.m
 
 > **Recomendación del coach:** **Opción A + D.** Construye **tu propio producto desde cero** (nombre nuevo, arquitectura nueva) y **reclama lo que te deben**. El 15% (B) solo como canal extra si ellos realmente traen clientes que pagan y cubren el 100% de costos. Renegociar (C) solo si demuestran que aportan ventas.
 
-## 5. ⚠️ Implicación CRÍTICA para Catalina
+## 5. Implicación para Catalina — ACLARADO (4-jul-2026)
 
-Si "el Prospector" que le mostrarías a Catalina es el que construiste **bajo contrato**, venderle ese sistema de forma independiente **violaría** las cláusulas 7ª (confidencialidad) y 8ª (IP de la contratante). Rutas limpias:
+✅ **Catalina es contacto propio del fundador** (evento de emprendimiento en Popayán), **no es cliente de la contratante** → la **cláusula 9ª (no-competencia) NO aplica**. No hay que esperar 12 meses.
 
-1. **Venderle TU producto nuevo e independiente** (Opción A) — no el de la contratante.
-2. **Rutar la venta por la contratante** (esquema 15%) — legal pero es negocio de ellos.
-3. **Autorización escrita** de la contratante.
+**Única condición firme (cláusula 7ª — confidencialidad, 2 años):** lo que le ofrezcas debe ser un **build nuevo e independiente**, sin reutilizar arquitectura, flujos, modelos ni metodología de la contratante. El fundador ya confirmó que se construye **algo propio desde cero, sin usar nada de ellos**. Esa es exactamente la postura correcta.
 
-Y además: **aclarar si Catalina (o TBBC) es un cliente que conociste por el contrato con la contratante.** Si lo es, la cláusula 9ª (no-competencia, 12 meses) te impediría servirle de forma independiente hasta ~mediados de 2027. **Este punto hay que resolverlo antes de avanzar con Catalina.**
+> Rutas válidas para Catalina: **(A) tu producto nuevo e independiente** ← elegida. (No aplican las otras opciones porque ya no dependes de la contratante para esta clienta.)
+
+**Disciplina "clean room" recomendada** (para poder demostrar creación independiente si alguna vez se cuestiona):
+- Diseña tu propia arquitectura y esquema de datos (no repliques los de la contratante).
+- Documenta tus decisiones de diseño y su fecha (evidencia de creación propia).
+- Usa tu conocimiento general y fuentes públicas; no reutilices código, prompts, "pain frameworks" ni BD de la contratante.
 
 ## 6. Sobre "poner a mi compañera como autora"
 
@@ -81,7 +84,7 @@ Trabajar con tu compañera en **otros módulos del marco comercial** (van en M2;
 
 - [ ] **Abogado laboral:** ¿pago incompleto reclamable? (terminación sin aviso de 15 días = incumplimiento). ¿Riesgo/beneficio de "contrato realidad"?
 - [ ] **Abogado IP/comercial:** ¿qué tan "independiente" debe ser tu nuevo build para no rozar confidencialidad (cláusula 7ª, 2 años)?
-- [ ] **Aclarar:** ¿Catalina/TBBC son clientes que conociste por el contrato? (cláusula 9ª, no-competencia 12 meses).
+- [x] ~~Aclarar si Catalina es cliente conocido por el contrato~~ → **Resuelto: Catalina es contacto propio (Popayán), no cliente de la contratante. Cláusula 9ª N/A.** (TBBC lo maneja el fundador aparte.)
 - [ ] Reclamar formalmente los **honorarios causados y no pagados**.
 - [ ] Decidir: **A (propio) + D (cobrar)** vs. B/C.
 - [ ] Si vas por A: definir **nombre nuevo** (ver [`marca-naming.md`](marca-naming.md)) y arquitectura propia documentada como creación independiente.

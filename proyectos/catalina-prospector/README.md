@@ -1,19 +1,19 @@
 # Proyecto — Catalina Rúa · El Prospector (Vía B)
 
-Primera **oportunidad B2B activa** para el producto propio (el Prospector). Catalina Rúa es una **clienta potencial** interesada en usar el Prospector para su propio emprendimiento.
+Primera **oportunidad B2B activa** para el producto propio de Vía B (un **prospector nuevo e independiente**, construido desde cero — nombre por definir). Catalina Rúa es una **clienta potencial**, contacto propio del fundador (se conocieron en un evento de emprendimiento en Popayán), interesada en la prospección con IA para su propio emprendimiento.
 
 > 📌 **Aclaración de contexto:** el proyecto SEO de **TBBC lo maneja el fundador aparte**, fuera de este repo. Aquí Catalina figura **solo** como oportunidad para el Prospector, para su otra empresa/emprendimiento. No mezclar ambos frentes.
 
-> 🔴 **ALERTA LEGAL (4-jul-2026 — leer antes de avanzar):** el análisis del contrato ([`situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)) reveló que **el Prospector construido bajo contrato es IP de la contratante** (cláusula 8ª). Venderle a Catalina **ese** sistema de forma independiente violaría confidencialidad (7ª) e IP (8ª). Rutas limpias: (1) venderle **tu propio producto nuevo e independiente**, (2) rutar por la contratante (esquema 15%), o (3) autorización escrita. **Además, aclarar si Catalina/TBBC son clientes que conociste por el contrato** → cláusula 9ª (no-competencia, 12 meses) podría impedir servirle de forma independiente hasta ~2027. **Resolver esto ANTES de avanzar.**
+> ✅ **Situación legal aclarada (4-jul-2026):** Catalina es **contacto propio del fundador** (la conoció en un evento de emprendimiento en Popayán); **NO es cliente de la contratante** → la **cláusula 9ª (no-competencia) NO aplica**. Vía libre para trabajar con ella. **Condición firme:** el producto que se le ofrezca debe ser un **build nuevo e independiente**, sin reutilizar arquitectura/flujos/metodología de la contratante (cláusula 7ª — confidencialidad, 2 años). El fundador ya confirmó: se construye **algo propio desde cero**. Ver [`situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md).
 
 ## Estado
 
 | Campo | Valor |
 |-------|-------|
 | Etapa del embudo | Interés inicial (pre-diagnóstico) → **Módulo 3–4** del Vendedor Híbrido |
-| Producto | ⚠️ A definir: **producto propio independiente** (no el Prospector de la contratante) |
+| Producto | **Producto propio independiente** (build nuevo desde cero, nombre por definir) — NO el Prospector de la contratante |
 | Módulos a afinar | **4 (entrevista/diagnóstico/cierre)** y **5 (relación a largo plazo)** |
-| Bloqueante #0 (nuevo) | **Legal:** confirmar vía limpia (IP/no-competencia) antes de ofrecerle nada |
+| Bloqueante #0 (legal) | ✅ Resuelto: Catalina no es cliente de la contratante (cláusula 9ª N/A). Solo aplica disciplina de build independiente (cláusula 7ª) |
 | Bloqueante #1 | Costo por lead: resuelto (~$155–190 COP marginal); pricing de piloto pendiente |
 | Bloqueante #2 | Encaje del ICP: ¿a qué se dedica el emprendimiento de Catalina? (dato pendiente) |
 

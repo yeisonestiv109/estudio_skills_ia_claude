@@ -7,7 +7,7 @@
 - **Catalina Rúa** es una **clienta potencial** interesada en trabajar con nosotros.
 - Su interés inicial es el **Prospector de leads** (nuestro producto propio, Vía B).
 - Catalina **tiene otro emprendimiento**, y es por/para ese emprendimiento que le interesa el Prospector.
-- Existe ya una relación/canal de conversación previa con ella (viene de otro contexto que el fundador maneja aparte).
+- **Contacto propio del fundador:** se conocieron en un **evento de emprendimiento en Popayán** y desde entonces están en contacto. **No es cliente de la contratante** → sin restricción de no-competencia (cláusula 9ª N/A).
 - **Ya hubo una primera reunión** y se corrió una **prueba genérica** del Prospector (no calibrada a su negocio). El ICP específico de Catalina **quedó pendiente**.
 
 ## Plan antes de la próxima reunión (definido 4-jul-2026)
