@@ -6,6 +6,7 @@ Canal de **activos digitales de calidad** que resuelven un problema real y vende
 
 - [`metodo-productos-digitales.md`](metodo-productos-digitales.md) — el método completo (adaptado + validado 2026): mercado real, producción, SEO, algoritmo, y nota crítica de foco.
 - [`propuestas.md`](propuestas.md) — **6 propuestas** (nicho · producto · estilo) investigadas + marco de validación + qué hacer en eRank/Everbee.
+- [`producto-01-short-term-rental.md`](producto-01-short-term-rental.md) — ✅ **producto elegido y validado**: sistema financiero STR/Airbnb en Google Sheets (multi-propiedad + fiscal). Blueprint + Documento de Diseño + SEO + riesgos.
 
 ## Fundamentos compartidos (comunes a todos los canales)
 

@@ -39,10 +39,11 @@
 
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
-| ⏳ | **Elegir nicho/ángulo Etsy (de 6 propuestas)** | 5 propuestas nuevas + la de adquisición de clientes. Ver [`etsy/propuestas.md`](etsy/propuestas.md) y método en [`etsy/metodo-productos-digitales.md`](etsy/metodo-productos-digitales.md) |
-| 🔴 | **Validar demanda en eRank (x100) + Everbee** | Obligatorio antes de producir. Kiro no tiene eRank; lo corre el fundador y registra números |
-| 🔴 | **Documento de Diseño** (avatar, 3 colores, 3 tipografías, moodboard) | Antes de diseñar el producto |
-| 🔴 | **Producir 1 producto de calidad** (Notion/Sheets + guía + entrega Canva) | Calidad > cantidad. Kiro ayuda con estructura, copys, SEO |
+| ✅ | **Nicho Etsy elegido y validado** | Sistema financiero STR/Airbnb en Google Sheets (multi-propiedad + fiscal). Ver [`etsy/producto-01-short-term-rental.md`](etsy/producto-01-short-term-rental.md) |
+| ✅ | **Validación de mercado** | Precios $16–25 reales, valor "sustituir software $10–50/mes", KPIs (ADR/Occupancy/RevPAR) y ángulo fiscal Schedule E confirmados. Volumen exacto sin dato duro (paywall) — inferido |
+| ⏳ | **Confirmar blueprint del producto #1** | Features, estilo (Minimalista Ejecutivo), precio ~$17–19. Falta OK del fundador |
+| 🔴 | **Kiro entrega spec de fórmulas + CSV base** | Todas las pestañas (Dashboard, Bookings, Expenses, P&L, Tax, bonus) |
+| 🔴 | **Montar Sheet + mockups + listing (título/13 tags/descripción + disclaimers)** | Incluir disclaimer fiscal y de marca Airbnb (riesgo trademark) |
 
 ## ⚖️ Repo del prospector construido bajo contrato (alerta IP)
 
