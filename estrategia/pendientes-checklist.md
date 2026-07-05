@@ -10,8 +10,8 @@
 | ⏳ | **Catalina / Prospector — avanzar la oportunidad** | Clienta potencial. Ya hubo 1 reunión + prueba genérica; **ICP pendiente**. Aplicar Módulos 4 y 5. Ver [`proyectos/catalina-prospector/`](../proyectos/catalina-prospector/README.md) |
 | 🔴 | **Correr job de prueba con datos públicos de TBBC** | Para afinar el Prospector (triggers/geo-fit/copy) y medir costo por lead ANTES de re-reunirse con Catalina. Ver [contexto-cliente](../proyectos/catalina-prospector/00-contexto-cliente.md) |
 | 🔴 | **Definir pricing del Prospector para Catalina** | Sin costo por lead medido, cotizar es adivinar. Para el piloto: **precio cerrado**, no por lead. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) |
-| ⏳ | **Workana — esperar validación de la cuenta** | Membresía pagada. Una vez activa, empezar a postular. Ver [`canal-workana.md`](canal-workana.md) |
-| 🔴 | **Workana — aplicar cambios al perfil** | Cambiar título, agregar el Prospector, subir tarifa, pegar "Sobre mí", sumar proyectos. Ver [`perfil-workana-analisis.md`](perfil-workana-analisis.md) |
+| ⏳ | **Workana — esperar validación de la cuenta** | Membresía pagada. Una vez activa, empezar a postular. Ver [`workana/canal-workana.md`](workana/canal-workana.md) |
+| 🔴 | **Workana — aplicar cambios al perfil** | Cambiar título, agregar el Prospector, subir tarifa, pegar "Sobre mí", sumar proyectos. Ver [`workana/perfil-workana-analisis.md`](workana/perfil-workana-analisis.md) |
 
 ## 🔥🔥 CRÍTICO — Situación contractual y sociedad (nuevo, 4-jul-2026)
 
@@ -39,7 +39,7 @@
 
 | Estado | Pendiente | Detalle |
 |--------|-----------|---------|
-| ⏳ | **Elegir nicho/ángulo Etsy** | Recomendado: "Sistema de Adquisición de Clientes" para freelancers (apalanca tu expertise de prospección). Ver [`canal-etsy-productos-digitales.md`](canal-etsy-productos-digitales.md) |
+| ⏳ | **Elegir nicho/ángulo Etsy (de 6 propuestas)** | 5 propuestas nuevas + la de adquisición de clientes. Ver [`etsy/propuestas.md`](etsy/propuestas.md) y método en [`etsy/metodo-productos-digitales.md`](etsy/metodo-productos-digitales.md) |
 | 🔴 | **Validar demanda en eRank (x100) + Everbee** | Obligatorio antes de producir. Kiro no tiene eRank; lo corre el fundador y registra números |
 | 🔴 | **Documento de Diseño** (avatar, 3 colores, 3 tipografías, moodboard) | Antes de diseñar el producto |
 | 🔴 | **Producir 1 producto de calidad** (Notion/Sheets + guía + entrega Canva) | Calidad > cantidad. Kiro ayuda con estructura, copys, SEO |

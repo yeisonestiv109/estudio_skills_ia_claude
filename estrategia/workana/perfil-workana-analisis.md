@@ -55,7 +55,7 @@ Tienes Mediscribe y OmniRetail, pero **el Prospector — tu producto propio de p
 > **Lead AI Engineer — Agentic Workflows & Voice AI · (Remoto) · 2024–2026**
 > Diseñé y desplegué un motor autónomo de prospección B2B con IA (multi-agente, RAG) y un agente de voz en tiempo real para atención al cliente. Stack: Python, LangGraph, FastAPI, PostgreSQL/Supabase, despliegue serverless. Foco en costo/latencia de tokens y escalabilidad.
 
-> ⚠️ **Ojo con las fechas solapadas** (ver [perfil-fundador](../docs/fundamentos/perfil-fundador.md)). Si un cliente las cruza, parecen inconsistentes. **Enmárcalas como roles freelance/contract concurrentes** (es legítimo) y mantén la coherencia con tu LinkedIn.
+> ⚠️ **Ojo con las fechas solapadas** (ver [perfil-fundador](../../docs/fundamentos/perfil-fundador.md)). Si un cliente las cruza, parecen inconsistentes. **Enmárcalas como roles freelance/contract concurrentes** (es legítimo) y mantén la coherencia con tu LinkedIn.
 >
 > 📝 *Nota de marca (jul-2026): la referencia a un antiguo empleador se retiró del repo. Define con qué nombre quieres mostrar esta experiencia en Workana/LinkedIn — como producto propio o como contrato con un tercero — y sé coherente en todos los canales.*
 

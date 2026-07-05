@@ -32,8 +32,8 @@ Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, 
 └── estrategia/
     ├── reglas-del-juego.md           ← reglas no negociables
     ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases (Workana + Popayán)
-    ├── canal-workana.md              ← validación y estrategia del canal freelance
-    ├── perfil-workana-analisis.md    ← análisis crítico del perfil de Workana
+    ├── workana/                      ← 📁 canal Workana (Vía A): canal-workana.md + perfil-workana-analisis.md
+    ├── etsy/                         ← 📁 canal Etsy (productos digitales): metodo + propuestas + README
     ├── guia-freelance-30-dias.md     ← síntesis de la guía Freelance + IA (reto 30 días)
     ├── facturacion-y-contratos-colombia.md ← cómo facturar, IVA, exportación, contratos
     ├── productividad-y-automatizacion.md ← CRM propio, costo del Prospector, automatizar
@@ -56,7 +56,7 @@ proyectos/
 3. Interioriza los 4 pilares (`docs/fundamentos/`), incluido el de ventas con los 5 Módulos.
 4. Revisa la [Validación de fuentes](docs/validacion/validacion-fuentes.md) — qué es real y qué es hype.
 5. Aterriza en [Propósitos y mentores](estrategia/propositos-y-mentores.md), las [Reglas del juego](estrategia/reglas-del-juego.md) y la [Hoja de ruta](estrategia/hoja-de-ruta-freelance-a-b2b.md).
-6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md) y el canal freelance en [Canal Workana](estrategia/canal-workana.md).
+6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md), el canal freelance en [Canal Workana](estrategia/workana/README.md) y los productos digitales en [Canal Etsy](estrategia/etsy/README.md).
 
 ## Principios operativos
 

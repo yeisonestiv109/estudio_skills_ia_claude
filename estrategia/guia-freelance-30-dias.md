@@ -1,6 +1,6 @@
 # Guía Freelance + IA — Síntesis Organizada (Reto de 30 días)
 
-> Consolidación de dos fuentes del fundador (`documento_1` guía ejecutiva + `documento_2` versión mentora). Mismo curso, organizado aquí en una sola hoja de ruta accionable. Conecta directamente con la [hoja de ruta freelance→B2B](hoja-de-ruta-freelance-a-b2b.md) y el [canal Workana](canal-workana.md).
+> Consolidación de dos fuentes del fundador (`documento_1` guía ejecutiva + `documento_2` versión mentora). Mismo curso, organizado aquí en una sola hoja de ruta accionable. Conecta directamente con la [hoja de ruta freelance→B2B](hoja-de-ruta-freelance-a-b2b.md) y el [canal Workana](workana/canal-workana.md).
 
 ## Idea central: vender VALOR, no tiempo
 
