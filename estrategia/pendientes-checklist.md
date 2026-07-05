@@ -35,6 +35,21 @@
 | 🟡 | **Abogado IP/comercial — límites del build independiente** | IP ya resuelto (es de la contratante). Pregunta abierta: ¿qué tan distinto debe ser tu nuevo build para no rozar confidencialidad (cláusula 7ª, 2 años)? Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
 | ✅ | **Costo por lead — RESUELTO con datos reales** | ~$155–190 COP marginal, ~$290 COP a plena capacidad; stack $108/mes; tope Hunter ~1.500 contactos. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) |
 
+## 🛒 Canal Etsy — productos digitales (nuevo, 5-jul-2026)
+
+| Estado | Pendiente | Detalle |
+|--------|-----------|---------|
+| ⏳ | **Elegir nicho/ángulo Etsy** | Recomendado: "Sistema de Adquisición de Clientes" para freelancers (apalanca tu expertise de prospección). Ver [`canal-etsy-productos-digitales.md`](canal-etsy-productos-digitales.md) |
+| 🔴 | **Validar demanda en eRank (x100) + Everbee** | Obligatorio antes de producir. Kiro no tiene eRank; lo corre el fundador y registra números |
+| 🔴 | **Documento de Diseño** (avatar, 3 colores, 3 tipografías, moodboard) | Antes de diseñar el producto |
+| 🔴 | **Producir 1 producto de calidad** (Notion/Sheets + guía + entrega Canva) | Calidad > cantidad. Kiro ayuda con estructura, copys, SEO |
+
+## ⚖️ Repo del prospector construido bajo contrato (alerta IP)
+
+| Estado | Pendiente | Detalle |
+|--------|-----------|---------|
+| ⚠️ | **`ia_lead_prospector` = IP de la contratante** | Clonado como referencia. **NO reutilizar** su código/arquitectura/SOPs para el build nuevo ni para Catalina (cláusulas 7ª y 8ª). Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
+
 ## 🏷️ Marca / Identidad
 
 | Estado | Pendiente | Detalle |

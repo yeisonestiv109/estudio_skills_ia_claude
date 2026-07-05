@@ -37,6 +37,8 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 - Hoja de ruta freelance→B2B → [`estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../estrategia/hoja-de-ruta-freelance-a-b2b.md)
 - Canal Workana + análisis de perfil → [`estrategia/canal-workana.md`](../../estrategia/canal-workana.md) · [`estrategia/perfil-workana-analisis.md`](../../estrategia/perfil-workana-analisis.md)
 - Guía freelance 30 días · Facturación (Colombia) · Productividad/CRM · Propósitos y mentores → `estrategia/`
+- **Canal Etsy — productos digitales** (activo de mediano plazo, calidad>rapidez) → [`estrategia/canal-etsy-productos-digitales.md`](../../estrategia/canal-etsy-productos-digitales.md)
+- Situación contractual y sociedad (IP, 15%, clean-room) → [`estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)
 - Naming de la marca (⏳ nombre por decidir) → [`estrategia/marca-naming.md`](../../estrategia/marca-naming.md)
 - Dashboard de pendientes → [`estrategia/pendientes-checklist.md`](../../estrategia/pendientes-checklist.md)
 
