@@ -111,7 +111,7 @@ def dropdown(sid,r1,r2,c1,c2,opts):
 # ══════════════════════════════════════════════════════════════════════════════
 def tab_setup(sid):
     q=[]
-    q.append(merge(sid,0,0,2,6))
+    q.append(merge(sid,0,0,1,6)); q.append(merge(sid,1,0,2,6))
     q.append(uc(sid,0,0,[
         row(["🏡  STR Financial System — Setup & Configuration"]+[""]*5,
             fmt(bg=C_DARK,bold=True,sz=16,fg=C_WHITE,ha="CENTER")),
@@ -145,7 +145,7 @@ def tab_setup(sid):
            "⚠️  DISCLAIMER: Organizational tool only. NOT tax/legal/financial advice. Consult a licensed CPA before filing."]
     q.append(uc(sid,20,0,[row([s]+[""]*5,fmt(bg=C_LGRAY,wrap=True,sz=9)) for s in steps]))
     for i,w in enumerate([80,160,200,160,120,200]): q.append(cw(sid,i,i+1,w))
-    q+=[rh(sid,0,2,38),freeze(sid,1,0),tabcolor(sid,C_ACNT)]
+    q+=[rh(sid,0,2,38),freeze(sid,2,0),tabcolor(sid,C_ACNT)]
     return q
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -217,7 +217,7 @@ def tab_expenses(sid):
 # ══════════════════════════════════════════════════════════════════════════════
 def tab_dashboard(sid):
     q=[]
-    q.append(merge(sid,0,0,2,8))
+    q.append(merge(sid,0,0,1,8)); q.append(merge(sid,1,0,2,8))
     q.append(uc(sid,0,0,[
         row(["📊  DASHBOARD — Portfolio Performance"]+[""]*7,
             fmt(bg=C_DARK,bold=True,sz=16,fg=C_WHITE,ha="CENTER")),
@@ -270,7 +270,7 @@ def tab_dashboard(sid):
 # ══════════════════════════════════════════════════════════════════════════════
 def tab_pl(sid):
     q=[]
-    q.append(merge(sid,0,0,2,7))
+    q.append(merge(sid,0,0,1,7)); q.append(merge(sid,1,0,2,7))
     q.append(uc(sid,0,0,[
         row(["📈  PROFIT & LOSS — By Property"]+[""]*6,
             fmt(bg=C_DARK,bold=True,sz=14,fg=C_WHITE,ha="CENTER")),
@@ -321,7 +321,7 @@ def tab_pl(sid):
 # ══════════════════════════════════════════════════════════════════════════════
 def tab_tax(sid):
     q=[]
-    q.append(merge(sid,0,0,2,5))
+    q.append(merge(sid,0,0,1,5)); q.append(merge(sid,1,0,2,5))
     q.append(uc(sid,0,0,[
         row(["🧾  TAX SUMMARY — Schedule E Reference"]+[""]*4,
             fmt(bg=C_DARK,bold=True,sz=14,fg=C_WHITE,ha="CENTER")),
@@ -436,7 +436,6 @@ def build(spreadsheet_id: str):
     print(f"Connecting to spreadsheet: {spreadsheet_id}")
     meta = ss.get(spreadsheetId=spreadsheet_id).execute()
     existing = [s["properties"]["sheetId"] for s in meta["sheets"]]
-    default_sid = meta["sheets"][0]["properties"]["sheetId"]
 
     tab_defs = [
         ("🏡 Setup",    SID["setup"],    C_ACNT),
@@ -449,28 +448,33 @@ def build(spreadsheet_id: str):
         ("📦 Supplies", SID["supplies"], C_LGRAY),
     ]
 
-    # Step 1: add all new sheets
-    add_reqs = []
-    for title, sid, color in tab_defs:
-        if sid not in existing:
-            add_reqs.append(addsheet(title, sid, color))
-    if add_reqs:
+    # ── Step 0: CLEANUP — reset spreadsheet to a single temp sheet ────────────
+    print("Cleaning up existing sheets...")
+    TEMP_SID = 9999
+    if TEMP_SID not in existing:
         ss.batchUpdate(spreadsheetId=spreadsheet_id,
-                       body={"requests":add_reqs}).execute()
-        print(f"Created {len(add_reqs)} new sheets")
-        time.sleep(1)
-
-    # Rename existing sheet[0] to Setup if it was the default blank
-    rename = [{"updateSheetProperties":{"properties":
-               {"sheetId":default_sid,"title":"🏡 Setup"},
-               "fields":"title"}}]
-    try:
+                       body={"requests":[addsheet("_temp", TEMP_SID)]}).execute()
+        time.sleep(0.5)
+    # delete every sheet except the temp
+    del_reqs = [delsheet(s) for s in existing if s != TEMP_SID]
+    if del_reqs:
         ss.batchUpdate(spreadsheetId=spreadsheet_id,
-                       body={"requests":rename}).execute()
-    except Exception:
-        pass
+                       body={"requests":del_reqs}).execute()
+        print(f"  Removed {len(del_reqs)} old sheets")
+        time.sleep(0.5)
 
-    # Step 2: populate each tab
+    # ── Step 1: add the 8 product tabs fresh ──────────────────────────────────
+    add_reqs = [addsheet(title, sid, color) for title, sid, color in tab_defs]
+    ss.batchUpdate(spreadsheetId=spreadsheet_id,
+                   body={"requests":add_reqs}).execute()
+    print(f"Created {len(add_reqs)} sheets")
+    time.sleep(1)
+
+    # remove the temp sheet now that real sheets exist
+    ss.batchUpdate(spreadsheetId=spreadsheet_id,
+                   body={"requests":[delsheet(TEMP_SID)]}).execute()
+
+    # ── Step 2: populate each tab ─────────────────────────────────────────────
     print("Building tabs...")
     builders = [
         (SID["setup"],    tab_setup),
