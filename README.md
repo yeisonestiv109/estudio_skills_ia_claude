@@ -25,19 +25,23 @@ Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, 
 │   │   └── presentacion-fundadores.md ← pieza para presentar el emprendimiento
 │   ├── tecnico/
 │   │   ├── stack-sdlc-ia.md          ← orquestación Kiro/Claude/Antigravity
-│   │   ├── prospector.md             ← arquitectura del producto B2B (el Prospector)
+│   │   ├── arquitectura-y-paradigmas.md ← paradigmas del build nuevo e independiente
+│   │   ├── prospector-m1-m2-design.md ← diseño del Prospector Vía B (M1 ICP + M2 Triggers)
 │   │   └── hacks-agentes-ia.md       ← hacks de productividad con agentes de IA
 │   └── validacion/
 │       └── validacion-fuentes.md     ← qué es dato verificado vs hype
+├── .kiro/
+│   ├── settings/environment_setup.md ← Cabina de Mando (entorno, skills, hooks, MCP)
+│   ├── skills/                       ← Agent Skills nativas (auditar-arquitectura, diseno-hexagonal)
+│   └── hooks/                        ← Prompt Hooks nativos (cerrar-decision, cost-audit, memory)
 └── estrategia/
     ├── reglas-del-juego.md           ← reglas no negociables
-    ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases (Workana + Popayán)
-    ├── workana/                      ← 📁 canal Workana (Vía A): canal-workana.md + perfil-workana-analisis.md
-    ├── etsy/                         ← 📁 canal Etsy (productos digitales): metodo + propuestas + README
-    ├── guia-freelance-30-dias.md     ← síntesis de la guía Freelance + IA (reto 30 días)
+    ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases hacia el producto B2B
     ├── facturacion-y-contratos-colombia.md ← cómo facturar, IVA, exportación, contratos
+    ├── modelo-agencia-ia-unipersonal.md ← go-to-market de la agencia de IA
     ├── productividad-y-automatizacion.md ← CRM propio, costo del Prospector, automatizar
-    ├── marca-naming.md               ← naming de la marca (técnicas + top + lista negra + Ronda 3)
+    ├── situacion-contractual-y-sociedad.md ← IP, sociedad, clean-room
+    ├── marca-naming.md               ← naming de la marca
     ├── pendientes-checklist.md       ← 📋 DASHBOARD único de tareas abiertas
     └── propositos-y-mentores.md      ← norte, mentores y camino enfocado
 
@@ -56,7 +60,7 @@ proyectos/
 3. Interioriza los 4 pilares (`docs/fundamentos/`), incluido el de ventas con los 5 Módulos.
 4. Revisa la [Validación de fuentes](docs/validacion/validacion-fuentes.md) — qué es real y qué es hype.
 5. Aterriza en [Propósitos y mentores](estrategia/propositos-y-mentores.md), las [Reglas del juego](estrategia/reglas-del-juego.md) y la [Hoja de ruta](estrategia/hoja-de-ruta-freelance-a-b2b.md).
-6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md), el canal freelance en [Canal Workana](estrategia/workana/README.md) y los productos digitales en [Canal Etsy](estrategia/etsy/README.md).
+6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md) y revisa el diseño técnico del producto en [Prospector M1-M2](docs/tecnico/prospector-m1-m2-design.md).
 
 ## Principios operativos
 
@@ -68,6 +72,7 @@ proyectos/
 ## Estado
 
 - ✅ Base de conocimiento consolidada y validada (jun-2026, re-verificada 4-jul-2026): 4 pilares + técnico + validación + estrategia.
-- ✅ 5 Módulos del Vendedor Híbrido, guía freelance, facturación (Colombia) y hacks de IA incorporados.
-- ✅ Referencia al antiguo empleador retirada; producto propio renombrado a **el Prospector**.
-- ⏳ Tareas abiertas centralizadas en el [Checklist de Pendientes](estrategia/pendientes-checklist.md). Prioridad: avanzar **Catalina/Prospector** y activar **Workana**.
+- ✅ 5 Módulos del Vendedor Híbrido, facturación (Colombia) y hacks de IA incorporados.
+- 🧹 **Purga greenfield (7-jul-2026):** el repo se enfocó exclusivamente en el **Prospector Vía B**. Se removieron los canales Vía A (Workana, Etsy, guía freelance) y el doc `prospector.md` (IP de la contratante). Recuperable vía historial de git.
+- ✅ Cabina de Mando documentada: entorno, Skills y Hooks nativos + MCP (ver `.kiro/settings/environment_setup.md`).
+- ⏳ Tareas abiertas centralizadas en el [Checklist de Pendientes](estrategia/pendientes-checklist.md). Prioridad: avanzar **Catalina/Prospector** y el build del producto.

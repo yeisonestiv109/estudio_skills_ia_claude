@@ -34,17 +34,18 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 
 ### Estrategia y ejecución
 - Reglas del juego (no negociables) → [`estrategia/reglas-del-juego.md`](../../estrategia/reglas-del-juego.md)
-- Hoja de ruta freelance→B2B → [`estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../estrategia/hoja-de-ruta-freelance-a-b2b.md)
-- **Canal Workana** (Vía A) → carpeta [`estrategia/workana/`](../../estrategia/workana/README.md): [`canal-workana.md`](../../estrategia/workana/canal-workana.md) · [`perfil-workana-analisis.md`](../../estrategia/workana/perfil-workana-analisis.md)
-- Guía freelance 30 días · Facturación (Colombia) · Productividad/CRM · Propósitos y mentores → `estrategia/`
-- **Canal Etsy — productos digitales** (activo de mediano plazo, calidad>rapidez) → carpeta [`estrategia/etsy/`](../../estrategia/etsy/README.md): [`metodo`](../../estrategia/etsy/metodo-productos-digitales.md) · [`propuestas`](../../estrategia/etsy/propuestas.md)
+- Hoja de ruta (fases hacia el producto B2B) → [`estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../estrategia/hoja-de-ruta-freelance-a-b2b.md)
+- Facturación (Colombia) · Productividad/CRM · Propósitos y mentores · Modelo de agencia unipersonal → `estrategia/`
 - Situación contractual y sociedad (IP, 15%, clean-room) → [`estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)
+
+> 🧹 **Nota de purga (7-jul-2026):** el workspace se enfocó como lienzo greenfield del **Prospector Vía B**. Se removieron del repo los canales Vía A (Workana, Etsy, guía freelance 30 días) y el doc `prospector.md` (IP de la contratante). Todo es recuperable vía historial de git si se requiere reactivar un canal.
 - Naming de la marca (⏳ nombre por decidir) → [`estrategia/marca-naming.md`](../../estrategia/marca-naming.md)
 - Dashboard de pendientes → [`estrategia/pendientes-checklist.md`](../../estrategia/pendientes-checklist.md)
 
 ### Técnico y validación
-- El Prospector construido bajo contrato (referencia; **IP de la contratante**) → [`docs/tecnico/prospector.md`](../../docs/tecnico/prospector.md)
 - **Arquitectura y paradigmas del build nuevo e independiente** → [`docs/tecnico/arquitectura-y-paradigmas.md`](../../docs/tecnico/arquitectura-y-paradigmas.md)
+- **Diseño del Prospector Vía B — M1 (ICP Parser) + M2 (Triggers)** → [`docs/tecnico/prospector-m1-m2-design.md`](../../docs/tecnico/prospector-m1-m2-design.md)
+- **Configuración de la Cabina de Mando (entorno/skills/hooks/MCP)** → [`.kiro/settings/environment_setup.md`](../settings/environment_setup.md)
 - Costo por lead (datos reales) → [`docs/tecnico/costo-por-lead.md`](../../docs/tecnico/costo-por-lead.md)
 - Stack y orquestación (Antigravity/Kiro/Stitch + MCPs) → [`docs/tecnico/stack-y-orquestacion.md`](../../docs/tecnico/stack-y-orquestacion.md)
 - Guía práctica de Kiro (specs/steering/hooks/MCP/automatizaciones) → [`docs/tecnico/kiro-guia-practica.md`](../../docs/tecnico/kiro-guia-practica.md)

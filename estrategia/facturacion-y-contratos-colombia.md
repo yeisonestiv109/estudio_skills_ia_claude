@@ -83,7 +83,7 @@ Para cada cliente, un contrato simple pero claro evita problemas. Debe incluir:
 - **Confidencialidad** (NDA) y manejo de datos (alineado con Habeas Data).
 - **Causales de terminación** y manejo de cambios (qué pasa si piden más alcance).
 
-> Esto refuerza el error #2 de la [guía freelance](guia-freelance-30-dias.md): "no definir el alcance". El contrato es tu protección.
+> Regla clave: **no definir el alcance** es un error caro. El contrato (con alcance explícito de qué se entrega y qué NO) es tu protección.
 
 ## 8. Checklist de acción (orden recomendado)
 
