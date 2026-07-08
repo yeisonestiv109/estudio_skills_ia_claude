@@ -14,16 +14,26 @@
 - **Tipo:** pre-prompt en tareas marcadas como complejas (diseño de módulo, auditoría, decisión estratégica),
   o invocación manual `/memory-load`.
 
-## Acción
-1. Consultar el `Memory MCP` por entidades/relaciones relevantes a la tarea (ej. "M1", "cascada de triggers", "reglas de oro").
-2. Inyectar solo el subconjunto pertinente en el contexto (evitar context bloat).
-3. Al cerrar la tarea, **persistir** las nuevas entidades/relaciones aprendidas (idealmente encadenado con `/cerrar-decision`).
+## Estructura del pre-prompt (antes de tareas de alta complejidad arquitectónica)
+Se ejecuta ANTES de diseñar/auditar un módulo o tomar una decisión estratégica:
+
+1. **Derivar claves de la tarea:** extraer 2–4 entidades ancla del pedido (ej. `M3`, `CRM`, `BANT`, `reglas de oro`).
+2. **Leer el Knowledge-Graph:** `search_nodes` / `open_nodes` / `read_graph` sobre esas claves para traer
+   decisiones previas, riesgos ya identificados y contratos de puertos relacionados.
+3. **Inyección selectiva:** cargar SOLO el subgrafo pertinente al contexto (nunca el grafo completo → anti context-bloat).
+4. **Cierre:** al terminar, persistir las nuevas entidades/relaciones (encadenar con `/cerrar-decision`).
+
+## Almacenamiento del Knowledge-Graph (nota honesta)
+El `Memory MCP` estándar persiste el KG en **archivo** (`MEMORY_FILE_PATH`), que es lo que queda activo por
+defecto y funciona sin infraestructura extra. Si más adelante se prefiere un **backend relacional**
+(Postgres/Supabase) para el KG, se cambia el servidor de memoria por uno con adaptador relacional **sin
+tocar la lógica de este hook** — el hook consulta el puerto de memoria, no el motor de almacenamiento.
 
 ## Por qué un knowledge-graph (y no context7)
-- La memoria semántica entre sesiones requiere **entidades + relaciones persistentes en disco**, no recuperación de docs.
+- La memoria semántica entre sesiones requiere **entidades + relaciones persistentes**, no recuperación de docs.
 - `context7` inyecta documentación version-específica de librerías — útil al **codificar**, inútil como memoria.
 
-## MCP requerido (a agregar)
+## MCP requerido
 `memory` (servidor knowledge-graph). Configuración en [`../settings/mcp.json`](../settings/mcp.json).
 
 ## Guardrails
