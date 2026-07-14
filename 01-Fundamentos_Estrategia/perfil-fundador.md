@@ -67,3 +67,28 @@ Se revisó el contrato real. La **cláusula 8ª cede expresamente toda la IP** (
    - **No-competencia (cláusula 9ª, 12 meses):** no servir a clientes que conociste por el contrato.
 
 > **Recomendación del coach (corrige la versión anterior de este doc):** en el mensaje pasado sugerí que la IP "podría ser tuya"; el contrato demuestra lo contrario. Posiciónate por la **experiencia** (construiste el motor), no por la **propiedad**. Para Vía B, construye **tu propio producto independiente**. Análisis completo y opciones en [`../../estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md).
+
+---
+
+## El Vehículo Actual: "El Prospector" (Nuestro Posicionamiento B2B)
+
+Para cristalizar toda esta experiencia en un modelo de negocio escalable, estamos construyendo **El Prospector**, un motor de prospección impulsado por IA.
+
+### 1. ¿En qué sector entramos (Quiénes somos)?
+Nos ubicamos en la **Rama 1A: SaaS B2B Horizontal (SalesTech / Go-To-Market)**. 
+Somos la "Capa de Inteligencia" que automatiza la adquisición de clientes para otras empresas del sector tecnológico. Construimos el software algorítmico que provee los "leads" hiper-calificados al resto del ecosistema B2B.
+
+### 2. ¿Qué problema resolvemos?
+- **Problema General:** La prospección B2B outbound está rota. Cuesta muchísimo dinero mantener equipos de ventas (SDRs) que desperdician el 80% de su tiempo enviando correos masivos que nadie lee y cruzando bases de datos manualmente.
+- **Problema Específico:** Las empresas Tech (agencias, consultoras, SaaS) con servicios "High-Ticket" (costosos) no pueden depender del boca a boca. Necesitan saber **exactamente cuándo** una empresa tiene urgencia de comprar (ej. *acaban de recibir inversión*, *ganaron una licitación de gobierno*, *el CTO renunció*, *tienen urgencia técnica documentada en vacantes*).
+
+### 3. ¿Cómo lo resolvemos?
+Lo resolvemos pasando de la prospección estática a una **arquitectura basada en Triggers (Señales de mercado)**:
+1. **Motor 1 (Enrutador Dinámico):** La IA entiende el Perfil de Cliente Ideal (ICP) de nuestro cliente y sabe qué "adaptadores" encender.
+2. **Motor 2 (Cascada Condicional):** Escaneamos la web, licitaciones (SECOP), APIs de empleo (TheirStack) y noticias (Google Alerts) buscando eventos de liquidez o urgencia técnica.
+3. **Validación Cruzada:** La política central no aprueba un lead con un solo síntoma. Exige múltiples orígenes cruzados. Entregamos un prospecto en el momento exacto en que siente el dolor, reduciendo drásticamente el Costo de Adquisición de Clientes (CAC).
+
+### 4. Enfoque Actual y Estrategia de Escalamiento
+- **El Origen (Piloto en curso):** Validaremos la eficacia del sistema usándolo nosotros mismos para un cliente/piloto inicial: **TBBC** (una consultora Híbrida de Arquitectura Backend + Staff Augmentation). Le resolveremos su flujo de ventas conectando los adaptadores precisos para ellos (SECOP, Vacantes, Alertas).
+- **Fase 1 (MVP de Costo $0):** Iniciar la construcción con los adaptadores de fuentes gratuitas (Google Alerts, SECOP) para validar la salud de la Arquitectura Hexagonal y el Motor de Reglas.
+- **Fase 2 (Expansión SaaS):** Una vez que "El Prospector" demuestre ROI, el diseño del "Enrutador Dinámico" nos permite escalarlo. Podremos licenciar el software a **cualquier otra rama** (ej. Ciberseguridad, Fintech). Para atender un nuevo mercado, simplemente inyectamos un nuevo "Adaptador" específico para esa vertical, sin tener que tocar el Core del negocio.

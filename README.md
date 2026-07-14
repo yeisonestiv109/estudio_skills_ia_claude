@@ -6,61 +6,64 @@
 
 Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales** (vendemos resultados, no tareas). Modelo de **dos velocidades**: el freelance financia y da experiencia (corto plazo); los proyectos B2B (ej. el Prospector) construyen el patrimonio (medio-largo plazo).
 
-## Mapa del repositorio
+## Mapa del repositorio (estructura de Poda Sináptica)
 
 ```
 .
 ├── README.md                         ← estás aquí (índice / fuente de la verdad)
 ├── AGENTS.md                         ← guía corta para agentes de IA
-├── .kiro/steering/
-│   └── contexto-proyecto.md          ← contexto siempre activo para Kiro
-├── docs/
-│   ├── fundamentos/                  ← los 4 pilares del negocio
-│   │   ├── 00-vision-y-enfoque.md
-│   │   ├── 01-mentalidad-alto-rendimiento.md
-│   │   ├── 02-principios-valor-empresarial.md
-│   │   ├── 03-estrategia-ventas-prospeccion.md  ← incluye los 5 Módulos del Vendedor Híbrido
-│   │   ├── 04-ia-conceptos-y-modelos-negocio.md
-│   │   ├── perfil-fundador.md        ← quién es Yeison y cómo se posiciona
-│   │   └── presentacion-fundadores.md ← pieza para presentar el emprendimiento
-│   ├── tecnico/
-│   │   ├── stack-sdlc-ia.md          ← orquestación Kiro/Claude/Antigravity
-│   │   ├── arquitectura-y-paradigmas.md ← paradigmas del build nuevo e independiente
-│   │   ├── prospector-m1-m2-design.md ← diseño del Prospector Vía B (M1 ICP + M2 Triggers)
-│   │   └── hacks-agentes-ia.md       ← hacks de productividad con agentes de IA
-│   └── validacion/
-│       └── validacion-fuentes.md     ← qué es dato verificado vs hype
-├── .kiro/
-│   ├── settings/environment_setup.md ← Cabina de Mando (entorno, skills, hooks, MCP)
-│   ├── skills/                       ← Agent Skills nativas (auditar-arquitectura, diseno-hexagonal)
-│   └── hooks/                        ← Prompt Hooks nativos (cerrar-decision, cost-audit, memory)
-└── estrategia/
-    ├── reglas-del-juego.md           ← reglas no negociables
-    ├── hoja-de-ruta-freelance-a-b2b.md ← plan por fases hacia el producto B2B
-    ├── facturacion-y-contratos-colombia.md ← cómo facturar, IVA, exportación, contratos
-    ├── modelo-agencia-ia-unipersonal.md ← go-to-market de la agencia de IA
-    ├── productividad-y-automatizacion.md ← CRM propio, costo del Prospector, automatizar
-    ├── situacion-contractual-y-sociedad.md ← IP, sociedad, clean-room
-    ├── marca-naming.md               ← naming de la marca
-    ├── pendientes-checklist.md       ← 📋 DASHBOARD único de tareas abiertas
-    └── propositos-y-mentores.md      ← norte, mentores y camino enfocado
-
-proyectos/
-└── catalina-prospector/             ← PRIMERA OPORTUNIDAD B2B DEL PROSPECTOR
-    ├── README.md                     ← estado e índice de la oportunidad
-    ├── 00-contexto-cliente.md        ← qué sabemos y qué NO de Catalina Rúa
-    ├── 01-playbook-m4-entrevista.md  ← Módulo 4: diagnóstico, demo, objeciones, cierre
-    └── 02-playbook-m5-relacion.md    ← Módulo 5: onboarding, postventa, retención, referidos
+├── CLAUDE.md                         ← reglas de comportamiento del agente
+│
+├── 00-Cortex_Operativo/              ← MEMORIA DE TRABAJO (leer primero)
+│   └── estado_actual.md              ← handoff diario + objetivo de hoy
+│
+├── 01-Fundamentos_Estrategia/        ← ADN del proyecto (estrategia + fundamentos)
+│   ├── 00-vision-y-enfoque.md · 01-mentalidad · 02-principios-valor
+│   ├── 03-estrategia-ventas-prospeccion.md  ← 5 Módulos del Vendedor Híbrido
+│   ├── 04-ia-conceptos-y-modelos-negocio.md · perfil-fundador · presentacion-fundadores
+│   ├── reglas-del-juego · propositos-y-mentores · hoja-de-ruta-freelance-a-b2b
+│   ├── facturacion-y-contratos-colombia · modelo-agencia-ia-unipersonal
+│   ├── productividad-y-automatizacion · situacion-contractual-y-sociedad
+│   ├── marca-naming · pendientes-checklist.md  ← 📋 dashboard de tareas
+│
+├── 02-Protocolos_Comunicacion_IA/    ← estándar de prompts XML + antipsicofancia
+│   └── guia_prompting_xml.md
+│
+├── 10-Memoria_Consolidada/           ← NEOCÓRTEX TÉCNICO (fuente de verdad para código)
+│   ├── modelos_dominio_core.md       ← contratos Pydantic del Core (Motores 1-2)
+│   ├── flujos_motor_1_y_2.md         ← flujo Enrutador Dinámico + Cascada de Triggers
+│   ├── resiliencia_motor_2.md        ← anti-alucinaciones, WAF, retries
+│   ├── analisis_cruzado_mercado.md · contexto_clientes_y_oportunidades.md
+│   ├── resumen_ejecutivo_arquitectura.md · guia_configuracion_memoria_ia.md
+│   ├── tecnico/                      ← diseño técnico consolidado (incl. diseño Motores)
+│   │   ├── prospector-m1-m2-design.md · arquitectura-y-paradigmas.md
+│   │   ├── stack-sdlc-ia.md · stack-y-orquestacion.md · costo-por-lead.md
+│   │   ├── evaluacion-ecc.md · hacks-agentes-ia.md · kiro-guia-practica.md
+│   ├── validacion/
+│   │   └── validacion-fuentes.md     ← precios de APIs + Habeas Data verificados
+│   └── proyecto-catalina/            ← PRIMERA OPORTUNIDAD B2B (cliente Catalina Rúa)
+│       ├── README.md · 00-contexto-cliente.md
+│       ├── 01-playbook-m4-entrevista.md · 02-playbook-m5-relacion.md
+│
+├── 20-Bitacora_Decisiones/           ← HIPOCAMPO (registro del porqué de las decisiones)
+│   └── 2026-07-12-blindaje-motor-2.md
+│
+├── 99-Archivo_Muerto/                ← EL OLVIDO (no leer; borradores viejos)
+│
+├── src/ · tests/                     ← código del Prospector (Motores 1-2 completos)
+└── .kiro/                            ← skills, hooks, steering, specs, settings, graphify
 ```
 
 ## Por dónde empezar
 
-1. Lee la [Visión y Enfoque](docs/fundamentos/00-vision-y-enfoque.md).
-2. Conoce el [Perfil del Fundador](docs/fundamentos/perfil-fundador.md) — el posicionamiento.
-3. Interioriza los 4 pilares (`docs/fundamentos/`), incluido el de ventas con los 5 Módulos.
-4. Revisa la [Validación de fuentes](docs/validacion/validacion-fuentes.md) — qué es real y qué es hype.
-5. Aterriza en [Propósitos y mentores](estrategia/propositos-y-mentores.md), las [Reglas del juego](estrategia/reglas-del-juego.md) y la [Hoja de ruta](estrategia/hoja-de-ruta-freelance-a-b2b.md).
-6. Trabaja la oportunidad B2B en [Catalina / Prospector](proyectos/catalina-prospector/README.md) y revisa el diseño técnico del producto en [Prospector M1-M2](docs/tecnico/prospector-m1-m2-design.md).
+1. Lee `00-Cortex_Operativo/estado_actual.md` — el estado de hoy y el objetivo.
+2. Interioriza el ADN en `01-Fundamentos_Estrategia/` (visión, reglas, 5 Módulos de venta).
+3. Para escribir código, la única fuente de verdad es `10-Memoria_Consolidada/` — contratos en `modelos_dominio_core.md` y flujos en `flujos_motor_1_y_2.md`.
+4. Diseño técnico ampliado en `10-Memoria_Consolidada/tecnico/` (incluye `prospector-m1-m2-design.md`).
+5. Datos de mercado y legal verificados en `10-Memoria_Consolidada/validacion/validacion-fuentes.md`.
+6. La oportunidad B2B viva está en `10-Memoria_Consolidada/proyecto-catalina/`.
+
+> **Nota (12-jul-2026):** las carpetas raíz `docs/`, `estrategia/` y `proyectos/` fueron consolidadas dentro de la estructura numerada. Los duplicados se descartaron (recuperables vía historial de git). La estructura numerada (00/01/02/10/20/99) es la única canónica.
 
 ## Principios operativos
 

@@ -2,11 +2,14 @@
 
 Este repositorio es la **fuente de la verdad** del proyecto de emprendimiento tecnológico de Yeison. Si eres un agente de IA trabajando aquí, lee esto primero.
 
-## Cómo cargar contexto
+## Cómo cargar contexto (estructura numerada canónica)
 
-1. Empieza por el índice de memoria: [`.kiro/steering/contexto-proyecto.md`](.kiro/steering/contexto-proyecto.md).
-2. Desde ahí navega a los subarchivos según la tarea (fundamentos, estrategia, técnico, proyectos).
-3. El [`README.md`](README.md) tiene el mapa completo y el estado de construcción.
+1. **Memoria de trabajo:** lee siempre primero [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md) — handoff y objetivo de hoy.
+2. **Neocórtex técnico (fuente de verdad para código):** [`10-Memoria_Consolidada/`](10-Memoria_Consolidada/). Contratos en `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`. Subcarpetas: `tecnico/`, `validacion/`, `proyecto-catalina/`. Si no está ahí, no existe.
+3. **ADN / estrategia:** [`01-Fundamentos_Estrategia/`](01-Fundamentos_Estrategia/) (incluye `pendientes-checklist.md`, el dashboard de tareas).
+4. **Decisiones (porqué):** [`20-Bitacora_Decisiones/`](20-Bitacora_Decisiones/). **Ignora** `99-Archivo_Muerto/`.
+5. **Grafo de código:** si existe `graphify-out/graph.json`, usa `graphify query "<pregunta>"` antes de leer archivos de `src/` sueltos — devuelve solo el subgrafo relevante.
+6. El [`README.md`](README.md) tiene el mapa completo.
 
 ## Reglas de comportamiento (no negociables)
 
@@ -22,4 +25,5 @@ Mantén `contexto-proyecto.md` ligero (índice + punteros). El detalle vive en l
 
 ## Estado actual
 
-Consulta el dashboard vivo: [`estrategia/pendientes-checklist.md`](estrategia/pendientes-checklist.md).
+Handoff vivo: [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md).
+Dashboard de tareas: [`01-Fundamentos_Estrategia/pendientes-checklist.md`](01-Fundamentos_Estrategia/pendientes-checklist.md).
