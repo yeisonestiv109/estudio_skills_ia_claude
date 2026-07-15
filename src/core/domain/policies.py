@@ -9,12 +9,15 @@ REGLA: Estas políticas son lógica de dominio pura. No conocen adaptadores
 concretos ni dependencias externas. Solo operan sobre modelos y enums del Core.
 Son testables unitariamente sin red, sin LLM y sin base de datos.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 from src.core.domain.models import (
     CategoriaEmpresa,
+    Decisor,
+    EstadoCorreo,
     ManifiestoICP,
     OrigenTrigger,
     Trigger,
@@ -53,10 +56,10 @@ class AdapterRoutingPolicy:
 
     CATEGORIAS_SIN_WAPPALYZER: frozenset[CategoriaEmpresa] = frozenset(
         {
-            CategoriaEmpresa.CIBERSEGURIDAD,       # Ocultan stack deliberadamente
-            CategoriaEmpresa.REGULADO_FINTECH,     # Core bancario no es web-visible
+            CategoriaEmpresa.CIBERSEGURIDAD,  # Ocultan stack deliberadamente
+            CategoriaEmpresa.REGULADO_FINTECH,  # Core bancario no es web-visible
             CategoriaEmpresa.REGULADO_HEALTHTECH,
-            CategoriaEmpresa.AI_ML_PLATFORM,       # Infraestructura no frontal
+            CategoriaEmpresa.AI_ML_PLATFORM,  # Infraestructura no frontal
             CategoriaEmpresa.BPO_MANAGED,
         }
     )
@@ -75,7 +78,7 @@ class AdapterRoutingPolicy:
             CategoriaEmpresa.AGENCIA_IT,
             CategoriaEmpresa.CONSULTORA_IT,
             CategoriaEmpresa.AI_ML_PLATFORM,
-            CategoriaEmpresa.CIBERSEGURIDAD,    # Security teams suelen tener repos públicos
+            CategoriaEmpresa.CIBERSEGURIDAD,  # Security teams suelen tener repos públicos
         }
     )
 
@@ -155,3 +158,59 @@ class TriggerAggregationPolicy:
         )
 
         return tiene_senial_fresca
+
+
+class UmbralCalidadDecisor:
+    """
+    Gate de calidad entre Motor 3 y Motor 4 (Enriquecimiento → Outbound).
+
+    Protege la reputación de dominio: ningún correo dudoso se envía de forma
+    automática. Un Decisor solo es apto para el Motor 4 si cumple AMBAS
+    condiciones: confianza_dato >= CONFIANZA_MINIMA y estado_correo en un
+    estado considerado suficientemente confiable.
+
+    Regla de negocio (mecanismo financiero, no solo de calidad): cada correo
+    REBOTADO enviado degrada la métrica de entregabilidad del dominio ante los
+    proveedores de correo, afectando a TODOS los envíos futuros. Se prefiere
+    descartar un contacto dudoso (barato y local) que arriesgar el canal
+    completo (costoso y sistémico).
+    """
+
+    CONFIANZA_MINIMA: float = 0.7
+    ESTADOS_APTOS: frozenset[EstadoCorreo] = frozenset(
+        {
+            EstadoCorreo.VERIFICADO,
+            EstadoCorreo.INFERIDO,
+        }
+    )
+
+    def es_apto_para_outbound(self, decisor: Decisor) -> bool:
+        """
+        True solo si el decisor cumple:
+          1. confianza_dato >= 0.7
+          2. estado_correo pertenece a {VERIFICADO, INFERIDO}
+
+        Todo lo demás (REBOTADO, NO_RESUELTO, MANUAL, o INFERIDO con
+        confianza_dato < 0.7) se descarta del envío automático y cae a la
+        cola de trabajo manual.
+        """
+        return (
+            decisor.confianza_dato >= self.CONFIANZA_MINIMA
+            and decisor.estado_correo in self.ESTADOS_APTOS
+        )
+
+    def particionar(
+        self, decisores: list[Decisor]
+    ) -> tuple[list[Decisor], list[Decisor]]:
+        """
+        Separa (aptos_para_m4, cola_manual) en una sola pasada.
+        No lanza excepciones; una lista vacía retorna ([], []).
+        """
+        aptos: list[Decisor] = []
+        manual: list[Decisor] = []
+        for decisor in decisores:
+            if self.es_apto_para_outbound(decisor):
+                aptos.append(decisor)
+            else:
+                manual.append(decisor)
+        return aptos, manual

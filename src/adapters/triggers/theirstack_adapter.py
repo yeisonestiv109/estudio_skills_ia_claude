@@ -2,6 +2,7 @@
 TheirStackAdapter — implementación de PuertoFuenteTriggers y PuertoDescubridorEmpresas.
 ...
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,7 @@ _BASE_URL = "https://api.theirstack.com/v1"
 _JOBS_ENDPOINT = f"{_BASE_URL}/jobs/search"
 _REQUEST_TIMEOUT_SECS = 15
 
+
 def _calcular_nivel_confianza(n_vacantes: int) -> NivelConfianza | None:
     if n_vacantes >= 3:
         return NivelConfianza.ALTA
@@ -41,7 +43,9 @@ def _parsear_fecha(fecha_str: str | None) -> datetime | None:
         return None
     try:
         if "T" in fecha_str:
-            return datetime.fromisoformat(fecha_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+            return datetime.fromisoformat(fecha_str.replace("Z", "+00:00")).astimezone(
+                timezone.utc
+            )
         return datetime.strptime(fecha_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except (ValueError, TypeError):
         return None
@@ -146,12 +150,18 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
             if fecha_evento is None:
                 fecha_evento = _parsear_fecha(v.get("date_posted"))
 
-        titulo_sample = vacantes[0].get("title", "Vacante técnica") if vacantes else "Vacante técnica"
+        titulo_sample = (
+            vacantes[0].get("title", "Vacante técnica")
+            if vacantes
+            else "Vacante técnica"
+        )
         techs_str = ", ".join(sorted(techs)) if techs else "no especificadas"
 
         # Si alcanzamos el techo de paginación, hay más señales ocultas: mostrar "+N".
         n_vacantes = len(vacantes)
-        conteo_str = f"+{n_vacantes}" if n_vacantes >= self._max_scoring else str(n_vacantes)
+        conteo_str = (
+            f"+{n_vacantes}" if n_vacantes >= self._max_scoring else str(n_vacantes)
+        )
 
         descripcion = (
             f"{conteo_str} vacante(s) técnica(s) abiertas en '{empresa.nombre}'. "
@@ -160,15 +170,19 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
 
         logger.info(
             "TheirStack SCORING: '%s' — %d vacantes → confianza %s",
-            empresa.nombre, len(vacantes), nivel.value,
+            empresa.nombre,
+            len(vacantes),
+            nivel.value,
         )
-        return [Trigger(
-            empresa_id=empresa.id,
-            origen=OrigenTrigger.THEIRSTACK,
-            nivel_confianza=nivel,
-            descripcion=descripcion,
-            fecha_evento=fecha_evento,
-        )]
+        return [
+            Trigger(
+                empresa_id=empresa.id,
+                origen=OrigenTrigger.THEIRSTACK,
+                nivel_confianza=nivel,
+                descripcion=descripcion,
+                fecha_evento=fecha_evento,
+            )
+        ]
 
     # ──────────────────────────────────────────────────────────────────────
     # Caso B: DISCOVERY — PuertoDescubridorEmpresas
@@ -185,7 +199,9 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
         # Para discovery, usamos las tecnologías del manifesto (no del constructor)
         tecnologias = manifesto.anclaje_tecnologico or self._tecnologias
         if not tecnologias:
-            logger.warning("TheirStack DISCOVERY: sin tecnologías en ICP. Retornando [].")
+            logger.warning(
+                "TheirStack DISCOVERY: sin tecnologías en ICP. Retornando []."
+            )
             return []
 
         payload: dict = {
@@ -233,7 +249,9 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
             nombre = (empresa_data.get("name") or vacante.get("company") or "").strip()
 
             if not dominio or not nombre:
-                logger.debug("TheirStack DISCOVERY: vacante sin dominio/nombre, omitida.")
+                logger.debug(
+                    "TheirStack DISCOVERY: vacante sin dominio/nombre, omitida."
+                )
                 continue
 
             if dominio in empresas_vistas:
@@ -269,9 +287,13 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
         Retorna None ante cualquier error definitivo (contrato: nunca propagar al Core).
         """
         _REINTENTABLES = {429, 500, 502, 503, 504}
-        for intento in range(3):   # 0 = primera llamada, 1 y 2 = reintentos
+        for intento in range(3):  # 0 = primera llamada, 1 y 2 = reintentos
             try:
-                logger.info("TheirStack: consultando API [%s] (intento %d)", contexto, intento + 1)
+                logger.info(
+                    "TheirStack: consultando API [%s] (intento %d)",
+                    contexto,
+                    intento + 1,
+                )
                 response = requests.post(
                     _JOBS_ENDPOINT,
                     json=payload,
@@ -284,7 +306,8 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
                 if response.status_code in _REINTENTABLES and intento < 2:
                     logger.warning(
                         "TheirStack: HTTP %d [%s]. Reintento en 2s...",
-                        response.status_code, contexto,
+                        response.status_code,
+                        contexto,
                     )
                     time.sleep(2)
                     continue

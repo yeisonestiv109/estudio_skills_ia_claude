@@ -4,10 +4,11 @@ Tests unitarios de los adaptadores del Motor 2 — sin llamadas reales a APIs.
 Mockea requests.get/post para TheirStack y feedparser.parse para Google Alerts.
 Verifica que ambos producen objetos Trigger válidos de Pydantic v2.
 """
+
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -39,7 +40,6 @@ def empresa() -> Empresa:
 # Tests de TheirStackAdapter
 # ---------------------------------------------------------------------------
 class TestTheirStackAdapter:
-
     # -- Helpers ──────────────────────────────────────────────────────────
     def _mock_response(self, vacantes: list[dict], status_code: int = 200) -> MagicMock:
         mock = MagicMock()
@@ -47,6 +47,7 @@ class TestTheirStackAdapter:
         mock.json.return_value = {"data": vacantes, "total": len(vacantes)}
         if status_code >= 400:
             import requests
+
             mock.raise_for_status.side_effect = requests.exceptions.HTTPError(
                 response=mock
             )
@@ -54,7 +55,9 @@ class TestTheirStackAdapter:
             mock.raise_for_status.return_value = None
         return mock
 
-    def _vacante(self, titulo: str, fecha: str = "2026-07-01", techs: list[str] | None = None) -> dict:
+    def _vacante(
+        self, titulo: str, fecha: str = "2026-07-01", techs: list[str] | None = None
+    ) -> dict:
         return {
             "id": f"job-{titulo[:5]}",
             "title": titulo,
@@ -144,6 +147,7 @@ class TestTheirStackAdapter:
 
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             original = os.environ.pop("THEIRSTACK_API_KEY", None)
             try:
                 adapter = TheirStackAdapter(api_key=None)
@@ -227,7 +231,14 @@ class TestTheirStackAdapter:
 # ---------------------------------------------------------------------------
 class _EntradaRSSMock:
     """Simula un objeto entry de feedparser."""
-    def __init__(self, title: str, summary: str = "", link: str = "https://example.com", published_parsed=None):
+
+    def __init__(
+        self,
+        title: str,
+        summary: str = "",
+        link: str = "https://example.com",
+        published_parsed=None,
+    ):
         self.title = title
         self.summary = summary
         self.link = link
@@ -238,12 +249,13 @@ def _feed_mock(entries: list[_EntradaRSSMock], bozo: bool = False) -> MagicMock:
     mock = MagicMock()
     mock.entries = entries
     mock.bozo = bozo
-    mock.get = lambda k, default=None: {"entries": entries, "bozo": bozo}.get(k, default)
+    mock.get = lambda k, default=None: {"entries": entries, "bozo": bozo}.get(
+        k, default
+    )
     return mock
 
 
 class TestGoogleAlertsRSSAdapter:
-
     def test_entrada_c_level_genera_trigger_alta(self, empresa: Empresa):
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
@@ -255,7 +267,9 @@ class TestGoogleAlertsRSSAdapter:
         ]
 
         with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/123"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/123"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert len(triggers) == 1
@@ -276,7 +290,9 @@ class TestGoogleAlertsRSSAdapter:
         ]
 
         with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/456"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/456"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert len(triggers) == 1
@@ -293,7 +309,9 @@ class TestGoogleAlertsRSSAdapter:
         ]
 
         with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/789"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/789"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert len(triggers) == 1
@@ -311,7 +329,9 @@ class TestGoogleAlertsRSSAdapter:
         ]
 
         with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/000"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/000"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
@@ -320,7 +340,9 @@ class TestGoogleAlertsRSSAdapter:
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
         with patch("feedparser.parse", return_value=_feed_mock([])):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/empty"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/empty"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
@@ -338,7 +360,9 @@ class TestGoogleAlertsRSSAdapter:
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
         with patch("feedparser.parse", side_effect=Exception("error de red simulado")):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/fail"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/fail"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
@@ -402,7 +426,9 @@ class TestGoogleAlertsRSSAdapter:
         ]
 
         with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(rss_urls=["https://alerts.google.com/rss/date"])
+            adapter = GoogleAlertsRSSAdapter(
+                rss_urls=["https://alerts.google.com/rss/date"]
+            )
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers[0].fecha_evento is not None

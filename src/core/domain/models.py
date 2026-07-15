@@ -8,6 +8,7 @@ REGLA DE ARQUITECTURA ABSOLUTA:
     ninguna librería de adaptador (TheirStack, Playwright, feedparser, sodapy).
     Si un modelo importa algo externo, es una violación hexagonal inmediata.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -28,23 +29,23 @@ class CategoriaEmpresa(str, Enum):
     Basada en investigación de mercado B2B Tech LATAM 2026.
     """
 
-    SAAS_B2B_HORIZONTAL = "SAAS_B2B_HORIZONTAL"   # CRM, ERP, HRIS, Marketing Automation
-    SAAS_B2B_VERTICAL = "SAAS_B2B_VERTICAL"       # SaaS sectorial semi-regulado
-    AGENCIA_IT = "AGENCIA_IT"                     # Fábrica de software, desarrollo a medida
-    CONSULTORA_IT = "CONSULTORA_IT"               # System integrators, transformación digital
-    BPO_MANAGED = "BPO_MANAGED"                   # Operación continua, outsourcing
-    CIBERSEGURIDAD = "CIBERSEGURIDAD"             # Producto o servicio de seguridad
-    AI_ML_PLATFORM = "AI_ML_PLATFORM"             # LLM tooling, MLOps, agentic frameworks
-    REGULADO_FINTECH = "REGULADO_FINTECH"         # PSP, lending, cripto, open banking
-    REGULADO_HEALTHTECH = "REGULADO_HEALTHTECH"   # EHR, diagnóstico, telemedicina
-    GOVTECH_REGTECH = "GOVTECH_REGTECH"           # Gobierno electrónico, compliance automatizado
+    SAAS_B2B_HORIZONTAL = "SAAS_B2B_HORIZONTAL"  # CRM, ERP, HRIS, Marketing Automation
+    SAAS_B2B_VERTICAL = "SAAS_B2B_VERTICAL"  # SaaS sectorial semi-regulado
+    AGENCIA_IT = "AGENCIA_IT"  # Fábrica de software, desarrollo a medida
+    CONSULTORA_IT = "CONSULTORA_IT"  # System integrators, transformación digital
+    BPO_MANAGED = "BPO_MANAGED"  # Operación continua, outsourcing
+    CIBERSEGURIDAD = "CIBERSEGURIDAD"  # Producto o servicio de seguridad
+    AI_ML_PLATFORM = "AI_ML_PLATFORM"  # LLM tooling, MLOps, agentic frameworks
+    REGULADO_FINTECH = "REGULADO_FINTECH"  # PSP, lending, cripto, open banking
+    REGULADO_HEALTHTECH = "REGULADO_HEALTHTECH"  # EHR, diagnóstico, telemedicina
+    GOVTECH_REGTECH = "GOVTECH_REGTECH"  # Gobierno electrónico, compliance automatizado
 
 
 class TamanoEmpresa(str, Enum):
-    STARTUP = "STARTUP"          # < 50 empleados
-    SME = "SME"                  # 50–200 empleados
-    MID_MARKET = "MID_MARKET"    # 200–1000 empleados
-    ENTERPRISE = "ENTERPRISE"    # > 1000 empleados
+    STARTUP = "STARTUP"  # < 50 empleados
+    SME = "SME"  # 50–200 empleados
+    MID_MARKET = "MID_MARKET"  # 200–1000 empleados
+    ENTERPRISE = "ENTERPRISE"  # > 1000 empleados
 
 
 class BaseLegal(str, Enum):
@@ -52,8 +53,8 @@ class BaseLegal(str, Enum):
     # NO existe "interés legítimo" (eso es GDPR europeo y NO aplica en Colombia):
     # la regla es consentimiento previo, expreso e informado (SIC como autoridad).
     CONSENTIMIENTO_EXPLICITO = "CONSENTIMIENTO_EXPLICITO"  # Regla general (Art. 9)
-    EJECUCION_CONTRATO = "EJECUCION_CONTRATO"              # Relación contractual existente
-    DATO_PUBLICO = "DATO_PUBLICO"                          # Excepción de dato de fuente pública (Art. 10)
+    EJECUCION_CONTRATO = "EJECUCION_CONTRATO"  # Relación contractual existente
+    DATO_PUBLICO = "DATO_PUBLICO"  # Excepción de dato de fuente pública (Art. 10)
 
 
 class NivelConfianza(str, Enum):
@@ -63,11 +64,11 @@ class NivelConfianza(str, Enum):
 
 
 class OrigenTrigger(str, Enum):
-    WAPPALYZER    = "WAPPALYZER"
-    THEIRSTACK    = "THEIRSTACK"
+    WAPPALYZER = "WAPPALYZER"
+    THEIRSTACK = "THEIRSTACK"
     SECOP_SOCRATA = "SECOP_SOCRATA"
     GOOGLE_ALERTS = "GOOGLE_ALERTS"
-    GITHUB        = "GITHUB"
+    GITHUB = "GITHUB"
 
 
 class EstadoCorreo(str, Enum):
@@ -79,7 +80,7 @@ class EstadoCorreo(str, Enum):
 
 
 class Seniority(str, Enum):
-    IC = "IC"                # Individual Contributor
+    IC = "IC"  # Individual Contributor
     LEAD = "LEAD"
     MANAGER = "MANAGER"
     DIRECTOR = "DIRECTOR"
@@ -207,9 +208,7 @@ class Empresa(BaseModel):
             "El valor por defecto (VERIFICADA) preserva compatibilidad con registros existentes."
         ),
     )
-    fecha_captura: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    fecha_captura: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -230,9 +229,7 @@ class Trigger(BaseModel):
     descripcion: str = Field(
         ..., min_length=1, description="Descripción legible del trigger detectado."
     )
-    fecha_captura: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    fecha_captura: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     fecha_evento: Optional[datetime] = Field(
         default=None,
         description="Fecha del evento original (ej. fecha del contrato SECOP). Obligatorio para calcular data decay.",
@@ -246,12 +243,8 @@ class Decisor(BaseModel):
     id: uuid.UUID = Field(default_factory=uuid.uuid4)
     empresa_id: uuid.UUID = Field(..., description="FK a Empresa.")
     nombre: str = Field(...)
-    cargo_original: str = Field(
-        ..., description="Texto exacto del cargo en la fuente."
-    )
-    cargo_normalizado: str = Field(
-        ..., description="Cargo estandarizado internamente."
-    )
+    cargo_original: str = Field(..., description="Texto exacto del cargo en la fuente.")
+    cargo_normalizado: str = Field(..., description="Cargo estandarizado internamente.")
     seniority: Seniority = Field(...)
     autoridad_decision: AutoridadDecision = Field(default=AutoridadDecision.UNKNOWN)
     correo: Optional[EmailStr] = Field(
@@ -267,4 +260,41 @@ class Decisor(BaseModel):
         ge=0.0,
         le=1.0,
         description="Confianza del dato entre 0.0 y 1.0.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 5. ProspectoCalificado — Contrato de transición Motor 2 → Motor 3
+# ---------------------------------------------------------------------------
+class ProspectoCalificado(BaseModel):
+    """
+    Contrato de transición M2 → M3. Inmutable.
+
+    Es todo lo que el Motor 3 necesita saber del trabajo previo del pipeline:
+    la Empresa ya calificada por TriggerAggregationPolicy, sus Triggers
+    validados y el ManifiestoICP que originó la búsqueda.
+
+    Nota de diseño: PuertoEnriquecedorContactos NO recibe este DTO completo.
+    El orquestador extrae `empresa` y `manifiesto.cargos_decisores` para
+    llamar a `enriquecer(empresa, cargos)` (firma stateless). Los `triggers`
+    no los usa el enriquecedor; viajan hacia el Motor 4 para personalizar
+    el mensaje de outbound.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    empresa: Empresa = Field(
+        ..., description="Empresa ya calificada por TriggerAggregationPolicy."
+    )
+    triggers: list[Trigger] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Señales validadas por el Motor 2. No las usa el enriquecedor; "
+            "viajan hacia el Motor 4 para personalizar el mensaje."
+        ),
+    )
+    manifiesto: ManifiestoICP = Field(
+        ...,
+        description="Fuente de cargos_decisores: qué perfiles busca el enriquecedor.",
     )

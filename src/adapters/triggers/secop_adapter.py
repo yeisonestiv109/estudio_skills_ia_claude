@@ -15,11 +15,11 @@ Política de NivelConfianza (modelos_dominio_core.md):
 
 Contrato de error: NUNCA propaga excepciones al Core. Errores → [].
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from datetime import datetime, timezone
 
 import requests
 
@@ -47,7 +47,7 @@ def _parsear_fecha(valor: str | None) -> datetime | None:
         return None
     for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
-            dt = datetime.strptime(valor[:19], fmt[:len(fmt)])
+            dt = datetime.strptime(valor[:19], fmt[: len(fmt)])
             return dt.replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             continue
@@ -135,11 +135,15 @@ class SecopSocrataAdapter(PuertoFuenteTriggers):
 
         return self._construir_triggers(contratos, empresa)
 
-    def _construir_triggers(self, contratos: list[dict], empresa: Empresa) -> list[Trigger]:
+    def _construir_triggers(
+        self, contratos: list[dict], empresa: Empresa
+    ) -> list[Trigger]:
         triggers: list[Trigger] = []
 
         for contrato in contratos:
-            fecha_raw = contrato.get("fecha_adjudicacion") or contrato.get("fecha_firma")
+            fecha_raw = contrato.get("fecha_adjudicacion") or contrato.get(
+                "fecha_firma"
+            )
             fecha_contrato = _parsear_fecha(fecha_raw)
             nivel = _nivel_por_fecha(fecha_contrato)
 
@@ -153,7 +157,11 @@ class SecopSocrataAdapter(PuertoFuenteTriggers):
             numero = contrato.get("numero_contrato", contrato.get("id_proceso", "N/A"))
 
             try:
-                valor_str = f"COP {float(valor_raw):,.0f}" if valor_raw else "valor no disponible"
+                valor_str = (
+                    f"COP {float(valor_raw):,.0f}"
+                    if valor_raw
+                    else "valor no disponible"
+                )
             except (ValueError, TypeError):
                 valor_str = str(valor_raw)
 

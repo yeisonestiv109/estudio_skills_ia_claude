@@ -6,6 +6,7 @@ Manejo de Rate Limit: tenacity con backoff exponencial (configurable para tests)
 Contrato de error: si Pydantic no puede validar la respuesta, se lanza ValueError
 con máximo 3 preguntas de clarificación, conforme al contrato del Puerto.
 """
+
 from __future__ import annotations
 
 import logging
@@ -63,9 +64,7 @@ _CLARIFICATION_QUESTIONS: dict[str, str] = {
         "¿A qué sector o vertical pertenece la empresa? "
         "(Ej: Retail, Salud, Finanzas, Logística)"
     ),
-    "geografia": (
-        "¿En qué país o región opera principalmente la empresa objetivo?"
-    ),
+    "geografia": ("¿En qué país o región opera principalmente la empresa objetivo?"),
 }
 
 
@@ -246,7 +245,8 @@ class GroqICPAdapter(PuertoAnalizadorICP):
             preguntas = self._generar_preguntas_clarificacion(exc)
             raise ValueError(
                 "No pude estructurar tu descripción correctamente. "
-                "Por favor responde:\n" + "\n".join(f"  {i+1}. {p}" for i, p in enumerate(preguntas))
+                "Por favor responde:\n"
+                + "\n".join(f"  {i + 1}. {p}" for i, p in enumerate(preguntas))
             ) from exc
 
         logger.info(

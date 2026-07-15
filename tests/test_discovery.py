@@ -8,9 +8,9 @@ Cubre:
     4. TheirStackAdapter.descubrir_empresas() — Caso B: Discovery.
     5. Integración: el flujo Discovery → obtener_triggers usa EstadoEmpresa.DESCUBIERTA.
 """
+
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -55,14 +55,16 @@ def _respuesta_discovery_mock(empresas: list[dict]) -> dict:
     vacantes = []
     for emp in empresas:
         dominio = emp.get("domain", "unknown")
-        vacantes.append({
-            "id": f"job-{dominio[:4]}",
-            "title": "Senior Python Developer",
-            "date_posted": "2026-07-10",
-            "technologies": [{"name": "Python"}, {"name": "AWS"}],
-            "company_object": emp,
-            "company": emp.get("name", ""),
-        })
+        vacantes.append(
+            {
+                "id": f"job-{dominio[:4]}",
+                "title": "Senior Python Developer",
+                "date_posted": "2026-07-10",
+                "technologies": [{"name": "Python"}, {"name": "AWS"}],
+                "company_object": emp,
+                "company": emp.get("name", ""),
+            }
+        )
     return {"data": vacantes, "total": len(vacantes)}
 
 
@@ -99,6 +101,7 @@ class TestEstadoEmpresaEnum:
     def test_empresa_es_inmutable_incluido_estado(self):
         """frozen=True aplica también al campo estado."""
         from pydantic import ValidationError
+
         emp = Empresa(
             nombre="Acme",
             dominio="acme.com",
@@ -152,14 +155,16 @@ class TestPuertoDescubridorEmpresasABC:
 # Bloque 3: TheirStackAdapter.descubrir_empresas() — Caso B
 # ---------------------------------------------------------------------------
 class TestTheirStackDiscovery:
-
     def _mock_response(self, data: dict, status_code: int = 200) -> MagicMock:
         mock = MagicMock()
         mock.status_code = status_code
         mock.json.return_value = data
         if status_code >= 400:
             import requests
-            mock.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock)
+
+            mock.raise_for_status.side_effect = requests.exceptions.HTTPError(
+                response=mock
+            )
         else:
             mock.raise_for_status.return_value = None
         return mock
@@ -167,11 +172,28 @@ class TestTheirStackDiscovery:
     def test_descubre_empresas_unicas_de_vacantes(self, manifesto_saas: ManifiestoICP):
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        data = _respuesta_discovery_mock([
-            {"name": "Acme SaaS", "domain": "acme.com", "employee_count_range": "201-500", "country_code": "CO"},
-            {"name": "Beta Corp", "domain": "beta.co", "employee_count_range": "51-200", "country_code": "CO"},
-            {"name": "Gamma Tech", "domain": "gamma.io", "employee_count_range": "11-50", "country_code": "CO"},
-        ])
+        data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "Acme SaaS",
+                    "domain": "acme.com",
+                    "employee_count_range": "201-500",
+                    "country_code": "CO",
+                },
+                {
+                    "name": "Beta Corp",
+                    "domain": "beta.co",
+                    "employee_count_range": "51-200",
+                    "country_code": "CO",
+                },
+                {
+                    "name": "Gamma Tech",
+                    "domain": "gamma.io",
+                    "employee_count_range": "11-50",
+                    "country_code": "CO",
+                },
+            ]
+        )
 
         with patch("requests.post", return_value=self._mock_response(data)):
             adapter = TheirStackAdapter(api_key="test-key")
@@ -182,12 +204,21 @@ class TestTheirStackDiscovery:
             assert isinstance(emp, Empresa)
             assert emp.estado == EstadoEmpresa.DESCUBIERTA
 
-    def test_empresas_descubiertas_tienen_estado_descubierta(self, manifesto_saas: ManifiestoICP):
+    def test_empresas_descubiertas_tienen_estado_descubierta(
+        self, manifesto_saas: ManifiestoICP
+    ):
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        data = _respuesta_discovery_mock([
-            {"name": "Nueva Startup", "domain": "nueva.io", "employee_count_range": "11-50", "country_code": "CO"},
-        ])
+        data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "Nueva Startup",
+                    "domain": "nueva.io",
+                    "employee_count_range": "11-50",
+                    "country_code": "CO",
+                },
+            ]
+        )
 
         with patch("requests.post", return_value=self._mock_response(data)):
             adapter = TheirStackAdapter(api_key="test-key")
@@ -203,14 +234,32 @@ class TestTheirStackDiscovery:
 
         # Tres vacantes distintas, todas de acme.com
         vacantes = [
-            {"id": "j1", "title": "Dev", "date_posted": "2026-07-01", "technologies": [],
-             "company": "Acme",
-             "company_object": {"name": "Acme", "domain": "acme.com",
-                                "employee_count": 300, "country_code": "CO"}},
-            {"id": "j2", "title": "Arch", "date_posted": "2026-07-02", "technologies": [],
-             "company": "Acme",
-             "company_object": {"name": "Acme", "domain": "acme.com",
-                                "employee_count": 300, "country_code": "CO"}},
+            {
+                "id": "j1",
+                "title": "Dev",
+                "date_posted": "2026-07-01",
+                "technologies": [],
+                "company": "Acme",
+                "company_object": {
+                    "name": "Acme",
+                    "domain": "acme.com",
+                    "employee_count": 300,
+                    "country_code": "CO",
+                },
+            },
+            {
+                "id": "j2",
+                "title": "Arch",
+                "date_posted": "2026-07-02",
+                "technologies": [],
+                "company": "Acme",
+                "company_object": {
+                    "name": "Acme",
+                    "domain": "acme.com",
+                    "employee_count": 300,
+                    "country_code": "CO",
+                },
+            },
         ]
         data = {"data": vacantes, "total": 2}
 
@@ -225,13 +274,27 @@ class TestTheirStackDiscovery:
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
         vacantes = [
-            {"id": "j1", "title": "Dev", "date_posted": "2026-07-01", "technologies": [],
-             "company": "",
-             "company_object": {"name": "", "domain": ""}},
-            {"id": "j2", "title": "Dev", "date_posted": "2026-07-01", "technologies": [],
-             "company": "Valid Corp",
-             "company_object": {"name": "Valid Corp", "domain": "valid.com",
-                                "employee_count": 150, "country_code": "CO"}},
+            {
+                "id": "j1",
+                "title": "Dev",
+                "date_posted": "2026-07-01",
+                "technologies": [],
+                "company": "",
+                "company_object": {"name": "", "domain": ""},
+            },
+            {
+                "id": "j2",
+                "title": "Dev",
+                "date_posted": "2026-07-01",
+                "technologies": [],
+                "company": "Valid Corp",
+                "company_object": {
+                    "name": "Valid Corp",
+                    "domain": "valid.com",
+                    "employee_count": 150,
+                    "country_code": "CO",
+                },
+            },
         ]
         data = {"data": vacantes, "total": 2}
 
@@ -245,7 +308,9 @@ class TestTheirStackDiscovery:
     def test_respuesta_vacia_retorna_lista_vacia(self, manifesto_saas: ManifiestoICP):
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        with patch("requests.post", return_value=self._mock_response({"data": [], "total": 0})):
+        with patch(
+            "requests.post", return_value=self._mock_response({"data": [], "total": 0})
+        ):
             adapter = TheirStackAdapter(api_key="test-key")
             empresas = adapter.descubrir_empresas(manifesto_saas)
 
@@ -254,6 +319,7 @@ class TestTheirStackDiscovery:
     def test_sin_api_key_retorna_lista_vacia(self, manifesto_saas: ManifiestoICP):
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
         import os
+
         original = os.environ.pop("THEIRSTACK_API_KEY", None)
         try:
             adapter = TheirStackAdapter(api_key=None)
@@ -277,13 +343,24 @@ class TestTheirStackDiscovery:
         """En discovery, las tecnologías del ICP (no del constructor) van en el payload."""
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        data = _respuesta_discovery_mock([
-            {"name": "X Corp", "domain": "x.com", "employee_count_range": "51-200", "country_code": "CO"},
-        ])
+        data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "X Corp",
+                    "domain": "x.com",
+                    "employee_count_range": "51-200",
+                    "country_code": "CO",
+                },
+            ]
+        )
 
-        with patch("requests.post", return_value=self._mock_response(data)) as mock_post:
+        with patch(
+            "requests.post", return_value=self._mock_response(data)
+        ) as mock_post:
             # El constructor recibe tecnologías distintas al manifesto
-            adapter = TheirStackAdapter(api_key="test-key", tecnologias_objetivo=["Java"])
+            adapter = TheirStackAdapter(
+                api_key="test-key", tecnologias_objetivo=["Java"]
+            )
             adapter.descubrir_empresas(manifesto_saas)
 
         payload = mock_post.call_args.kwargs["json"]
@@ -299,12 +376,34 @@ class TestTheirStackDiscovery:
         """Verifica que el entero employee_count se mapea al TamanoEmpresa correcto."""
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        data = _respuesta_discovery_mock([
-            {"name": "Startup Corp", "domain": "startup.co", "employee_count": 30, "country_code": "CO"},
-            {"name": "SME Corp", "domain": "sme.co", "employee_count": 150, "country_code": "CO"},
-            {"name": "Mid Corp", "domain": "mid.co", "employee_count": 600, "country_code": "CO"},
-            {"name": "Big Corp", "domain": "big.co", "employee_count": 5000, "country_code": "CO"},
-        ])
+        data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "Startup Corp",
+                    "domain": "startup.co",
+                    "employee_count": 30,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "SME Corp",
+                    "domain": "sme.co",
+                    "employee_count": 150,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "Mid Corp",
+                    "domain": "mid.co",
+                    "employee_count": 600,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "Big Corp",
+                    "domain": "big.co",
+                    "employee_count": 5000,
+                    "country_code": "CO",
+                },
+            ]
+        )
 
         with patch("requests.post", return_value=self._mock_response(data)):
             adapter = TheirStackAdapter(api_key="test-key")
@@ -320,14 +419,46 @@ class TestTheirStackDiscovery:
         """Casos frontera del mapeo: 49→STARTUP, 50→SME, 200→SME, 201→MID, 1000→MID, 1001→ENTERPRISE."""
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
-        data = _respuesta_discovery_mock([
-            {"name": "F49", "domain": "f49.co", "employee_count": 49, "country_code": "CO"},
-            {"name": "F50", "domain": "f50.co", "employee_count": 50, "country_code": "CO"},
-            {"name": "F200", "domain": "f200.co", "employee_count": 200, "country_code": "CO"},
-            {"name": "F201", "domain": "f201.co", "employee_count": 201, "country_code": "CO"},
-            {"name": "F1000", "domain": "f1000.co", "employee_count": 1000, "country_code": "CO"},
-            {"name": "F1001", "domain": "f1001.co", "employee_count": 1001, "country_code": "CO"},
-        ])
+        data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "F49",
+                    "domain": "f49.co",
+                    "employee_count": 49,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "F50",
+                    "domain": "f50.co",
+                    "employee_count": 50,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "F200",
+                    "domain": "f200.co",
+                    "employee_count": 200,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "F201",
+                    "domain": "f201.co",
+                    "employee_count": 201,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "F1000",
+                    "domain": "f1000.co",
+                    "employee_count": 1000,
+                    "country_code": "CO",
+                },
+                {
+                    "name": "F1001",
+                    "domain": "f1001.co",
+                    "employee_count": 1001,
+                    "country_code": "CO",
+                },
+            ]
+        )
 
         with patch("requests.post", return_value=self._mock_response(data)):
             adapter = TheirStackAdapter(api_key="test-key")
@@ -346,7 +477,9 @@ class TestTheirStackDiscovery:
 # Bloque 4: Integración Discovery → Scoring (flujo completo Caso B)
 # ---------------------------------------------------------------------------
 class TestFlujoDiscoveryScoring:
-    def test_empresa_descubierta_puede_recibir_triggers(self, manifesto_saas: ManifiestoICP):
+    def test_empresa_descubierta_puede_recibir_triggers(
+        self, manifesto_saas: ManifiestoICP
+    ):
         """
         Verifica el flujo orquestado completo del Caso B:
             1. descubrir_empresas() → lista de Empresa(DESCUBIERTA)
@@ -355,20 +488,38 @@ class TestFlujoDiscoveryScoring:
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
         # --- Paso 1: Discovery ---
-        discovery_data = _respuesta_discovery_mock([
-            {"name": "Target Corp", "domain": "target.co",
-             "employee_count_range": "201-500", "country_code": "CO"},
-        ])
+        discovery_data = _respuesta_discovery_mock(
+            [
+                {
+                    "name": "Target Corp",
+                    "domain": "target.co",
+                    "employee_count_range": "201-500",
+                    "country_code": "CO",
+                },
+            ]
+        )
 
         # --- Paso 2: Scoring (3 vacantes para trigger ALTA) ---
         scoring_data = {
             "data": [
-                {"id": "j1", "title": "Senior Python Dev", "date_posted": "2026-07-10",
-                 "technologies": [{"name": "Python"}]},
-                {"id": "j2", "title": "AWS Architect", "date_posted": "2026-07-08",
-                 "technologies": [{"name": "AWS"}]},
-                {"id": "j3", "title": "Django Backend", "date_posted": "2026-07-05",
-                 "technologies": [{"name": "Django"}]},
+                {
+                    "id": "j1",
+                    "title": "Senior Python Dev",
+                    "date_posted": "2026-07-10",
+                    "technologies": [{"name": "Python"}],
+                },
+                {
+                    "id": "j2",
+                    "title": "AWS Architect",
+                    "date_posted": "2026-07-08",
+                    "technologies": [{"name": "AWS"}],
+                },
+                {
+                    "id": "j3",
+                    "title": "Django Backend",
+                    "date_posted": "2026-07-05",
+                    "technologies": [{"name": "Django"}],
+                },
             ],
             "total": 3,
         }
@@ -402,5 +553,6 @@ class TestFlujoDiscoveryScoring:
         # El trigger referencia a la empresa descubierta por su id
         assert trigger.empresa_id == empresa.id
         from src.core.domain.models import NivelConfianza, OrigenTrigger
+
         assert trigger.nivel_confianza == NivelConfianza.ALTA
         assert trigger.origen == OrigenTrigger.THEIRSTACK

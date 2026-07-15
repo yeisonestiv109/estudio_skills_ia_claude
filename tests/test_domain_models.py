@@ -6,6 +6,7 @@ Cubren los contratos de seguridad definidos en:
 
 Todas las pruebas son deterministas, no requieren red, LLM ni base de datos.
 """
+
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -13,7 +14,6 @@ import pytest
 from pydantic import ValidationError
 
 from src.core.domain.models import (
-    AutoridadDecision,
     BaseLegal,
     CategoriaEmpresa,
     Decisor,
@@ -22,11 +22,17 @@ from src.core.domain.models import (
     ManifiestoICP,
     NivelConfianza,
     OrigenTrigger,
+    ProspectoCalificado,
     Seniority,
     TamanoEmpresa,
     Trigger,
 )
-from src.core.domain.policies import AdapterRoutingPolicy, TriggerAggregationPolicy
+from src.core.domain.policies import (
+    AdapterRoutingPolicy,
+    TriggerAggregationPolicy,
+    UmbralCalidadDecisor,
+)
+from src.core.ports.interfaces import PuertoEnriquecedorContactos
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +123,9 @@ class TestGateACoherenciaDolor:
         # dolor_operativo ausente (None por defecto)
         with pytest.raises(ValidationError) as exc_info:
             ManifiestoICP(**manifesto_base)
-        assert "pain_es_accionable" in str(exc_info.value) or "dolor_operativo" in str(exc_info.value)
+        assert "pain_es_accionable" in str(exc_info.value) or "dolor_operativo" in str(
+            exc_info.value
+        )
 
     def test_gate_a_pasa_pain_true_con_dolor(self, manifesto_base: dict):
         """Con dolor_operativo poblado, el estado es coherente y debe pasar."""
@@ -183,7 +191,9 @@ class TestDecisorContratos:
 class TestAdapterRoutingPolicy:
     policy = AdapterRoutingPolicy()
 
-    def _manifesto(self, categoria: CategoriaEmpresa, es_gov: bool = False) -> ManifiestoICP:
+    def _manifesto(
+        self, categoria: CategoriaEmpresa, es_gov: bool = False
+    ) -> ManifiestoICP:
         return ManifiestoICP(
             pain_es_accionable=False,
             anclaje_tecnologico=["Python"],
@@ -199,15 +209,21 @@ class TestAdapterRoutingPolicy:
     def test_google_alerts_siempre_activo(self):
         for cat in CategoriaEmpresa:
             result = self.policy.resolver(self._manifesto(cat))
-            assert OrigenTrigger.GOOGLE_ALERTS in result, f"GOOGLE_ALERTS ausente para {cat}"
+            assert OrigenTrigger.GOOGLE_ALERTS in result, (
+                f"GOOGLE_ALERTS ausente para {cat}"
+            )
 
     def test_fintech_regulado_desactiva_wappalyzer_y_theirstack(self):
-        result = self.policy.resolver(self._manifesto(CategoriaEmpresa.REGULADO_FINTECH))
+        result = self.policy.resolver(
+            self._manifesto(CategoriaEmpresa.REGULADO_FINTECH)
+        )
         assert OrigenTrigger.WAPPALYZER not in result
         assert OrigenTrigger.THEIRSTACK not in result
 
     def test_agencia_it_gov_facing_activa_todos(self):
-        result = self.policy.resolver(self._manifesto(CategoriaEmpresa.AGENCIA_IT, es_gov=True))
+        result = self.policy.resolver(
+            self._manifesto(CategoriaEmpresa.AGENCIA_IT, es_gov=True)
+        )
         # AGENCIA_IT gov-facing: Google Alerts + TheirStack + SECOP + Wappalyzer + GitHub
         assert set(result) == {
             OrigenTrigger.GOOGLE_ALERTS,
@@ -218,7 +234,9 @@ class TestAdapterRoutingPolicy:
         }
 
     def test_saas_sin_gov_no_activa_secop(self):
-        result = self.policy.resolver(self._manifesto(CategoriaEmpresa.SAAS_B2B_HORIZONTAL))
+        result = self.policy.resolver(
+            self._manifesto(CategoriaEmpresa.SAAS_B2B_HORIZONTAL)
+        )
         assert OrigenTrigger.SECOP_SOCRATA not in result
 
 
@@ -259,7 +277,159 @@ class TestTriggerAggregationPolicy:
     def test_umbral_dinamico_un_adaptador_activo(self):
         """Si solo 1 adaptador estaba activo, 1 trigger con señal fresca es suficiente."""
         t1 = self._trigger(OrigenTrigger.GOOGLE_ALERTS, dias_atras=5)
-        assert self.policy.evaluar([t1], adaptadores_activos=[OrigenTrigger.GOOGLE_ALERTS]) is True
+        assert (
+            self.policy.evaluar([t1], adaptadores_activos=[OrigenTrigger.GOOGLE_ALERTS])
+            is True
+        )
 
     def test_lista_vacia_de_triggers_falla(self):
         assert self.policy.evaluar([]) is False
+
+
+# ---------------------------------------------------------------------------
+# Bloque 7: PuertoEnriquecedorContactos — Contrato ABC (Motor 3)
+# ---------------------------------------------------------------------------
+class TestPuertoEnriquecedorContactosABC:
+    def test_no_se_puede_instanciar_directamente(self):
+        """El puerto es abstracto; el Core nunca instancia adaptadores directamente."""
+        with pytest.raises(TypeError):
+            PuertoEnriquecedorContactos()  # type: ignore[abstract]
+
+    def test_implementacion_concreta_respeta_firma_stateless(
+        self, empresa_valida: Empresa
+    ):
+        """
+        Una implementación concreta debe aceptar (empresa, cargos) y retornar
+        list[Decisor]. La firma es stateless: no requiere contexto de job.
+        """
+
+        class _EnriquecedorFake(PuertoEnriquecedorContactos):
+            def enriquecer(self, empresa: Empresa, cargos: list[str]) -> list[Decisor]:
+                return [
+                    Decisor(
+                        empresa_id=empresa.id,
+                        nombre="Ana Torres",
+                        cargo_original=cargos[0],
+                        cargo_normalizado="CTO",
+                        seniority=Seniority.C_LEVEL,
+                        confianza_dato=0.9,
+                        estado_correo=EstadoCorreo.VERIFICADO,
+                    )
+                ]
+
+        adaptador = _EnriquecedorFake()
+        resultado = adaptador.enriquecer(empresa_valida, ["CTO"])
+        assert len(resultado) == 1
+        assert resultado[0].estado_correo == EstadoCorreo.VERIFICADO
+
+    def test_implementacion_puede_retornar_lista_vacia_sin_lanzar(
+        self, empresa_valida: Empresa
+    ):
+        """Contrato de error: sin decisores resolubles → [] es un resultado válido."""
+
+        class _EnriquecedorSinResultados(PuertoEnriquecedorContactos):
+            def enriquecer(self, empresa: Empresa, cargos: list[str]) -> list[Decisor]:
+                return []
+
+        adaptador = _EnriquecedorSinResultados()
+        assert adaptador.enriquecer(empresa_valida, ["CTO"]) == []
+
+
+# ---------------------------------------------------------------------------
+# Bloque 8: ProspectoCalificado — Contrato de transición Motor 2 → Motor 3
+# ---------------------------------------------------------------------------
+class TestProspectoCalificado:
+    def _trigger(self, empresa_id: uuid.UUID) -> Trigger:
+        return Trigger(
+            empresa_id=empresa_id,
+            origen=OrigenTrigger.GOOGLE_ALERTS,
+            nivel_confianza=NivelConfianza.ALTA,
+            descripcion="Nuevo CTO confirmado",
+            fecha_evento=datetime.now(timezone.utc) - timedelta(days=5),
+        )
+
+    def test_construccion_valida(self, empresa_valida: Empresa, manifesto_base: dict):
+        manifiesto = ManifiestoICP(**manifesto_base)
+        trigger = self._trigger(empresa_valida.id)
+        prospecto = ProspectoCalificado(
+            empresa=empresa_valida, triggers=[trigger], manifiesto=manifiesto
+        )
+        assert prospecto.empresa == empresa_valida
+        assert prospecto.triggers == [trigger]
+        assert prospecto.manifiesto == manifiesto
+
+    def test_es_inmutable(self, empresa_valida: Empresa, manifesto_base: dict):
+        manifiesto = ManifiestoICP(**manifesto_base)
+        trigger = self._trigger(empresa_valida.id)
+        prospecto = ProspectoCalificado(
+            empresa=empresa_valida, triggers=[trigger], manifiesto=manifiesto
+        )
+        with pytest.raises(ValidationError):
+            prospecto.empresa = empresa_valida  # type: ignore[misc]
+
+    def test_requiere_al_menos_un_trigger(
+        self, empresa_valida: Empresa, manifesto_base: dict
+    ):
+        """
+        Un ProspectoCalificado sin triggers rompe la premisa de M2→M3: solo
+        llegan empresas que ya pasaron TriggerAggregationPolicy.
+        """
+        manifiesto = ManifiestoICP(**manifesto_base)
+        with pytest.raises(ValidationError):
+            ProspectoCalificado(
+                empresa=empresa_valida, triggers=[], manifiesto=manifiesto
+            )
+
+
+# ---------------------------------------------------------------------------
+# Bloque 9: UmbralCalidadDecisor — Gate de calidad Motor 3 → Motor 4
+# ---------------------------------------------------------------------------
+class TestUmbralCalidadDecisor:
+    policy = UmbralCalidadDecisor()
+
+    def _decisor(self, estado_correo: EstadoCorreo, confianza: float) -> Decisor:
+        return Decisor(
+            empresa_id=uuid.uuid4(),
+            nombre="Ana Torres",
+            cargo_original="Chief Technology Officer",
+            cargo_normalizado="CTO",
+            seniority=Seniority.C_LEVEL,
+            estado_correo=estado_correo,
+            confianza_dato=confianza,
+        )
+
+    def test_verificado_con_confianza_alta_es_apto(self):
+        d = self._decisor(EstadoCorreo.VERIFICADO, 0.90)
+        assert self.policy.es_apto_para_outbound(d) is True
+
+    def test_inferido_con_confianza_0_70_es_apto(self):
+        """Calibración aprobada: accept_all score>=80 → confianza 0.70 → apto."""
+        d = self._decisor(EstadoCorreo.INFERIDO, 0.70)
+        assert self.policy.es_apto_para_outbound(d) is True
+
+    def test_inferido_con_confianza_0_65_no_es_apto(self):
+        """Calibración aprobada: accept_all score 50-79 → confianza 0.65 → cola manual."""
+        d = self._decisor(EstadoCorreo.INFERIDO, 0.65)
+        assert self.policy.es_apto_para_outbound(d) is False
+
+    def test_rebotado_nunca_es_apto_aunque_confianza_sea_alta(self):
+        """Protección de reputación: REBOTADO se descarta sin importar confianza_dato."""
+        d = self._decisor(EstadoCorreo.REBOTADO, 0.95)
+        assert self.policy.es_apto_para_outbound(d) is False
+
+    def test_no_resuelto_nunca_es_apto(self):
+        d = self._decisor(EstadoCorreo.NO_RESUELTO, 0.0)
+        assert self.policy.es_apto_para_outbound(d) is False
+
+    def test_particionar_separa_correctamente(self):
+        apto = self._decisor(EstadoCorreo.VERIFICADO, 0.9)
+        manual = self._decisor(EstadoCorreo.INFERIDO, 0.65)
+        descartado = self._decisor(EstadoCorreo.REBOTADO, 0.9)
+
+        aptos, cola_manual = self.policy.particionar([apto, manual, descartado])
+
+        assert aptos == [apto]
+        assert cola_manual == [manual, descartado]
+
+    def test_particionar_lista_vacia_retorna_dos_listas_vacias(self):
+        assert self.policy.particionar([]) == ([], [])

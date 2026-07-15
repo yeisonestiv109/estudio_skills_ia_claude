@@ -17,12 +17,10 @@ Política de NivelConfianza:
 Contrato de error: NUNCA propaga excepciones al Core.
     Errores de red, SSL o timeout → retorna [].
 """
+
 from __future__ import annotations
 
 import logging
-import re
-from typing import Optional
-from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -58,39 +56,49 @@ _BROWSER_HEADERS: dict[str, str] = {
 # Formato: nombre_normalizado → [patrones_a_buscar]
 # ---------------------------------------------------------------------------
 _TECH_PATTERNS: dict[str, list[str]] = {
-    "php":        ["php", "x-powered-by: php"],
-    "wordpress":  ["wordpress", "wp-content", "wp-includes"],
-    "drupal":     ["drupal", "x-generator: drupal"],
-    "joomla":     ["joomla"],
-    "django":     ["django", "csrfmiddlewaretoken"],
-    "laravel":    ["laravel", "x-powered-by: php"],
-    "rails":      ["ruby on rails", "x-powered-by: phusion passenger"],
-    "express":    ["express", "x-powered-by: express"],
-    "next.js":    ["next.js", "__next", "_next/"],
-    "react":      ["react", "__reactfiber", "reactdom"],
-    "vue":        ["vue.js", "__vue__", "vuejs"],
-    "angular":    ["angular", "ng-version"],
-    "jquery":     ["jquery"],
-    "bootstrap":  ["bootstrap"],
-    "nginx":      ["nginx"],
-    "apache":     ["apache"],
-    "iis":        ["iis", "microsoft-iis"],
+    "php": ["php", "x-powered-by: php"],
+    "wordpress": ["wordpress", "wp-content", "wp-includes"],
+    "drupal": ["drupal", "x-generator: drupal"],
+    "joomla": ["joomla"],
+    "django": ["django", "csrfmiddlewaretoken"],
+    "laravel": ["laravel", "x-powered-by: php"],
+    "rails": ["ruby on rails", "x-powered-by: phusion passenger"],
+    "express": ["express", "x-powered-by: express"],
+    "next.js": ["next.js", "__next", "_next/"],
+    "react": ["react", "__reactfiber", "reactdom"],
+    "vue": ["vue.js", "__vue__", "vuejs"],
+    "angular": ["angular", "ng-version"],
+    "jquery": ["jquery"],
+    "bootstrap": ["bootstrap"],
+    "nginx": ["nginx"],
+    "apache": ["apache"],
+    "iis": ["iis", "microsoft-iis"],
     "cloudflare": ["cloudflare", "cf-ray"],
-    "aws":        ["amazon", "aws", "x-amz-"],
-    "azure":      ["azure", "x-ms-"],
-    "shopify":    ["shopify", "x-shopify"],
-    "wix":        ["wix.com", "wixsite"],
-    "squarespace":["squarespace"],
+    "aws": ["amazon", "aws", "x-amz-"],
+    "azure": ["azure", "x-ms-"],
+    "shopify": ["shopify", "x-shopify"],
+    "wix": ["wix.com", "wixsite"],
+    "squarespace": ["squarespace"],
 }
 
 # Tecnologías con versiones conocidas EOL o próximas a EOL (2026)
-_EOL_MARKERS: frozenset[str] = frozenset({
-    "php 5", "php 7.0", "php 7.1", "php 7.2", "php 7.3",
-    "wordpress 5", "wordpress 4", "wordpress 3",
-    "jquery 1.", "jquery 2.",
-    "angular 1.",
-    "mysql 5.5", "mysql 5.6",
-})
+_EOL_MARKERS: frozenset[str] = frozenset(
+    {
+        "php 5",
+        "php 7.0",
+        "php 7.1",
+        "php 7.2",
+        "php 7.3",
+        "wordpress 5",
+        "wordpress 4",
+        "wordpress 3",
+        "jquery 1.",
+        "jquery 2.",
+        "angular 1.",
+        "mysql 5.5",
+        "mysql 5.6",
+    }
+)
 
 
 def _construir_url(dominio: str) -> str:
@@ -139,11 +147,10 @@ def _detectar_tecnologias_html(html: str) -> set[str]:
                     techs.add(tech)
 
     # Scripts y links src/href
-    text_a_buscar = " ".join([
-        (tag.get("src") or "") for tag in soup.find_all("script")
-    ] + [
-        (tag.get("href") or "") for tag in soup.find_all("link")
-    ]).lower()
+    text_a_buscar = " ".join(
+        [(tag.get("src") or "") for tag in soup.find_all("script")]
+        + [(tag.get("href") or "") for tag in soup.find_all("link")]
+    ).lower()
 
     for tech, patterns in _TECH_PATTERNS.items():
         if any(p in text_a_buscar for p in patterns):
@@ -242,13 +249,20 @@ class WappalyzerHeadlessAdapter(PuertoFuenteTriggers):
             )
             response.raise_for_status()
         except requests.exceptions.Timeout:
-            logger.warning("Wappalyzer: timeout en '%s'. Retornando [].", empresa.dominio)
+            logger.warning(
+                "Wappalyzer: timeout en '%s'. Retornando [].", empresa.dominio
+            )
             return []
         except requests.exceptions.SSLError:
-            logger.warning("Wappalyzer: SSL error en '%s'. Retornando [].", empresa.dominio)
+            logger.warning(
+                "Wappalyzer: SSL error en '%s'. Retornando [].", empresa.dominio
+            )
             return []
         except requests.exceptions.ConnectionError:
-            logger.warning("Wappalyzer: no se pudo conectar a '%s'. Retornando [].", empresa.dominio)
+            logger.warning(
+                "Wappalyzer: no se pudo conectar a '%s'. Retornando [].",
+                empresa.dominio,
+            )
             return []
         except requests.exceptions.HTTPError as exc:
             logger.warning(
@@ -258,7 +272,9 @@ class WappalyzerHeadlessAdapter(PuertoFuenteTriggers):
             )
             return []
         except Exception as exc:
-            logger.error("Wappalyzer: error inesperado en '%s': %s", empresa.dominio, exc)
+            logger.error(
+                "Wappalyzer: error inesperado en '%s': %s", empresa.dominio, exc
+            )
             return []
 
         # Detección de tecnologías
@@ -274,14 +290,22 @@ class WappalyzerHeadlessAdapter(PuertoFuenteTriggers):
         nivel = _calcular_nivel(techs_detectadas, self._tecnologias, es_eol)
 
         if nivel is None:
-            logger.debug("Wappalyzer: 0 tecnologías detectadas en '%s'.", empresa.dominio)
+            logger.debug(
+                "Wappalyzer: 0 tecnologías detectadas en '%s'.", empresa.dominio
+            )
             return []
 
         if nivel == NivelConfianza.BAJA and not self._incluir_baja:
-            logger.debug("Wappalyzer: stack BAJA relevancia en '%s'. Omitido.", empresa.dominio)
+            logger.debug(
+                "Wappalyzer: stack BAJA relevancia en '%s'. Omitido.", empresa.dominio
+            )
             return []
 
-        techs_str = ", ".join(sorted(techs_detectadas)) if techs_detectadas else "no identificadas"
+        techs_str = (
+            ", ".join(sorted(techs_detectadas))
+            if techs_detectadas
+            else "no identificadas"
+        )
         eol_nota = " [Stack potencialmente EOL detectado]" if es_eol else ""
         descripcion = (
             f"Stack público detectado en '{empresa.dominio}': {techs_str}.{eol_nota}"
@@ -294,9 +318,11 @@ class WappalyzerHeadlessAdapter(PuertoFuenteTriggers):
             techs_str,
         )
 
-        return [Trigger(
-            empresa_id=empresa.id,
-            origen=OrigenTrigger.WAPPALYZER,
-            nivel_confianza=nivel,
-            descripcion=descripcion,
-        )]
+        return [
+            Trigger(
+                empresa_id=empresa.id,
+                origen=OrigenTrigger.WAPPALYZER,
+                nivel_confianza=nivel,
+                descripcion=descripcion,
+            )
+        ]

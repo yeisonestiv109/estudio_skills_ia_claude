@@ -16,10 +16,10 @@ Política de NivelConfianza (definida en modelos_dominio_core.md):
 Contrato de error: NUNCA propaga excepciones al Core.
     Cualquier error de red o parseo se captura, se registra y retorna [].
 """
+
 from __future__ import annotations
 
 import logging
-import re
 import time
 from datetime import datetime, timezone
 from typing import NamedTuple
@@ -41,22 +41,63 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Palabras clave que determinan el NivelConfianza del trigger de noticias
 # ---------------------------------------------------------------------------
-_KEYWORDS_C_LEVEL = frozenset({
-    "cto", "cio", "cdo", "chief technology", "chief information",
-    "chief digital", "nuevo director", "new cto", "nombrado", "appointed",
-    "joins as", "se une como", "director tecnología", "director tecnologia",
-})
+_KEYWORDS_C_LEVEL = frozenset(
+    {
+        "cto",
+        "cio",
+        "cdo",
+        "chief technology",
+        "chief information",
+        "chief digital",
+        "nuevo director",
+        "new cto",
+        "nombrado",
+        "appointed",
+        "joins as",
+        "se une como",
+        "director tecnología",
+        "director tecnologia",
+    }
+)
 
-_KEYWORDS_INVERSION = frozenset({
-    "ronda", "round", "series a", "series b", "series c",
-    "inversión", "inversion", "funding", "raised", "levantó", "levanto",
-    "millones", "million", "capital", "financiamiento", "vc", "venture",
-})
+_KEYWORDS_INVERSION = frozenset(
+    {
+        "ronda",
+        "round",
+        "series a",
+        "series b",
+        "series c",
+        "inversión",
+        "inversion",
+        "funding",
+        "raised",
+        "levantó",
+        "levanto",
+        "millones",
+        "million",
+        "capital",
+        "financiamiento",
+        "vc",
+        "venture",
+    }
+)
 
-_KEYWORDS_MA = frozenset({
-    "adquisición", "adquisicion", "acquisition", "merger", "fusión", "fusion",
-    "compra", "acquired", "acquired by", "adquirida", "se une a", "joins",
-})
+_KEYWORDS_MA = frozenset(
+    {
+        "adquisición",
+        "adquisicion",
+        "acquisition",
+        "merger",
+        "fusión",
+        "fusion",
+        "compra",
+        "acquired",
+        "acquired by",
+        "adquirida",
+        "se une a",
+        "joins",
+    }
+)
 
 
 class _EntradaRSS(NamedTuple):
@@ -102,10 +143,7 @@ def _empresa_mencionada(empresa: Empresa, texto: str) -> bool:
     dominio_raiz = empresa.dominio.split(".")[0].lower()  # "acme" de "acme.com"
     texto_lower = texto.lower()
 
-    return (
-        nombre_normalizado in texto_lower
-        or dominio_raiz in texto_lower
-    )
+    return nombre_normalizado in texto_lower or dominio_raiz in texto_lower
 
 
 class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
@@ -168,7 +206,9 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
                 )
 
         if not entradas_relevantes:
-            logger.debug("GoogleAlerts: 0 entradas relevantes para '%s'.", empresa.nombre)
+            logger.debug(
+                "GoogleAlerts: 0 entradas relevantes para '%s'.", empresa.nombre
+            )
             return []
 
         # Construir Triggers ordenando por relevancia (ALTA primero)
@@ -187,7 +227,11 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             triggers.append(trigger)
 
         # Ordenar ALTA > MEDIA > BAJA para que el orquestador reciba los mejores primero
-        _orden = {NivelConfianza.ALTA: 0, NivelConfianza.MEDIA: 1, NivelConfianza.BAJA: 2}
+        _orden = {
+            NivelConfianza.ALTA: 0,
+            NivelConfianza.MEDIA: 1,
+            NivelConfianza.BAJA: 2,
+        }
         triggers.sort(key=lambda t: _orden[t.nivel_confianza])
 
         logger.info(
@@ -236,7 +280,9 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
 
             # Filtrar por empresa y/o por keywords del ICP
             menciona_empresa = _empresa_mencionada(empresa, texto_completo)
-            menciona_keyword = any(kw in texto_completo.lower() for kw in self._keywords_extra)
+            menciona_keyword = any(
+                kw in texto_completo.lower() for kw in self._keywords_extra
+            )
 
             if not (menciona_empresa or menciona_keyword):
                 continue
@@ -255,7 +301,11 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
     @staticmethod
     def _formatear_descripcion(entrada: _EntradaRSS, nivel: NivelConfianza) -> str:
         """Genera la descripción legible del Trigger según el nivel detectado."""
-        titulo_truncado = (entrada.titulo[:120] + "...") if len(entrada.titulo) > 120 else entrada.titulo
+        titulo_truncado = (
+            (entrada.titulo[:120] + "...")
+            if len(entrada.titulo) > 120
+            else entrada.titulo
+        )
         nivel_label = {
             NivelConfianza.ALTA: "Cambio de liderazgo C-Level",
             NivelConfianza.MEDIA: "Evento de inversión o M&A",

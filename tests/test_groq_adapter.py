@@ -4,6 +4,7 @@ Tests unitarios del GroqICPAdapter — sin llamadas reales a la API.
 Usa unittest.mock.patch para simular respuestas de Groq.
 El wait_strategy se inyecta con wait_none() para tests instantáneos.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,31 +26,35 @@ from src.core.domain.models import (
 # ---------------------------------------------------------------------------
 # Helpers y fixtures
 # ---------------------------------------------------------------------------
-GROQ_JSON_PERFECTO = json.dumps({
-    "dolor_operativo": "No entregan proyectos a tiempo por deuda técnica acumulada en el monolito",
-    "pain_es_accionable": True,
-    "anclaje_tecnologico": ["Python", "AWS", "Django"],
-    "categoria_empresa": "SAAS_B2B_HORIZONTAL",
-    "vertical": "E-commerce",
-    "es_gov_facing": False,
-    "cargos_decisores": ["CTO", "VP Engineering"],
-    "tamano_empresa": "MID_MARKET",
-    "geografia": "Colombia",
-    "base_legal": "CONSENTIMIENTO_EXPLICITO",
-})
+GROQ_JSON_PERFECTO = json.dumps(
+    {
+        "dolor_operativo": "No entregan proyectos a tiempo por deuda técnica acumulada en el monolito",
+        "pain_es_accionable": True,
+        "anclaje_tecnologico": ["Python", "AWS", "Django"],
+        "categoria_empresa": "SAAS_B2B_HORIZONTAL",
+        "vertical": "E-commerce",
+        "es_gov_facing": False,
+        "cargos_decisores": ["CTO", "VP Engineering"],
+        "tamano_empresa": "MID_MARKET",
+        "geografia": "Colombia",
+        "base_legal": "CONSENTIMIENTO_EXPLICITO",
+    }
+)
 
-GROQ_JSON_CAMPO_INVALIDO = json.dumps({
-    "dolor_operativo": None,
-    "pain_es_accionable": True,  # Incoherente: True pero dolor=null → ValidationError
-    "anclaje_tecnologico": ["Python"],
-    "categoria_empresa": "SAAS_B2B_HORIZONTAL",
-    "vertical": "Tech",
-    "es_gov_facing": False,
-    "cargos_decisores": ["CTO"],
-    "tamano_empresa": "SME",
-    "geografia": "Colombia",
-    "base_legal": "CONSENTIMIENTO_EXPLICITO",
-})
+GROQ_JSON_CAMPO_INVALIDO = json.dumps(
+    {
+        "dolor_operativo": None,
+        "pain_es_accionable": True,  # Incoherente: True pero dolor=null → ValidationError
+        "anclaje_tecnologico": ["Python"],
+        "categoria_empresa": "SAAS_B2B_HORIZONTAL",
+        "vertical": "Tech",
+        "es_gov_facing": False,
+        "cargos_decisores": ["CTO"],
+        "tamano_empresa": "SME",
+        "geografia": "Colombia",
+        "base_legal": "CONSENTIMIENTO_EXPLICITO",
+    }
+)
 
 
 def _mock_completion(json_content: str) -> MagicMock:
@@ -61,7 +66,9 @@ def _mock_completion(json_content: str) -> MagicMock:
     return completion
 
 
-def _adaptador_con_mock_client(mock_create_response) -> tuple[GroqICPAdapter, MagicMock]:
+def _adaptador_con_mock_client(
+    mock_create_response,
+) -> tuple[GroqICPAdapter, MagicMock]:
     """
     Construye un GroqICPAdapter con el cliente de Groq mockeado.
     Usa wait_none() para que los tests de retry sean instantáneos.
@@ -77,6 +84,7 @@ def _adaptador_con_mock_client(mock_create_response) -> tuple[GroqICPAdapter, Ma
         adapter._client = mock_client
         # Reconstruir el callable de retry con el cliente ya inyectado
         from tenacity import retry, retry_if_exception_type, stop_after_attempt
+
         adapter._llamar_con_retry = retry(
             retry=retry_if_exception_type(groq_sdk.RateLimitError),
             wait=wait_none(),
@@ -95,9 +103,13 @@ class TestGroqAdapterJSONPerfecto:
         adapter, mock_client = _adaptador_con_mock_client(
             _mock_completion(GROQ_JSON_PERFECTO)
         )
-        mock_client.chat.completions.create.return_value = _mock_completion(GROQ_JSON_PERFECTO)
+        mock_client.chat.completions.create.return_value = _mock_completion(
+            GROQ_JSON_PERFECTO
+        )
 
-        resultado = adapter.analizar("Busco empresas SaaS con deuda técnica en Colombia")
+        resultado = adapter.analizar(
+            "Busco empresas SaaS con deuda técnica en Colombia"
+        )
 
         assert isinstance(resultado, ManifiestoICP)
         assert resultado.categoria_empresa == CategoriaEmpresa.SAAS_B2B_HORIZONTAL
@@ -112,7 +124,9 @@ class TestGroqAdapterJSONPerfecto:
         adapter, mock_client = _adaptador_con_mock_client(
             _mock_completion(GROQ_JSON_PERFECTO)
         )
-        mock_client.chat.completions.create.return_value = _mock_completion(GROQ_JSON_PERFECTO)
+        mock_client.chat.completions.create.return_value = _mock_completion(
+            GROQ_JSON_PERFECTO
+        )
         adapter.analizar("Busco empresas fintech")
 
         call_kwargs = mock_client.chat.completions.create.call_args
@@ -123,7 +137,9 @@ class TestGroqAdapterJSONPerfecto:
         adapter, mock_client = _adaptador_con_mock_client(
             _mock_completion(GROQ_JSON_PERFECTO)
         )
-        mock_client.chat.completions.create.return_value = _mock_completion(GROQ_JSON_PERFECTO)
+        mock_client.chat.completions.create.return_value = _mock_completion(
+            GROQ_JSON_PERFECTO
+        )
         adapter.analizar("descripción de prueba")
 
         call_kwargs = mock_client.chat.completions.create.call_args
@@ -223,13 +239,19 @@ class TestGroqAdapterValidationError:
         adapter, mock_client = _adaptador_con_mock_client(
             _mock_completion(GROQ_JSON_CAMPO_INVALIDO)
         )
-        mock_client.chat.completions.create.return_value = _mock_completion(GROQ_JSON_CAMPO_INVALIDO)
+        mock_client.chat.completions.create.return_value = _mock_completion(
+            GROQ_JSON_CAMPO_INVALIDO
+        )
 
         with pytest.raises(ValueError) as exc_info:
             adapter.analizar("descripción vaga sin tecnología")
 
         error_msg = str(exc_info.value)
-        assert "responde" in error_msg.lower() or "clarifi" in error_msg.lower() or "Por favor" in error_msg
+        assert (
+            "responde" in error_msg.lower()
+            or "clarifi" in error_msg.lower()
+            or "Por favor" in error_msg
+        )
 
     def test_descripcion_vacia_lanza_value_error(self):
         """Una descripción vacía debe ser rechazada antes de llamar a la API."""
@@ -269,6 +291,7 @@ class TestGroqAdapterConstructor:
         # Aseguramos que la variable de entorno no esté definida en este test
         with patch.dict("os.environ", {}, clear=False):
             import os
+
             original = os.environ.pop("GROQ_API_KEY", None)
             try:
                 with pytest.raises(ValueError, match="GROQ_API_KEY"):

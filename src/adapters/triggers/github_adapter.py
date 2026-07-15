@@ -20,12 +20,13 @@ Manejo de rate limits:
 
 Contrato de error: NUNCA propaga excepciones al Core. Errores → [].
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 import requests
 
@@ -45,17 +46,17 @@ _MAX_REPOS = 10
 
 # Mapeo de extensiones/lenguajes GitHub al vocabulario del ICP
 _LANGUAGE_MAP: dict[str, list[str]] = {
-    "Python":     ["python", "django", "flask", "fastapi"],
+    "Python": ["python", "django", "flask", "fastapi"],
     "JavaScript": ["javascript", "node", "nodejs", "react", "vue", "angular"],
     "TypeScript": ["typescript", "ts", "next.js", "nestjs"],
-    "Java":       ["java", "spring", "quarkus"],
-    "Go":         ["go", "golang"],
-    "Rust":       ["rust"],
-    "PHP":        ["php", "laravel", "symfony"],
-    "Ruby":       ["ruby", "rails"],
-    "C#":         ["c#", "dotnet", ".net"],
-    "Kotlin":     ["kotlin", "android"],
-    "Swift":      ["swift", "ios"],
+    "Java": ["java", "spring", "quarkus"],
+    "Go": ["go", "golang"],
+    "Rust": ["rust"],
+    "PHP": ["php", "laravel", "symfony"],
+    "Ruby": ["ruby", "rails"],
+    "C#": ["c#", "dotnet", ".net"],
+    "Kotlin": ["kotlin", "android"],
+    "Swift": ["swift", "ios"],
 }
 
 
@@ -71,7 +72,21 @@ def _extraer_org_name(dominio: str) -> str:
     # Quitar subdominios (www, api, etc.) y TLD
     partes = dominio.split(".")
     # Heurística: tomar la parte más larga que no sea TLD conocido
-    tlds = {"com", "co", "org", "net", "io", "dev", "ai", "app", "uk", "us", "mx", "ar", "br"}
+    tlds = {
+        "com",
+        "co",
+        "org",
+        "net",
+        "io",
+        "dev",
+        "ai",
+        "app",
+        "uk",
+        "us",
+        "mx",
+        "ar",
+        "br",
+    }
     candidatos = [p for p in partes if p not in tlds and len(p) > 1]
     return candidatos[0] if candidatos else partes[0]
 
@@ -85,7 +100,9 @@ def _parsear_fecha_github(valor: str | None) -> datetime | None:
         return None
 
 
-def _match_tecnologias(lenguaje_repo: str | None, tecnologias_objetivo: list[str]) -> bool:
+def _match_tecnologias(
+    lenguaje_repo: str | None, tecnologias_objetivo: list[str]
+) -> bool:
     """
     Verifica si el lenguaje principal del repo hace match con el ICP.
     """
@@ -210,13 +227,18 @@ class GitHubAdapter(PuertoFuenteTriggers):
             if response.status_code in _REINTENTABLES and intento < 2:
                 logger.warning(
                     "GitHub: HTTP %d en '%s'. Reintento en 2s...",
-                    response.status_code, url,
+                    response.status_code,
+                    url,
                 )
                 time.sleep(2)
                 continue
 
             if response.status_code != 200:
-                logger.warning("GitHub: HTTP %d en '%s'. Retornando None.", response.status_code, url)
+                logger.warning(
+                    "GitHub: HTTP %d en '%s'. Retornando None.",
+                    response.status_code,
+                    url,
+                )
                 return None
 
             try:
@@ -270,7 +292,9 @@ class GitHubAdapter(PuertoFuenteTriggers):
 
         # Construir descripción
         nombres_repos = [r.get("name", "?") for r in repos_a_reportar[:3]]
-        lenguajes = list({r.get("language", "?") for r in repos_a_reportar if r.get("language")})
+        lenguajes = list(
+            {r.get("language", "?") for r in repos_a_reportar if r.get("language")}
+        )
         issues_total = sum(r.get("open_issues_count", 0) for r in repos_a_reportar)
 
         descripcion = (
@@ -287,10 +311,12 @@ class GitHubAdapter(PuertoFuenteTriggers):
             nivel.value,
         )
 
-        return [Trigger(
-            empresa_id=empresa.id,
-            origen=OrigenTrigger.GITHUB,
-            nivel_confianza=nivel,
-            descripcion=descripcion,
-            fecha_evento=fecha_evento,
-        )]
+        return [
+            Trigger(
+                empresa_id=empresa.id,
+                origen=OrigenTrigger.GITHUB,
+                nivel_confianza=nivel,
+                descripcion=descripcion,
+                fecha_evento=fecha_evento,
+            )
+        ]

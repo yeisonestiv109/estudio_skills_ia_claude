@@ -2,6 +2,7 @@
 Tests unitarios de SecopSocrataAdapter y GitHubAdapter.
 Mockea requests.get — sin llamadas reales a APIs externas.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,7 @@ def _mock_get(json_data, status_code: int = 200) -> MagicMock:
     m.headers = {"X-RateLimit-Remaining": "59"}
     if status_code >= 400:
         import requests
+
         m.raise_for_status.side_effect = requests.exceptions.HTTPError(response=m)
     else:
         m.raise_for_status.return_value = None
@@ -45,7 +47,6 @@ def _mock_get(json_data, status_code: int = 200) -> MagicMock:
 # SECOP Adapter
 # ──────────────────────────────────────────────────────────────────────────
 class TestSecopSocrataAdapter:
-
     def _contrato(self, dias_atras: int = 30, valor: str = "150000000") -> dict:
         fecha = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime(
             "%Y-%m-%dT%H:%M:%S.000"
@@ -165,9 +166,15 @@ class TestSecopSocrataAdapter:
 # GitHub Adapter
 # ──────────────────────────────────────────────────────────────────────────
 class TestGitHubAdapter:
-
-    def _repo(self, name: str, lang: str = "Python", dias_atras: int = 5,
-              issues: int = 3, archived: bool = False, fork: bool = False) -> dict:
+    def _repo(
+        self,
+        name: str,
+        lang: str = "Python",
+        dias_atras: int = 5,
+        issues: int = 3,
+        archived: bool = False,
+        fork: bool = False,
+    ) -> dict:
         pushed = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -271,6 +278,7 @@ class TestGitHubAdapter:
 
     def test_extraccion_org_desde_dominio(self):
         from src.adapters.triggers.github_adapter import _extraer_org_name
+
         assert _extraer_org_name("acme.com") == "acme"
         assert _extraer_org_name("my-company.co.uk") == "my-company"
         assert _extraer_org_name("api.acme.io") == "api"

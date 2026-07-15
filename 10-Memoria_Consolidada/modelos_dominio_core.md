@@ -1,4 +1,4 @@
-# Modelos de Dominio y Contratos (Core) — v2.1 (Auditado)
+# Modelos de Dominio y Contratos (Core) — v3.4 (Motor 3 — Fase 1)
 
 Este documento especifica los contratos de datos (entidades de dominio) para el sistema El Prospector, usando Pydantic v2.
 
@@ -232,6 +232,27 @@ class Decisor(BaseModel):
 
 ---
 
+## 4.1 ProspectoCalificado — Contrato de Transición Motor 2 → Motor 3 (v3.4)
+
+**Nueva en v3.4.** Diseño completo en `tecnico/prospector-m3-m4-design.md` §3.3.
+
+DTO inmutable que empaqueta todo lo que el Motor 3 necesita del trabajo previo del pipeline.
+
+```python
+class ProspectoCalificado(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    empresa: Empresa                = Field(..., description="Empresa ya calificada por TriggerAggregationPolicy.")
+    triggers: list[Trigger]         = Field(..., min_length=1, description="Señales validadas. El enriquecedor NO las usa; viajan hacia el Motor 4 para personalizar el mensaje.")
+    manifiesto: ManifiestoICP        = Field(..., description="Fuente de cargos_decisores.")
+```
+
+**Nota de diseño:** `PuertoEnriquecedorContactos.enriquecer()` NO recibe este DTO completo. El
+orquestador extrae `empresa` y `manifiesto.cargos_decisores` y los pasa como argumentos explícitos
+(`enriquecer(empresa, cargos)`), manteniendo el puerto mínimo y stateless.
+
+---
+
 ## 5. Regla de Validación Cruzada de Triggers (TriggerAggregationPolicy)
 
 Esta política NO es un modelo Pydantic. Es la lógica de dominio pura que decide si un prospecto avanza al Motor 3.
@@ -278,6 +299,37 @@ class TriggerAggregationPolicy:
 
         return tiene_senial_fresca
 ```
+
+---
+
+## 5.1 Regla de Umbral de Calidad para el Motor 4 (UmbralCalidadDecisor) — v3.4
+
+**Nueva en v3.4.** Diseño completo en `tecnico/prospector-m3-m4-design.md` §3.4. Gate de calidad
+entre Motor 3 y Motor 4: protege la reputación de dominio, ningún correo dudoso se envía.
+
+```python
+class UmbralCalidadDecisor:
+    CONFIANZA_MINIMA: float = 0.7
+    ESTADOS_APTOS: frozenset[EstadoCorreo] = frozenset({
+        EstadoCorreo.VERIFICADO,
+        EstadoCorreo.INFERIDO,
+    })
+
+    def es_apto_para_outbound(self, decisor: Decisor) -> bool:
+        """True solo si confianza_dato >= 0.7 Y estado_correo en {VERIFICADO, INFERIDO}."""
+        return (
+            decisor.confianza_dato >= self.CONFIANZA_MINIMA
+            and decisor.estado_correo in self.ESTADOS_APTOS
+        )
+
+    def particionar(self, decisores: list[Decisor]) -> tuple[list[Decisor], list[Decisor]]:
+        """Separa (aptos_para_m4, cola_manual) en una sola pasada."""
+        ...
+```
+
+**Calibración aprobada (14-Jul-2026):** en la cascada Apollo→Hunter, `accept_all`/`webmail` con
+score de Hunter ≥ 80 mapea a `confianza_dato = 0.70` (apto); score 50-79 mapea a `0.65` (cola
+manual). Ver tabla completa de mapeo en `tecnico/prospector-m3-m4-design.md` §3.2.
 
 ---
 
@@ -335,6 +387,38 @@ class PuertoAnalizadorICP(ABC):
         las preguntas de clarificación (máximo 3).
         """
         ...
+
+
+class PuertoEnriquecedorContactos(ABC):
+    """
+    v3.4 — Puerto Caso C: ENRIQUECIMIENTO (Motor 3).
+    Diseño completo en `tecnico/prospector-m3-m4-design.md` §3.1.
+
+    Semántica respecto a los puertos existentes:
+        - PuertoDescubridorEmpresas   → DISCOVERY:   ¿Qué empresas encajan con el ICP?
+        - PuertoFuenteTriggers        → SCORING:     ¿Tiene señales esta empresa?
+        - PuertoEnriquecedorContactos → ENRICHMENT:  ¿Quién decide y cómo lo contacto
+                                                      de forma verificable?
+
+    Firma stateless (decisión de arquitectura, 14-Jul-2026): `cargos` viaja
+    explícito en cada llamada (normalmente ManifiestoICP.cargos_decisores,
+    resuelto por el orquestador), no se infiere de estado interno. Esto habilita
+    ejecución paralela segura sobre múltiples empresas.
+    """
+
+    @abstractmethod
+    def enriquecer(self, empresa: Empresa, cargos: list[str]) -> list[Decisor]:
+        """
+        Dada una Empresa ya calificada y los cargos objetivo del ICP, retorna
+        los Decisores encontrados con estado_correo y confianza_dato ya
+        resueltos por la cascada Apollo→Hunter (ver §3.2 del documento de diseño).
+
+        Contrato: nunca lanza excepción hacia el Core. Errores de red o de
+        proveedor se capturan internamente y retornan lista vacía con log.
+        Lista vacía es un resultado válido, no un error. Este puerto NO filtra
+        por calidad; el filtrado hacia el Motor 4 lo hace UmbralCalidadDecisor.
+        """
+        ...
 ```
 
 **Nota arquitectónica sobre AdapterRoutingPolicy:**
@@ -389,3 +473,8 @@ classDiagram
 *v3.0 — CategoriaEmpresa Enum agregado. ManifiestoICP extendido con categoria_empresa y es_gov_facing.*
 *TriggerAggregationPolicy actualizada con umbral dinámico según adaptadores_activos.*
 *AdapterRoutingPolicy documentada en flujos_motor_1_y_2.md.*
+*v3.4 (14-Jul-2026) — Fase 1 del Motor 3 materializada en Core: `PuertoEnriquecedorContactos`*
+*(firma stateless `enriquecer(empresa, cargos)`), `ProspectoCalificado` (contrato de transición*
+*M2→M3) y `UmbralCalidadDecisor` (gate de calidad hacia Motor 4). Diseño completo, cascada*
+*Apollo→Hunter y caveat LATAM en `tecnico/prospector-m3-m4-design.md`. Adaptadores concretos*
+*(Apollo/Hunter) quedan fuera de esta fase. 120 tests verdes.*

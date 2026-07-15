@@ -2,6 +2,7 @@
 Tests unitarios del WappalyzerHeadlessAdapter.
 Mockea requests.get — sin llamadas reales a internet.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -38,6 +39,7 @@ def _mock_response(
     mock.headers = headers or {}
     if status_code >= 400:
         import requests
+
         mock.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock)
     else:
         mock.raise_for_status.return_value = None
@@ -45,7 +47,6 @@ def _mock_response(
 
 
 class TestWappalyzerHeadlessAdapter:
-
     def test_detecta_php_en_header_y_genera_trigger_media(self, empresa: Empresa):
         from src.adapters.triggers.wappalyzer_adapter import WappalyzerHeadlessAdapter
 
@@ -61,10 +62,14 @@ class TestWappalyzerHeadlessAdapter:
         assert t.empresa_id == empresa.id
         assert "php" in t.descripcion.lower()
 
-    def test_detecta_wordpress_en_html_y_genera_trigger_baja_sin_match(self, empresa: Empresa):
+    def test_detecta_wordpress_en_html_y_genera_trigger_baja_sin_match(
+        self, empresa: Empresa
+    ):
         from src.adapters.triggers.wappalyzer_adapter import WappalyzerHeadlessAdapter
 
-        html = "<html><head><meta name='generator' content='WordPress 6.0'></head></html>"
+        html = (
+            "<html><head><meta name='generator' content='WordPress 6.0'></head></html>"
+        )
         resp = _mock_response(body=html)
         with patch("requests.get", return_value=resp):
             # ICP pide Python/AWS, WordPress no hace match → BAJA → omitido por defecto
@@ -79,7 +84,9 @@ class TestWappalyzerHeadlessAdapter:
     def test_incluir_baja_confianza_activa_el_trigger(self, empresa: Empresa):
         from src.adapters.triggers.wappalyzer_adapter import WappalyzerHeadlessAdapter
 
-        html = "<html><head><meta name='generator' content='WordPress 6.0'></head></html>"
+        html = (
+            "<html><head><meta name='generator' content='WordPress 6.0'></head></html>"
+        )
         resp = _mock_response(body=html)
         with patch("requests.get", return_value=resp):
             adapter = WappalyzerHeadlessAdapter(

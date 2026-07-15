@@ -9,11 +9,12 @@ CRÍTICO:
     Core. Solo se inyectan a través de estas interfaces (Inversión de
     Dependencias — la 'D' de SOLID).
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.core.domain.models import Empresa, ManifiestoICP, Trigger
+from src.core.domain.models import Decisor, Empresa, ManifiestoICP, Trigger
 
 
 class PuertoFuenteTriggers(ABC):
@@ -81,5 +82,42 @@ class PuertoAnalizadorICP(ABC):
 
         Si el LLM no puede estructurar los datos, lanza ValueError con las
         preguntas de clarificación (máximo 3).
+        """
+        ...
+
+
+class PuertoEnriquecedorContactos(ABC):
+    """
+    Puerto Caso C: Enriquecimiento de contactos (Motor 3).
+
+    Semántica respecto a los puertos existentes:
+        - PuertoDescubridorEmpresas   → DISCOVERY:   ¿Qué empresas encajan con el ICP?
+        - PuertoFuenteTriggers        → SCORING:     ¿Tiene señales esta empresa?
+        - PuertoEnriquecedorContactos → ENRICHMENT:  ¿Quién decide dentro de esta empresa
+                                                      y cómo lo contacto de forma verificable?
+
+    Firma stateless (decisión de arquitectura, 14-Jul-2026): el adaptador no
+    retiene contexto de job entre llamadas. `cargos` viaja explícito en cada
+    invocación (normalmente ManifiestoICP.cargos_decisores, resuelto por el
+    orquestador), lo que habilita ejecución paralela segura (thread-safe)
+    sobre múltiples empresas sin cargar un ManifiestoICP completo en el puerto.
+    """
+
+    @abstractmethod
+    def enriquecer(self, empresa: Empresa, cargos: list[str]) -> list[Decisor]:
+        """
+        Dada una Empresa YA calificada por TriggerAggregationPolicy y la lista
+        de cargos objetivo del ICP, retorna los Decisores encontrados con
+        estado_correo y confianza_dato ya resueltos (ver PoliticaMapeoEstadoCorreo
+        en 10-Memoria_Consolidada/tecnico/prospector-m3-m4-design.md §3.2).
+
+        Contrato de error: nunca lanza excepción hacia el Core. Errores de red,
+        rate limit o caída de proveedor se capturan internamente y retornan
+        lista vacía con log.
+
+        Contrato de salida: la lista puede venir vacía (empresa sin decisores
+        resolubles); es un resultado válido, no un error. Este puerto NO filtra
+        por calidad — devuelve todo lo que encontró. El filtrado hacia el Motor 4
+        lo hace UmbralCalidadDecisor en la capa de orquestación.
         """
         ...
