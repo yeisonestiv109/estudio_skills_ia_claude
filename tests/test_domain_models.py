@@ -14,25 +14,40 @@ import pytest
 from pydantic import ValidationError
 
 from src.core.domain.models import (
+    AutoridadDecision,
     BaseLegal,
     CategoriaEmpresa,
+    ContextoRAG,
     Decisor,
     Empresa,
     EstadoCorreo,
+    EstadoMensaje,
     ManifiestoICP,
+    Mensaje,
     NivelConfianza,
     OrigenTrigger,
+    PaqueteOutbound,
     ProspectoCalificado,
+    ResultadoEnvio,
     Seniority,
     TamanoEmpresa,
     Trigger,
 )
 from src.core.domain.policies import (
     AdapterRoutingPolicy,
+    PoliticaFronteraLegal,
+    PoliticaFronterasEnvio,
+    PoliticaRegistroRebote,
+    PoliticaSeleccionMejorDecisor,
     TriggerAggregationPolicy,
     UmbralCalidadDecisor,
 )
-from src.core.ports.interfaces import PuertoEnriquecedorContactos
+from src.core.ports.interfaces import (
+    PuertoContextoRAG,
+    PuertoEnriquecedorContactos,
+    PuertoEnvioCorreo,
+    PuertoRedactorOutbound,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -433,3 +448,301 @@ class TestUmbralCalidadDecisor:
 
     def test_particionar_lista_vacia_retorna_dos_listas_vacias(self):
         assert self.policy.particionar([]) == ([], [])
+
+
+# ===========================================================================
+# MOTOR 4 (Outbound RAG) — Tests de modelos, puertos y políticas puras
+# Diseño: 10-Memoria_Consolidada/tecnico/prospector-m4-design.md
+# ===========================================================================
+
+
+def _decisor(
+    *,
+    autoridad: AutoridadDecision = AutoridadDecision.UNKNOWN,
+    seniority: Seniority = Seniority.IC,
+    confianza: float = 0.9,
+    estado_correo: EstadoCorreo = EstadoCorreo.VERIFICADO,
+    nombre: str = "Persona X",
+    empresa_id: uuid.UUID | None = None,
+) -> Decisor:
+    return Decisor(
+        empresa_id=empresa_id or uuid.uuid4(),
+        nombre=nombre,
+        cargo_original="Cargo",
+        cargo_normalizado="CARGO",
+        seniority=seniority,
+        autoridad_decision=autoridad,
+        estado_correo=estado_correo,
+        confianza_dato=confianza,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Bloque 10: Modelos M4 — Mensaje, ContextoRAG, PaqueteOutbound
+# ---------------------------------------------------------------------------
+class TestModelosMotor4:
+    def test_mensaje_nace_en_estado_borrador(self):
+        m = Mensaje(decisor_id=uuid.uuid4(), asunto="Hola", cuerpo="Cuerpo del mensaje")
+        assert m.estado == EstadoMensaje.BORRADOR
+
+    def test_mensaje_es_inmutable(self):
+        m = Mensaje(decisor_id=uuid.uuid4(), asunto="Hola", cuerpo="Cuerpo")
+        with pytest.raises(ValidationError):
+            m.estado = EstadoMensaje.ENVIADO  # type: ignore[misc]
+
+    def test_mensaje_rechaza_asunto_vacio(self):
+        with pytest.raises(ValidationError):
+            Mensaje(decisor_id=uuid.uuid4(), asunto="", cuerpo="Cuerpo")
+
+    def test_mensaje_transicion_via_model_copy(self):
+        """Las transiciones se hacen con model_copy, no mutando el original."""
+        m = Mensaje(decisor_id=uuid.uuid4(), asunto="Hola", cuerpo="Cuerpo")
+        aprobado = m.model_copy(update={"estado": EstadoMensaje.APROBADO})
+        assert m.estado == EstadoMensaje.BORRADOR  # el original no cambió
+        assert aprobado.estado == EstadoMensaje.APROBADO
+
+    def test_contexto_rag_vacio_es_valido(self):
+        ctx = ContextoRAG()
+        assert ctx.evidencias == []
+        assert ctx.fuentes == []
+
+    def test_paquete_outbound_construccion_valida(
+        self, empresa_valida: Empresa, manifesto_base: dict
+    ):
+        manifiesto = ManifiestoICP(**manifesto_base)
+        trigger = Trigger(
+            empresa_id=empresa_valida.id,
+            origen=OrigenTrigger.GOOGLE_ALERTS,
+            nivel_confianza=NivelConfianza.ALTA,
+            descripcion="Nuevo CTO",
+            fecha_evento=datetime.now(timezone.utc),
+        )
+        prospecto = ProspectoCalificado(
+            empresa=empresa_valida, triggers=[trigger], manifiesto=manifiesto
+        )
+        paquete = PaqueteOutbound(
+            prospecto=prospecto,
+            decisores_aptos=[_decisor(empresa_id=empresa_valida.id)],
+        )
+        assert paquete.prospecto == prospecto
+        assert len(paquete.decisores_aptos) == 1
+
+    def test_paquete_outbound_requiere_al_menos_un_decisor(
+        self, empresa_valida: Empresa, manifesto_base: dict
+    ):
+        manifiesto = ManifiestoICP(**manifesto_base)
+        trigger = Trigger(
+            empresa_id=empresa_valida.id,
+            origen=OrigenTrigger.GOOGLE_ALERTS,
+            nivel_confianza=NivelConfianza.ALTA,
+            descripcion="Nuevo CTO",
+            fecha_evento=datetime.now(timezone.utc),
+        )
+        prospecto = ProspectoCalificado(
+            empresa=empresa_valida, triggers=[trigger], manifiesto=manifiesto
+        )
+        with pytest.raises(ValidationError):
+            PaqueteOutbound(prospecto=prospecto, decisores_aptos=[])
+
+
+# ---------------------------------------------------------------------------
+# Bloque 11: Puertos M4 — ABCs no instanciables
+# ---------------------------------------------------------------------------
+class TestPuertosMotor4ABC:
+    def test_contexto_rag_no_instanciable(self):
+        with pytest.raises(TypeError):
+            PuertoContextoRAG()  # type: ignore[abstract]
+
+    def test_redactor_outbound_no_instanciable(self):
+        with pytest.raises(TypeError):
+            PuertoRedactorOutbound()  # type: ignore[abstract]
+
+    def test_envio_correo_no_instanciable(self):
+        with pytest.raises(TypeError):
+            PuertoEnvioCorreo()  # type: ignore[abstract]
+
+    def test_enriquecedor_sigue_no_instanciable(self):
+        """Regresión: el puerto de M3 sigue siendo abstracto tras añadir los de M4."""
+        with pytest.raises(TypeError):
+            PuertoEnriquecedorContactos()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# Bloque 12: PoliticaSeleccionMejorDecisor — el filtro anti-Rappi
+# ---------------------------------------------------------------------------
+class TestPoliticaSeleccionMejorDecisor:
+    policy = PoliticaSeleccionMejorDecisor()
+
+    def test_lista_vacia_retorna_none(self):
+        assert self.policy.seleccionar([]) is None
+
+    def test_un_solo_decisor_se_retorna_a_si_mismo(self):
+        d = _decisor()
+        assert self.policy.seleccionar([d]) is d
+
+    def test_autoridad_manda_sobre_confianza(self):
+        """Un DECISION_MAKER con confianza menor gana a un UNKNOWN con confianza mayor."""
+        decision_maker = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER, confianza=0.75, nombre="Jefe"
+        )
+        unknown_alto = _decisor(
+            autoridad=AutoridadDecision.UNKNOWN, confianza=0.99, nombre="Desconocido"
+        )
+        elegido = self.policy.seleccionar([unknown_alto, decision_maker])
+        assert elegido.nombre == "Jefe"
+
+    def test_a_igual_autoridad_gana_mayor_confianza(self):
+        bajo = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER, confianza=0.70, nombre="Bajo"
+        )
+        alto = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER, confianza=0.90, nombre="Alto"
+        )
+        elegido = self.policy.seleccionar([bajo, alto])
+        assert elegido.nombre == "Alto"
+
+    def test_a_igual_autoridad_y_confianza_gana_mayor_seniority(self):
+        vp = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER,
+            confianza=0.90,
+            seniority=Seniority.VP,
+            nombre="VP",
+        )
+        clevel = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER,
+            confianza=0.90,
+            seniority=Seniority.C_LEVEL,
+            nombre="CLevel",
+        )
+        elegido = self.policy.seleccionar([vp, clevel])
+        assert elegido.nombre == "CLevel"
+
+    def test_caso_rappi_elige_al_cto_sobre_los_vps(self):
+        """
+        Reproducción del piloto real: 5 decisores de Rappi, 4 VPs + 1 CTO.
+        La política debe devolver UN SOLO decisor: el CTO (C_LEVEL, 0.90).
+        """
+        empresa_id = uuid.uuid4()
+        vps = [
+            _decisor(
+                autoridad=AutoridadDecision.DECISION_MAKER,
+                seniority=Seniority.VP,
+                confianza=0.90 if i != 1 else 0.70,
+                nombre=f"VP Engineering {i}",
+                empresa_id=empresa_id,
+            )
+            for i in range(4)
+        ]
+        cto = _decisor(
+            autoridad=AutoridadDecision.DECISION_MAKER,
+            seniority=Seniority.C_LEVEL,
+            confianza=0.90,
+            nombre="Leandro Reox",
+            empresa_id=empresa_id,
+        )
+        elegido = self.policy.seleccionar([*vps, cto])
+        assert elegido is not None
+        assert elegido.nombre == "Leandro Reox"
+        assert elegido.seniority == Seniority.C_LEVEL
+
+
+# ---------------------------------------------------------------------------
+# Bloque 13: PoliticaFronteraLegal — gate Habeas Data
+# ---------------------------------------------------------------------------
+class TestPoliticaFronteraLegal:
+    policy = PoliticaFronteraLegal()
+
+    def _manifiesto(self, base_legal: BaseLegal, manifesto_base: dict) -> ManifiestoICP:
+        datos = dict(manifesto_base)
+        datos["base_legal"] = base_legal
+        return ManifiestoICP(**datos)
+
+    def test_dato_publico_permite_contactar(self, manifesto_base: dict):
+        m = self._manifiesto(BaseLegal.DATO_PUBLICO, manifesto_base)
+        assert self.policy.puede_contactar(m) is True
+
+    def test_consentimiento_explicito_permite_contactar(self, manifesto_base: dict):
+        m = self._manifiesto(BaseLegal.CONSENTIMIENTO_EXPLICITO, manifesto_base)
+        assert self.policy.puede_contactar(m) is True
+
+    def test_ejecucion_contrato_permite_contactar(self, manifesto_base: dict):
+        m = self._manifiesto(BaseLegal.EJECUCION_CONTRATO, manifesto_base)
+        assert self.policy.puede_contactar(m) is True
+
+
+# ---------------------------------------------------------------------------
+# Bloque 14: PoliticaFronterasEnvio — reputación + HITL + pacing
+# ---------------------------------------------------------------------------
+class TestPoliticaFronterasEnvio:
+    policy = PoliticaFronterasEnvio()
+
+    def _mensaje(self, estado: EstadoMensaje) -> Mensaje:
+        return Mensaje(
+            decisor_id=uuid.uuid4(),
+            asunto="Asunto",
+            cuerpo="Cuerpo",
+            estado=estado,
+        )
+
+    def test_aprobado_legal_ok_y_pacing_ok_es_enviable(self):
+        m = self._mensaje(EstadoMensaje.APROBADO)
+        assert self.policy.es_enviable(m, base_legal_ok=True, enviados_hoy=0) is True
+
+    def test_borrador_no_es_enviable_aunque_todo_lo_demas_este_ok(self):
+        """Frontera de reputación: sin aprobación humana, no se envía."""
+        m = self._mensaje(EstadoMensaje.BORRADOR)
+        assert self.policy.es_enviable(m, base_legal_ok=True, enviados_hoy=0) is False
+
+    def test_sin_base_legal_no_es_enviable(self):
+        m = self._mensaje(EstadoMensaje.APROBADO)
+        assert self.policy.es_enviable(m, base_legal_ok=False, enviados_hoy=0) is False
+
+    def test_pacing_excedido_no_es_enviable(self):
+        m = self._mensaje(EstadoMensaje.APROBADO)
+        limite = PoliticaFronterasEnvio.MAX_ENVIOS_POR_DOMINIO_DIA
+        assert (
+            self.policy.es_enviable(m, base_legal_ok=True, enviados_hoy=limite) is False
+        )
+
+    def test_pacing_justo_por_debajo_del_limite_es_enviable(self):
+        m = self._mensaje(EstadoMensaje.APROBADO)
+        limite = PoliticaFronterasEnvio.MAX_ENVIOS_POR_DOMINIO_DIA
+        assert (
+            self.policy.es_enviable(m, base_legal_ok=True, enviados_hoy=limite - 1)
+            is True
+        )
+
+    def test_rechazado_hitl_no_es_enviable(self):
+        m = self._mensaje(EstadoMensaje.RECHAZADO_HITL)
+        assert self.policy.es_enviable(m, base_legal_ok=True, enviados_hoy=0) is False
+
+
+# ---------------------------------------------------------------------------
+# Bloque 15: PoliticaRegistroRebote — lazo de retroalimentación (cierra KPI M3)
+# ---------------------------------------------------------------------------
+class TestPoliticaRegistroRebote:
+    policy = PoliticaRegistroRebote()
+
+    def test_rebotado_marca_estado_correo_y_baja_confianza(self):
+        d = _decisor(estado_correo=EstadoCorreo.VERIFICADO, confianza=0.90)
+        actualizado = self.policy.aplicar(d, ResultadoEnvio.REBOTADO)
+        assert actualizado.estado_correo == EstadoCorreo.REBOTADO
+        assert actualizado.confianza_dato == 0.0
+
+    def test_rebotado_no_muta_el_decisor_original(self):
+        """Decisor de entrada no se muta: se retorna una copia (model_copy)."""
+        d = _decisor(estado_correo=EstadoCorreo.VERIFICADO, confianza=0.90)
+        self.policy.aplicar(d, ResultadoEnvio.REBOTADO)
+        assert d.estado_correo == EstadoCorreo.VERIFICADO
+        assert d.confianza_dato == 0.90
+
+    def test_entregado_no_cambia_el_decisor(self):
+        d = _decisor(estado_correo=EstadoCorreo.VERIFICADO, confianza=0.90)
+        actualizado = self.policy.aplicar(d, ResultadoEnvio.ENTREGADO)
+        assert actualizado.estado_correo == EstadoCorreo.VERIFICADO
+        assert actualizado.confianza_dato == 0.90
+
+    def test_diferido_no_cambia_el_decisor(self):
+        d = _decisor(estado_correo=EstadoCorreo.INFERIDO, confianza=0.70)
+        actualizado = self.policy.aplicar(d, ResultadoEnvio.DIFERIDO)
+        assert actualizado.estado_correo == EstadoCorreo.INFERIDO

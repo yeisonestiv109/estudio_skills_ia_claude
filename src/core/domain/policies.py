@@ -15,11 +15,17 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from src.core.domain.models import (
+    AutoridadDecision,
+    BaseLegal,
     CategoriaEmpresa,
     Decisor,
     EstadoCorreo,
+    EstadoMensaje,
     ManifiestoICP,
+    Mensaje,
     OrigenTrigger,
+    ResultadoEnvio,
+    Seniority,
     Trigger,
 )
 
@@ -214,3 +220,127 @@ class UmbralCalidadDecisor:
             else:
                 manual.append(decisor)
         return aptos, manual
+
+
+# ===========================================================================
+# MOTOR 4 (Outbound RAG) — Políticas puras
+# Diseño: 10-Memoria_Consolidada/tecnico/prospector-m4-design.md §4, §6, §7
+# ===========================================================================
+class PoliticaSeleccionMejorDecisor:
+    """
+    Selecciona el ÚNICO decisor a contactar por empresa (Motor 4 §4).
+
+    Resuelve el anti-patrón spray-and-pray detectado en el piloto (5 VPs de
+    Rappi). Determinista y pura. Criterio de orden descendente:
+        1. autoridad_decision  (DECISION_MAKER > INFLUENCER > GATEKEEPER > UNKNOWN)
+        2. confianza_dato       (mayor gana)
+        3. seniority            (C_LEVEL > VP > ... > IC)
+
+    Precondición (responsabilidad del orquestador): todos los decisores de la
+    lista pertenecen a la MISMA empresa.
+    """
+
+    _RANK_AUTORIDAD: dict[AutoridadDecision, int] = {
+        AutoridadDecision.DECISION_MAKER: 3,
+        AutoridadDecision.INFLUENCER: 2,
+        AutoridadDecision.GATEKEEPER: 1,
+        AutoridadDecision.UNKNOWN: 0,
+    }
+
+    _RANK_SENIORITY: dict[Seniority, int] = {
+        Seniority.C_LEVEL: 6,
+        Seniority.VP: 5,
+        Seniority.DIRECTOR: 4,
+        Seniority.MANAGER: 3,
+        Seniority.LEAD: 2,
+        Seniority.IC: 1,
+    }
+
+    def seleccionar(self, decisores: list[Decisor]) -> Decisor | None:
+        """
+        Retorna el mejor decisor de la lista, o None si la lista está vacía.
+        No lanza excepción.
+        """
+        if not decisores:
+            return None
+        return max(
+            decisores,
+            key=lambda d: (
+                self._RANK_AUTORIDAD.get(d.autoridad_decision, 0),
+                d.confianza_dato,
+                self._RANK_SENIORITY.get(d.seniority, 0),
+            ),
+        )
+
+
+class PoliticaFronteraLegal:
+    """
+    Gate de cumplimiento Habeas Data (Ley 1581/2012, Colombia) — Motor 4 §7.1.
+
+    NO sustituye la asesoría legal real (pendiente en validacion-fuentes.md §7).
+    Codifica el mínimo verificable por software: que exista una base legal
+    declarada y válida bajo la Ley 1581.
+    """
+
+    BASES_LEGALES_VALIDAS: frozenset[BaseLegal] = frozenset(
+        {
+            BaseLegal.DATO_PUBLICO,
+            BaseLegal.EJECUCION_CONTRATO,
+            BaseLegal.CONSENTIMIENTO_EXPLICITO,
+        }
+    )
+
+    def puede_contactar(self, manifiesto: ManifiestoICP) -> bool:
+        """True solo si el manifiesto declara una base legal válida bajo Ley 1581."""
+        return manifiesto.base_legal in self.BASES_LEGALES_VALIDAS
+
+
+class PoliticaFronterasEnvio:
+    """
+    Compuerta de reputación de dominio (Motor 4 §7.2).
+
+    Ningún Mensaje llega al PuertoEnvioCorreo sin cumplir SIMULTÁNEAMENTE:
+        1. base legal OK (evaluada por PoliticaFronteraLegal, se pasa el bool),
+        2. estado == APROBADO (un humano revisó el borrador — HITL),
+        3. pacing no excedido (rate limiting anti-spam por dominio/día).
+    """
+
+    MAX_ENVIOS_POR_DOMINIO_DIA: int = 20
+
+    def es_enviable(
+        self, mensaje: Mensaje, base_legal_ok: bool, enviados_hoy: int
+    ) -> bool:
+        """
+        True solo si se cumplen las tres condiciones. Determinista, sin efectos.
+        """
+        return (
+            base_legal_ok
+            and mensaje.estado == EstadoMensaje.APROBADO
+            and enviados_hoy < self.MAX_ENVIOS_POR_DOMINIO_DIA
+        )
+
+
+class PoliticaRegistroRebote:
+    """
+    Lazo de retroalimentación de rebotes (Motor 4 §6).
+
+    Traduce el ResultadoEnvio real a un cambio de EstadoCorreo del Decisor.
+    Es el mecanismo que permite medir el bounce rate real (KPI pendiente de
+    M3 §3.5). Decisor no es inmutable, pero por consistencia se retorna una
+    copia vía model_copy(update=...) para no mutar el objeto de entrada.
+    """
+
+    def aplicar(self, decisor: Decisor, resultado: ResultadoEnvio) -> Decisor:
+        """
+        REBOTADO  → estado_correo=REBOTADO, confianza_dato=0.0 (sale del pipeline).
+        Cualquier otro resultado → retorna el decisor sin cambios.
+        No lanza excepción.
+        """
+        if resultado == ResultadoEnvio.REBOTADO:
+            return decisor.model_copy(
+                update={
+                    "estado_correo": EstadoCorreo.REBOTADO,
+                    "confianza_dato": 0.0,
+                }
+            )
+        return decisor

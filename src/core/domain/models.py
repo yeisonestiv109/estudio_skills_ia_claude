@@ -298,3 +298,91 @@ class ProspectoCalificado(BaseModel):
         ...,
         description="Fuente de cargos_decisores: qué perfiles busca el enriquecedor.",
     )
+
+
+# ===========================================================================
+# MOTOR 4 (Outbound RAG) — Modelos y enums
+# Diseño: 10-Memoria_Consolidada/tecnico/prospector-m4-design.md §5
+# ===========================================================================
+class EstadoMensaje(str, Enum):
+    """Ciclo de vida de un Mensaje outbound (Motor 4)."""
+
+    BORRADOR = "BORRADOR"  # generado por el LLM, aún no revisado
+    APROBADO = "APROBADO"  # HITL dio visto bueno
+    RECHAZADO_HITL = "RECHAZADO_HITL"  # un humano lo descartó
+    ENVIADO = "ENVIADO"  # entregado al PuertoEnvioCorreo
+    ERROR_REDACCION = "ERROR_REDACCION"  # el LLM falló al redactar
+
+
+class ResultadoEnvio(str, Enum):
+    """Resultado real reportado por el proveedor de envío (ej. webhooks Resend)."""
+
+    ENTREGADO = "ENTREGADO"
+    REBOTADO = "REBOTADO"
+    DIFERIDO = "DIFERIDO"
+    RECHAZADO = "RECHAZADO"
+    ERROR = "ERROR"
+
+
+class ContextoRAG(BaseModel):
+    """
+    Evidencia citable recuperada por el PuertoContextoRAG (Tavily/Perplexity).
+    Fundamenta el mensaje y previene alucinación del LLM. Inmutable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    evidencias: list[str] = Field(
+        default_factory=list,
+        description="Snippets citables alineados con los triggers de la empresa.",
+    )
+    fuentes: list[str] = Field(
+        default_factory=list,
+        description="URLs de respaldo. Trazabilidad anti-alucinación.",
+    )
+
+
+class Mensaje(BaseModel):
+    """
+    Borrador tipado de un correo outbound (Motor 4). Inmutable.
+
+    Las transiciones de estado NO mutan el objeto: se crea una copia con
+    model_copy(update={...}). El estado por defecto es BORRADOR — un Mensaje
+    nunca nace enviado.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    decisor_id: uuid.UUID = Field(..., description="FK al Decisor destinatario.")
+    asunto: str = Field(..., min_length=1)
+    cuerpo: str = Field(..., min_length=1)
+    estado: EstadoMensaje = Field(default=EstadoMensaje.BORRADOR)
+    fuentes_citadas: list[str] = Field(
+        default_factory=list,
+        description="URLs del ContextoRAG usadas en el mensaje. Trazabilidad.",
+    )
+
+
+class PaqueteOutbound(BaseModel):
+    """
+    Contrato de transición M3 → M4. Inmutable.
+
+    Empaqueta el ProspectoCalificado (Empresa + Triggers + ManifiestoICP) más
+    los decisores YA filtrados por UmbralCalidadDecisor (solo VERIFICADO/INFERIDO
+    con confianza_dato >= 0.7). Ver prospector-m4-design.md §3.
+
+    Los Triggers, que en M3 solo viajaban como metadata, aquí SÍ se usan: son
+    el gancho de personalización del mensaje.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    prospecto: ProspectoCalificado = Field(
+        ..., description="Empresa + Triggers + ManifiestoICP proveniente de M2/M3."
+    )
+    decisores_aptos: list[Decisor] = Field(
+        ...,
+        min_length=1,
+        description="Salida de UmbralCalidadDecisor.particionar()[0] (aptos para M4).",
+    )

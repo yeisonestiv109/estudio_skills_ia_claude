@@ -127,12 +127,17 @@ class TestApolloClient:
         # Fase 1: api_search
         search_payload = {"people": [{"id": "123"}]}
         # Fase 2: match
-        match_payload = {"person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}}
-        
-        with patch("requests.post", side_effect=[_mock_response(search_payload), _mock_response(match_payload)]):
+        match_payload = {
+            "person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}
+        }
+
+        with patch(
+            "requests.post",
+            side_effect=[_mock_response(search_payload), _mock_response(match_payload)],
+        ):
             client = ApolloClient(api_key="test-key")
             perfiles = client.buscar_perfiles("acme.com", ["CTO"])
-    
+
         assert len(perfiles) == 1
         assert perfiles[0]["name"] == "Ana Torres"
 
@@ -415,12 +420,18 @@ class TestApolloHunterCascadaAdapter:
         del proceso al ejecutar la cascada completa.
         """
         search_payload = {"people": [{"id": "123"}]}
-        match_payload = {"person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}}
+        match_payload = {
+            "person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}
+        }
         hunter_payload = {"data": {"status": "accept_all", "score": 85}}
-    
+
         with (
             patch(
-                "requests.post", side_effect=[_mock_response(search_payload), _mock_response(match_payload)]
+                "requests.post",
+                side_effect=[
+                    _mock_response(search_payload),
+                    _mock_response(match_payload),
+                ],
             ) as mock_post,
             patch(
                 "requests.get", return_value=_mock_response(hunter_payload)
@@ -431,7 +442,7 @@ class TestApolloHunterCascadaAdapter:
                 hunter_client=HunterClient(api_key="test-key"),
             )
             resultado = adapter.enriquecer(empresa, ["CTO"])
-    
+
         assert len(resultado) == 1
         assert resultado[0].estado_correo == EstadoCorreo.INFERIDO
         assert resultado[0].confianza_dato == 0.70

@@ -66,7 +66,9 @@ class ApolloClient:
 
         try:
             logger.info(
-                "Apollo: buscando perfiles en '%s' para cargos %s (Fase 1: api_search)", dominio, cargos
+                "Apollo: buscando perfiles en '%s' para cargos %s (Fase 1: api_search)",
+                dominio,
+                cargos,
             )
             response = requests.post(
                 _PEOPLE_API_SEARCH_ENDPOINT,
@@ -106,9 +108,11 @@ class ApolloClient:
             person_id = p.get("id")
             if not person_id:
                 continue
-                
+
             try:
-                logger.info("Apollo: enriqueciendo perfil %s (Fase 2: match)", person_id)
+                logger.info(
+                    "Apollo: enriqueciendo perfil %s (Fase 2: match)", person_id
+                )
                 match_response = requests.post(
                     _PEOPLE_MATCH_ENDPOINT,
                     json={"id": person_id},
@@ -123,11 +127,15 @@ class ApolloClient:
                 person_data = match_response.json().get("person")
                 if person_data:
                     perfiles_enriquecidos.append(person_data)
-            except Exception as exc: # noqa: BLE001
-                logger.warning("Apollo: error enriqueciendo perfil %s: %s", person_id, exc)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Apollo: error enriqueciendo perfil %s: %s", person_id, exc
+                )
                 continue
 
         logger.info(
-            "Apollo: %d perfil(es) enriquecidos en '%s'.", len(perfiles_enriquecidos), dominio
+            "Apollo: %d perfil(es) enriquecidos en '%s'.",
+            len(perfiles_enriquecidos),
+            dominio,
         )
         return perfiles_enriquecidos

@@ -14,7 +14,15 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.core.domain.models import Decisor, Empresa, ManifiestoICP, Trigger
+from src.core.domain.models import (
+    ContextoRAG,
+    Decisor,
+    Empresa,
+    ManifiestoICP,
+    Mensaje,
+    ResultadoEnvio,
+    Trigger,
+)
 
 
 class PuertoFuenteTriggers(ABC):
@@ -119,5 +127,76 @@ class PuertoEnriquecedorContactos(ABC):
         resolubles); es un resultado válido, no un error. Este puerto NO filtra
         por calidad — devuelve todo lo que encontró. El filtrado hacia el Motor 4
         lo hace UmbralCalidadDecisor en la capa de orquestación.
+        """
+        ...
+
+
+# ===========================================================================
+# MOTOR 4 (Outbound RAG) — Puertos
+# Diseño: 10-Memoria_Consolidada/tecnico/prospector-m4-design.md §5
+# ===========================================================================
+class PuertoContextoRAG(ABC):
+    """
+    Puerto Motor 4 — Recuperación de contexto (Caso D: RAG).
+
+    Recupera evidencia fresca y verificable sobre la empresa/decisor para
+    fundamentar el mensaje y evitar alucinación del LLM.
+    Impl: TavilyContextoAdapter, PerplexityContextoAdapter.
+    """
+
+    @abstractmethod
+    def obtener_contexto(
+        self, empresa: Empresa, triggers: list[Trigger]
+    ) -> ContextoRAG:
+        """
+        Retorna evidencia citable (snippets + URLs) alineada con los triggers.
+
+        Contrato: nunca lanza excepción hacia el Core. Error de red o sin
+        resultados → ContextoRAG vacío (evidencias=[], fuentes=[]).
+        """
+        ...
+
+
+class PuertoRedactorOutbound(ABC):
+    """
+    Puerto Motor 4 — Redacción del mensaje (Caso E: LLM outbound).
+
+    Genera un Mensaje tipado a partir del decisor + triggers + contexto RAG.
+    Impl: LLMRedactorAdapter (Groq/Claude) detrás del puerto, salida validada.
+    """
+
+    @abstractmethod
+    def redactar(
+        self,
+        decisor: Decisor,
+        empresa: Empresa,
+        triggers: list[Trigger],
+        contexto: ContextoRAG,
+    ) -> Mensaje:
+        """
+        Retorna un Mensaje en estado BORRADOR. NUNCA envía.
+
+        Contrato: nunca lanza excepción hacia el Core. Si el LLM falla, retorna
+        un Mensaje con estado EstadoMensaje.ERROR_REDACCION y log interno.
+        """
+        ...
+
+
+class PuertoEnvioCorreo(ABC):
+    """
+    Puerto Motor 4 — Envío (Caso F: efecto externo).
+
+    ÚNICO puerto del sistema que produce efectos externos irreversibles (enviar
+    un correo real). Reporta el resultado real del envío para alimentar el lazo
+    de retroalimentación de rebotes. Impl: ProveedorEnvioAdapter (Resend).
+    """
+
+    @abstractmethod
+    def enviar(self, mensaje: Mensaje, decisor: Decisor) -> ResultadoEnvio:
+        """
+        Envía un Mensaje APROBADO y retorna el ResultadoEnvio real.
+
+        Contrato: nunca lanza excepción hacia el Core. Error de red o de
+        proveedor → ResultadoEnvio.ERROR con log interno.
         """
         ...
