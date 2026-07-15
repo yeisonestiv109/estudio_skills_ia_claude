@@ -124,13 +124,15 @@ class TestPoliticaMapeoEstadoCorreo:
 # ---------------------------------------------------------------------------
 class TestApolloClient:
     def test_busca_perfiles_y_retorna_lista_cruda(self):
-        payload = {
-            "people": [{"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}]
-        }
-        with patch("requests.post", return_value=_mock_response(payload)):
+        # Fase 1: api_search
+        search_payload = {"people": [{"id": "123"}]}
+        # Fase 2: match
+        match_payload = {"person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}}
+        
+        with patch("requests.post", side_effect=[_mock_response(search_payload), _mock_response(match_payload)]):
             client = ApolloClient(api_key="test-key")
             perfiles = client.buscar_perfiles("acme.com", ["CTO"])
-
+    
         assert len(perfiles) == 1
         assert perfiles[0]["name"] == "Ana Torres"
 
@@ -412,14 +414,13 @@ class TestApolloHunterCascadaAdapter:
         requests.get/post parcheados. Garantiza que ninguna llamada real sale
         del proceso al ejecutar la cascada completa.
         """
-        apollo_payload = {
-            "people": [{"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}]
-        }
+        search_payload = {"people": [{"id": "123"}]}
+        match_payload = {"person": {"name": "Ana Torres", "title": "CTO", "email": "ana@acme.com"}}
         hunter_payload = {"data": {"status": "accept_all", "score": 85}}
-
+    
         with (
             patch(
-                "requests.post", return_value=_mock_response(apollo_payload)
+                "requests.post", side_effect=[_mock_response(search_payload), _mock_response(match_payload)]
             ) as mock_post,
             patch(
                 "requests.get", return_value=_mock_response(hunter_payload)
@@ -430,9 +431,9 @@ class TestApolloHunterCascadaAdapter:
                 hunter_client=HunterClient(api_key="test-key"),
             )
             resultado = adapter.enriquecer(empresa, ["CTO"])
-
+    
         assert len(resultado) == 1
         assert resultado[0].estado_correo == EstadoCorreo.INFERIDO
         assert resultado[0].confianza_dato == 0.70
-        mock_post.assert_called_once()  # Apollo: 1 llamada
+        assert mock_post.call_count == 2  # Apollo: 2 llamadas (api_search y match)
         mock_get.assert_called_once()  # Hunter: 1 llamada (verify, no domain-search)

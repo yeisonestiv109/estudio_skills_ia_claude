@@ -21,7 +21,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.apollo.io/v1"
-_PEOPLE_SEARCH_ENDPOINT = f"{_BASE_URL}/mixed_people/search"
+_PEOPLE_API_SEARCH_ENDPOINT = "https://api.apollo.io/api/v1/mixed_people/api_search"
+_PEOPLE_MATCH_ENDPOINT = f"{_BASE_URL}/people/match"
 _REQUEST_TIMEOUT_SECS = 15
 
 
@@ -58,20 +59,21 @@ class ApolloClient:
             return []
 
         payload = {
-            "q_organization_domains": dominio,
+            "q_organization_domains_list": [dominio],
             "person_titles": cargos,
             "per_page": max_resultados,
         }
 
         try:
             logger.info(
-                "Apollo: buscando perfiles en '%s' para cargos %s", dominio, cargos
+                "Apollo: buscando perfiles en '%s' para cargos %s (Fase 1: api_search)", dominio, cargos
             )
             response = requests.post(
-                _PEOPLE_SEARCH_ENDPOINT,
+                _PEOPLE_API_SEARCH_ENDPOINT,
                 json=payload,
                 headers={
                     "Content-Type": "application/json",
+                    "Cache-Control": "no-cache",
                     "X-Api-Key": self._api_key,
                 },
                 timeout=_REQUEST_TIMEOUT_SECS,
@@ -83,24 +85,49 @@ class ApolloClient:
             return []
         except requests.exceptions.HTTPError as exc:
             logger.warning(
-                "Apollo: HTTP %s para dominio '%s'. Retornando [].",
-                exc.response.status_code if exc.response else "?",
+                "Apollo: HTTP %s en api_search para dominio '%s'. Retornando [].",
+                exc.response.status_code if exc.response is not None else "?",
                 dominio,
             )
             return []
         except requests.exceptions.RequestException as exc:
             logger.error("Apollo: error de red para dominio '%s': %s", dominio, exc)
             return []
-        except Exception as exc:  # noqa: BLE001 — contrato: nunca propagar al Core
+        except Exception as exc:  # noqa: BLE001
             logger.error("Apollo: error inesperado para dominio '%s': %s", dominio, exc)
             return []
 
-        perfiles = data.get("people", [])
-        if not isinstance(perfiles, list):
-            logger.warning("Apollo: respuesta con forma inesperada para '%s'.", dominio)
+        perfiles_descubiertos = data.get("people", [])
+        if not perfiles_descubiertos:
             return []
 
+        perfiles_enriquecidos = []
+        for p in perfiles_descubiertos:
+            person_id = p.get("id")
+            if not person_id:
+                continue
+                
+            try:
+                logger.info("Apollo: enriqueciendo perfil %s (Fase 2: match)", person_id)
+                match_response = requests.post(
+                    _PEOPLE_MATCH_ENDPOINT,
+                    json={"id": person_id},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Cache-Control": "no-cache",
+                        "X-Api-Key": self._api_key,
+                    },
+                    timeout=_REQUEST_TIMEOUT_SECS,
+                )
+                match_response.raise_for_status()
+                person_data = match_response.json().get("person")
+                if person_data:
+                    perfiles_enriquecidos.append(person_data)
+            except Exception as exc: # noqa: BLE001
+                logger.warning("Apollo: error enriqueciendo perfil %s: %s", person_id, exc)
+                continue
+
         logger.info(
-            "Apollo: %d perfil(es) encontrados en '%s'.", len(perfiles), dominio
+            "Apollo: %d perfil(es) enriquecidos en '%s'.", len(perfiles_enriquecidos), dominio
         )
-        return perfiles
+        return perfiles_enriquecidos

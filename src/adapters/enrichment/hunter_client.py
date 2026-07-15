@@ -68,8 +68,8 @@ class HunterClient:
             return None
         except requests.exceptions.HTTPError as exc:
             logger.warning(
-                "Hunter: HTTP %s verificando '%s'. Retornando None.",
-                exc.response.status_code if exc.response else "?",
+                "Hunter: HTTP %s para email '%s'. Asumiendo NO_RESUELTO.",
+                exc.response.status_code if exc.response is not None else "?",
                 email,
             )
             return None
