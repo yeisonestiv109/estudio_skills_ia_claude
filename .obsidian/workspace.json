@@ -11,10 +11,14 @@
             "id": "86dde43f881a3e16",
             "type": "leaf",
             "state": {
-              "type": "graph",
-              "state": {},
-              "icon": "lucide-git-fork",
-              "title": "Vista gráfica"
+              "type": "markdown",
+              "state": {
+                "file": "00-Cortex_Operativo/estado_actual.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "estado_actual"
             }
           }
         ]
@@ -176,8 +180,17 @@
       "bases:Crear nueva base": false
     }
   },
-  "active": "86dde43f881a3e16",
+  "active": "7da272439f57f7e5",
   "lastOpenFiles": [
+    "__pycache__/sandbox_motor_4_outbound.cpython-312.pyc",
+    "sandbox_motor_4_outbound.py",
+    "10-Memoria_Consolidada/analisis_cruzado_mercado.md",
+    "10-Memoria_Consolidada/contexto_clientes_y_oportunidades.md",
+    "10-Memoria_Consolidada/flujos_motor_1_y_2.md",
+    "10-Memoria_Consolidada/guia_configuracion_memoria_ia.md",
+    "10-Memoria_Consolidada/modelos_dominio_core.md",
+    "10-Memoria_Consolidada/resiliencia_motor_2.md",
+    "10-Memoria_Consolidada/resumen_ejecutivo_arquitectura.md",
     "src/adapters/outbound/__pycache__/__init__.cpython-312.pyc",
     "src/adapters/outbound/__pycache__/resend_envio_adapter.cpython-312.pyc",
     "src/adapters/outbound/__pycache__/tavily_contexto_adapter.cpython-312.pyc",
@@ -187,8 +200,6 @@
     "tests/test_outbound_adapters.py",
     "src/adapters/outbound/resend_envio_adapter.py",
     "src/adapters/outbound/groq_redactor_adapter.py",
-    "src/adapters/outbound/tavily_contexto_adapter.py",
-    "src/adapters/outbound/__init__.py",
     "10-Memoria_Consolidada/tecnico/prospector-m4-design.md",
     "10-Memoria_Consolidada/tecnico/prospector-m3-m4-design.md",
     "10-Memoria_Consolidada/proyecto-catalina/README.md",
@@ -207,13 +218,6 @@
     "10-Memoria_Consolidada/tecnico/stack-sdlc-ia.md",
     "10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md",
     "10-Memoria_Consolidada/tecnico/kiro-guia-practica.md",
-    "10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md",
-    "10-Memoria_Consolidada/tecnico/evaluacion-ecc.md",
-    "10-Memoria_Consolidada/tecnico/costo-por-lead.md",
-    "10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md",
-    "graphify-out/GRAPH_REPORT.md",
-    "docs/validacion/validacion-fuentes.md",
-    "estrategia/situacion-contractual-y-sociedad.md",
     "Sin título.canvas"
   ]
 }

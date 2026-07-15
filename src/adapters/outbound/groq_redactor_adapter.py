@@ -62,7 +62,7 @@ class GroqRedactorAdapter(PuertoRedactorOutbound):
         api_key: Clave de API de Groq. Si None, lee de GROQ_API_KEY.
     """
 
-    MODEL = "llama3-70b-8192"
+    _DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
     def __init__(self, api_key: str | None = None) -> None:
         resolved_key = api_key or os.getenv("GROQ_API_KEY")
@@ -93,7 +93,7 @@ class GroqRedactorAdapter(PuertoRedactorOutbound):
                 empresa.nombre,
             )
             completion = self._client.chat.completions.create(
-                model=self.MODEL,
+                model=self._DEFAULT_MODEL,
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT_BASE},
                     {"role": "user", "content": user_prompt},
@@ -148,6 +148,8 @@ class GroqRedactorAdapter(PuertoRedactorOutbound):
 
         asunto_crudo, cuerpo_crudo = contenido.split(_SEPARADOR_ASUNTO_CUERPO, 1)
         asunto = asunto_crudo.strip()
+        if asunto.lower().startswith("asunto:"):
+            asunto = asunto[7:].strip()
         cuerpo = cuerpo_crudo.strip()
 
         if not asunto or not cuerpo:
