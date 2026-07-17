@@ -1,8 +1,12 @@
 # Proyecto — Catalina Rúa · El Prospector (Vía B)
 
-Primera **oportunidad B2B activa** para el producto propio de Vía B (un **prospector nuevo e independiente**, construido desde cero — nombre por definir). Catalina Rúa es una **clienta potencial**, contacto propio del fundador (se conocieron en un evento de emprendimiento en Popayán), interesada en la prospección con IA para su propio emprendimiento.
+Primera oportunidad B2B activa. La alianza estratégica con Catalina Rúa y Luis Javier Suarez Meza nos permite usar a su empresa (TBBC) como **laboratorio real** para probar y madurar El Prospector, a cambio de comisiones por leads cerrados y transferencia de la metodología de ventas Sandler.
+## Estructura del Proyecto
 
-> 📌 **Aclaración de contexto:** el proyecto SEO de **TBBC lo maneja el fundador aparte**, fuera de este repo. Aquí Catalina figura **solo** como oportunidad para el Prospector, para su otra empresa/emprendimiento. No mezclar ambos frentes.
+- `00-contexto-cliente.md` — Origen, reglas y el ICP estructurado de TBBC.
+- `01-frente-1-tbbc-prospector.md` — El laboratorio real para probar nuestro Prospector.
+- `02-frente-2-segunda-empresa-y-trueque-sandler.md` — Expansión técnica (WhatsApp) a cambio de la metodología de ventas (Sandler / 0 a 10k).
+- Playbooks anteriores (`01-playbook-m4-entrevista.md`, `02-playbook-m5-relacion.md`) sirven como base teórica de relacionamiento.
 
 > ✅ **Situación legal aclarada (4-jul-2026):** Catalina es **contacto propio del fundador** (la conoció en un evento de emprendimiento en Popayán); **NO es cliente de la contratante** → la **cláusula 9ª (no-competencia) NO aplica**. Vía libre para trabajar con ella. **Condición firme:** el producto que se le ofrezca debe ser un **build nuevo e independiente**, sin reutilizar arquitectura/flujos/metodología de la contratante (cláusula 7ª — confidencialidad, 2 años). El fundador ya confirmó: se construye **algo propio desde cero**. Ver [`situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md).
 
@@ -15,7 +19,6 @@ Primera **oportunidad B2B activa** para el producto propio de Vía B (un **prosp
 | Módulos a afinar | **4 (entrevista/diagnóstico/cierre)** y **5 (relación a largo plazo)** |
 | Bloqueante #0 (legal) | ✅ Resuelto: Catalina no es cliente de la contratante (cláusula 9ª N/A). Solo aplica disciplina de build independiente (cláusula 7ª) |
 | Bloqueante #1 | Costo por lead: resuelto (~$155–190 COP marginal); pricing de piloto pendiente |
-| Bloqueante #2 | Encaje del ICP: ¿a qué se dedica el emprendimiento de Catalina? (dato pendiente) |
 
 ## Índice
 

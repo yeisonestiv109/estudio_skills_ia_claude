@@ -27,12 +27,12 @@
 
 ## 🟡 Requieren un tercero (no resoluble por IA)
 
-| Estado | Pendiente | Detalle |
-|--------|-----------|---------|
-| 🟡 | **Sesión con un contador** | Confirmar IVA (no responsable bajo 3.500 UVT ≈ COP $183,3M), RST sí/no, flujo de exportación de servicios, y valor oficial de UVT 2026. Ver [`facturacion-y-contratos-colombia.md`](facturacion-y-contratos-colombia.md) |
-| 🟡 | **Asesoría legal Habeas Data** | Para prospección B2B a escala (Ley 1581/2012 + Ley 1266/2008 + Decreto 1377/2013; autoridad: SIC). Ver [validación §7](../docs/validacion/validacion-fuentes.md) |
-| 🟡 | **Abogado IP/comercial — límites del build independiente** | IP ya resuelto (es de la contratante). Pregunta abierta: ¿qué tan distinto debe ser tu nuevo build para no rozar confidencialidad (cláusula 7ª, 2 años)? Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md) |
-| ✅ | **Costo por lead — RESUELTO con datos reales** | ~$155–190 COP marginal, ~$290 COP a plena capacidad; stack $108/mes; tope Hunter ~1.500 contactos. Ver [`costo-por-lead.md`](../docs/tecnico/costo-por-lead.md) |
+| Estado | Pendiente                                                      | Detalle                                                                                                                                                                                                                                                               |
+| ------ | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🟡     | **Sesión con un contador**                                     | Confirmar IVA (no responsable bajo 3.500 UVT ≈ COP $183,3M), RST sí/no, flujo de exportación de servicios, y valor oficial de UVT 2026. Ver [`facturacion-y-contratos-colombia.md`](facturacion-y-contratos-colombia.md)                                              |
+| 🟡     | **Asesoría legal Habeas Data**                                 | Para prospección B2B a escala (Ley 1581/2012 + Ley 1266/2008 + Decreto 1377/2013; autoridad: SIC). Ver [validación §7](../docs/validacion/validacion-fuentes.md)                                                                                                      |
+| 🟡     | **Abogado IP/comercial — límites del build independiente**     | IP ya resuelto (es de la contratante). Pregunta abierta: ¿qué tan distinto debe ser tu nuevo build para no rozar confidencialidad (cláusula 7ª, 2 años)? Ver [`situacion-contractual-y-sociedad.md`](situacion-contractual-y-sociedad.md)                             |
+| 🟡     | **Costo por lead — Aun no RESUELTO, se requiere datos reales** | Aun no resuelto, en los próximos días en paralelo con el desarrollo, no esperar a que se termine de desarrollar para calculara el costo, ir llevando los datos de los costos en herramientas, y usar pruebas gratuitas en lo posible para experimentos y validaciones |
 
 ## ⚖️ Repo del prospector construido bajo contrato (alerta IP)
 
@@ -47,16 +47,16 @@
 | ⏳ | **Elegir nombre del emprendimiento** | El fundador definirá "en estos días". Top candidatos en [`marca-naming.md`](marca-naming.md) |
 | ⏳ | **Naming — RESET (Ronda 5)** | El fundador rechazó todos los candidatos (Rondas 1–4). Pendiente: responder las 6 preguntas de dirección para una Ronda 6 dirigida. Ver [`marca-naming.md`](marca-naming.md) Ronda 5 |
 | 🔴 | **Validar el nombre elegido** | 3 chequeos: dominio (.ai/.com/.co) + marca (SIC) + handles de redes. Kiro puede correr la verificación web cuando haya 2–3 finalistas |
-| 🔴 | **Definir perfil de Yulieth + nombre de marca** | Para completar [`presentacion-fundadores.md`](../docs/fundamentos/presentacion-fundadores.md) (espacio `[ ]`) |
+| 🔴 | **Definir perfil de Yulieth Gabriela + nombre de marca** | Para completar [`presentacion-fundadores.md`](../docs/fundamentos/presentacion-fundadores.md) (espacio `[ ]`) |
 | 🔴 | **Pulir prueba social pública** | LinkedIn + GitHub con casos visibles (el Prospector). Ver [validación §5](../docs/validacion/validacion-fuentes.md) |
 
 ## ⚙️ Producto / Operación
 
-| Estado | Pendiente | Detalle |
-|--------|-----------|---------|
-| 🔴 | **Medir consumo real del Prospector en 1 job** | (Duplica el 🟡 de arriba: es el número que desbloquea el pricing) |
-| 🔴 | **Decidir CRM (probar el Prospector como CRM)** | Dogfooding 2 semanas + hoja de embudo. Ver [`productividad-y-automatizacion.md`](productividad-y-automatizacion.md) |
-| 🔴 | **Automatizar 1–2 tareas propias** | Sugerido: seguimiento de leads + borradores de propuesta (Hooks + Google Sheets, ver `.kiro/settings/environment_setup.md`) |
+| Estado | Pendiente                                       | Detalle                                                                                                                     |
+| ------ | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 🔴     | **Medir consumo real del Prospector en 1 job**  | (Duplica el 🟡 de arriba: es el número que desbloquea el pricing)                                                           |
+| 🔴     | **Decidir CRM (probar el Prospector como CRM)** | Dogfooding 2 semanas + hoja de embudo. Ver [`productividad-y-automatizacion.md`](productividad-y-automatizacion.md)         |
+| 🔴     | **Automatizar 1–2 tareas propias**              | Sugerido: seguimiento de leads + borradores de propuesta (Hooks + Google Sheets, ver `.kiro/settings/environment_setup.md`) |
 
 ## 📚 Base de conocimiento
 
@@ -81,4 +81,3 @@
 
 > **Regla del coach:** este checklist se revisa cada semana. La prioridad SIEMPRE es lo que mueve ingresos (Catalina/Prospector Vía B). Lo demás se ordena debajo.
 >
-> 📌 *Nota de contexto: el proyecto SEO de TBBC lo maneja el fundador aparte, fuera de este repo. Aquí "Catalina" figura como clienta potencial del Prospector para su otro emprendimiento.*

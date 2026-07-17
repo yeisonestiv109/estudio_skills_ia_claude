@@ -5,7 +5,7 @@ Este repositorio es la **fuente de la verdad** del proyecto de emprendimiento te
 ## Cómo cargar contexto (estructura numerada canónica)
 
 1. **Memoria de trabajo:** lee siempre primero [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md) — handoff y objetivo de hoy.
-2. **Neocórtex técnico (fuente de verdad para código):** [`10-Memoria_Consolidada/`](10-Memoria_Consolidada/). Contratos en `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`. Subcarpetas: `tecnico/`, `validacion/`, `proyecto-catalina/`. Si no está ahí, no existe.
+2. **Neocórtex técnico (fuente de verdad para código):** [`10-Memoria_Consolidada/`](10-Memoria_Consolidada/). Contratos en `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`. Subcarpetas: `tecnico/`, `validacion/`, `proyecto-catalina/` (**Aquí viven el Frente 1 - TBBC y el Frente 2 - Sandler/WhatsApp, prioridad absoluta**). Si no está ahí, no existe.
 3. **ADN / estrategia:** [`01-Fundamentos_Estrategia/`](01-Fundamentos_Estrategia/) (incluye `pendientes-checklist.md`, el dashboard de tareas).
 4. **Decisiones (porqué):** [`20-Bitacora_Decisiones/`](20-Bitacora_Decisiones/). **Ignora** `99-Archivo_Muerto/`.
 5. **Grafo de código:** si existe `graphify-out/graph.json`, usa `graphify query "<pregunta>"` antes de leer archivos de `src/` sueltos — devuelve solo el subgrafo relevante.

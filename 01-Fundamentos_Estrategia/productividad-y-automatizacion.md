@@ -35,7 +35,7 @@ A bajo volumen, el Prospector puede operar **prácticamente en $0** apoyándose 
 
 > ⚠️ **Disciplina (del doc de validación):** "gratis" se acaba al subir el volumen. La métrica a vigilar es el **costo por lead calificado**. Mientras uses el Prospector para ti y para demos, el costo es marginal; cuando lo uses para un cliente a escala, **mide el consumo real** antes de cotizar. Detalle en [validación de fuentes §6](../docs/validacion/validacion-fuentes.md).
 
-**Acción pendiente:** correr 1 job real y anotar el consumo exacto (Tavily/Groq/Apify/Hunter) → cerrar el número de costo por lead.
+**Acción pendiente:** correr 1 job real y anotar el consumo exacto (Tavily/Groq/Hunter) → cerrar el número de costo por lead.
 
 ## 3. Automatizar tus propias tareas (para ser más productivo)
 

@@ -99,6 +99,60 @@ _KEYWORDS_MA = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Falla 3 (caso "Parcero"): comillas exactas en el query RSS de Google Alerts
+# reducen pero NO eliminan el ruido de palabras coloquiales/genéricas que
+# también son nombres de empresa ("parcero" = amigo en colombiano). El
+# problema es de SIGNIFICADO, no de tokenización, así que la solución también
+# debe ser semántica: exigir co-ocurrencia con vocabulario de negocio antes
+# de aceptar la mención como un trigger de negocio real.
+# ---------------------------------------------------------------------------
+_GLOSARIO_COOCURRENCIA_NEGOCIO = frozenset(
+    {
+        "empresa",
+        "compañía",
+        "compania",
+        "company",
+        "startup",
+        "software",
+        "tecnología",
+        "tecnologia",
+        "technology",
+        "agencia",
+        "consultora",
+        "consulting",
+        "negocio",
+        "business",
+        "ceo",
+        "cto",
+        "cio",
+        "cdo",
+        "fundador",
+        "founder",
+        "director",
+        "gerente",
+        "inversión",
+        "inversion",
+        "funding",
+        "ronda",
+        "clientes",
+        "servicios",
+        "plataforma",
+        "producto",
+        "industria",
+        "sector",
+        "mercado",
+        "market",
+    }
+)
+
+# Nombres de empresa de longitud <= este umbral (en caracteres) se consideran
+# "genéricos/cortos": palabras comunes del lenguaje cotidiano son más
+# propensas a colisionar con nombres de empresa cortos (ej. "parcero",
+# "casa", "sol"). Sin evidencia adicional, su techo de confianza es BAJA
+# incluso si el texto menciona keywords de C-Level o inversión.
+_LONGITUD_MAXIMA_NOMBRE_GENERICO = 8
+
 
 class _EntradaRSS(NamedTuple):
     titulo: str
@@ -144,6 +198,34 @@ def _empresa_mencionada(empresa: Empresa, texto: str) -> bool:
     texto_lower = texto.lower()
 
     return nombre_normalizado in texto_lower or dominio_raiz in texto_lower
+
+
+def _tiene_coocurrencia_negocio(texto: str) -> bool:
+    """
+    Verifica si el texto contiene al menos una palabra del glosario de
+    co-ocurrencia de negocio (Falla 3 — caso Parcero).
+
+    El match de nombre por sí solo no basta como evidencia de que la mención
+    es sobre LA EMPRESA candidata (problema de significado, no de
+    tokenización: comillas exactas no distinguen "Parcero, la agencia" de
+    "Parcero, la palabra coloquial de fútbol"). Exigir co-ocurrencia con
+    vocabulario de negocio filtra el ruido semántico sin descartar de plano
+    el nombre exacto.
+    """
+    texto_lower = texto.lower()
+    return any(palabra in texto_lower for palabra in _GLOSARIO_COOCURRENCIA_NEGOCIO)
+
+
+def _es_nombre_generico(nombre_empresa: str) -> bool:
+    """
+    Heurística de longitud: nombres de empresa cortos son más propensos a
+    colisionar con palabras coloquiales/genéricas del lenguaje cotidiano
+    (ej. "Parcero" = amigo en colombiano). Sin evidencia adicional robusta,
+    su techo de confianza máximo se limita a BAJA (ver _clasificar_nivel en
+    obtener_triggers), incluso si el texto contiene keywords de C-Level o
+    inversión — esas keywords podrían pertenecer al ruido, no a la empresa.
+    """
+    return len(nombre_empresa.strip()) <= _LONGITUD_MAXIMA_NOMBRE_GENERICO
 
 
 class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
@@ -211,10 +293,18 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             )
             return []
 
+        # Techo de confianza para nombres genéricos/cortos (Falla 3): se
+        # calcula una sola vez por empresa, no por entrada.
+        nombre_generico = _es_nombre_generico(empresa.nombre)
+
         # Construir Triggers ordenando por relevancia (ALTA primero)
         triggers: list[Trigger] = []
         for entrada in entradas_relevantes[: self._max_triggers]:
             nivel = _clasificar_nivel(entrada.titulo, entrada.resumen)
+            if nombre_generico:
+                # Un nombre genérico/corto nunca sostiene ALTA/MEDIA sin
+                # evidencia más fuerte que keyword-matching sobre texto libre.
+                nivel = NivelConfianza.BAJA
             descripcion = self._formatear_descripcion(entrada, nivel)
 
             trigger = Trigger(
@@ -278,7 +368,7 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             enlace = getattr(entry, "link", "") or ""
             texto_completo = titulo + " " + resumen
 
-            # Filtrar por empresa y/o por keywords del ICP
+            # Filtrar por empresa y/o por keywords del ICP.
             menciona_empresa = _empresa_mencionada(empresa, texto_completo)
             menciona_keyword = any(
                 kw in texto_completo.lower() for kw in self._keywords_extra
@@ -286,6 +376,17 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
 
             if not (menciona_empresa or menciona_keyword):
                 continue
+
+            # Falla 3 (caso Parcero): un match de NOMBRE por sí solo no basta
+            # como evidencia — el nombre puede ser una palabra coloquial. Se
+            # exige co-ocurrencia con el glosario de negocio antes de aceptar
+            # la entrada como relevante. Los matches por keyword extra del
+            # ICP (dolor_operativo/anclaje_tecnologico) no pasan por este
+            # filtro: ya son términos específicos de negocio, no palabras
+            # genéricas del lenguaje cotidiano.
+            if menciona_empresa and not menciona_keyword:
+                if not _tiene_coocurrencia_negocio(texto_completo):
+                    continue
 
             relevantes.append(
                 _EntradaRSS(

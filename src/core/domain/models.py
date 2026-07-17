@@ -69,6 +69,7 @@ class OrigenTrigger(str, Enum):
     SECOP_SOCRATA = "SECOP_SOCRATA"
     GOOGLE_ALERTS = "GOOGLE_ALERTS"
     GITHUB = "GITHUB"
+    PROPUESTA_VALOR = "PROPUESTA_VALOR"  # Capa 2 Negative ICP — PropuestaValorAdapter
 
 
 class EstadoCorreo(str, Enum):
@@ -95,6 +96,15 @@ class AutoridadDecision(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+# Centinela explícito de "país no reportado por la fuente" (Motor 2, waterfall
+# geográfico — ver PoliticaValidacionGeografica). NUNCA usar un país real como
+# valor por defecto ante dato ausente (bug corregido: caso Parcero/UK, donde
+# TheirStack no reportó country_code y el adaptador asumía "CO" en silencio).
+# No es un código ISO real: "XX" es el rango reservado ISO 3166-1 para "código
+# de usuario/no asignado", por lo que no colisiona con ningún país verdadero.
+PAIS_DESCONOCIDO: str = "XX"
+
+
 class EstadoEmpresa(str, Enum):
     """
     Ciclo de vida de una Empresa en el pipeline de El Prospector.
@@ -113,6 +123,73 @@ class EstadoEmpresa(str, Enum):
     VERIFICADA = "VERIFICADA"
     EN_PIPELINE = "EN_PIPELINE"
     ARCHIVADA = "ARCHIVADA"
+
+
+class EstadoConsensoTamano(str, Enum):
+    """
+    Resultado de PoliticaCorroboracionTamano (Motor 2 — waterfall de tamaño).
+
+    CONSENSO      → al menos 2 orígenes distintos coincidieron en el mismo
+                    TamanoEmpresa (o en rangos adyacentes). El tamaño es confiable.
+    SIN_CONSENSO  → hay 2+ estimaciones pero NO coinciden entre sí. El tamaño
+                    NO se fuerza; la empresa debe ir a revisión manual en vez
+                    de arrastrar un dato firmográfico falso.
+    SIN_DATOS     → no llegó ninguna estimación cruda (lista vacía). No hay
+                    base para pronunciarse.
+    """
+
+    CONSENSO = "CONSENSO"
+    SIN_CONSENSO = "SIN_CONSENSO"
+    SIN_DATOS = "SIN_DATOS"
+
+
+class ResultadoExclusionCompetidor(str, Enum):
+    """
+    Resultado de PoliticaExclusionCompetidores (Motor 2 — Negative ICP).
+
+    PERMITIDO                    → la empresa candidata no compite con el
+                                    modelo de negocio del cliente. Continúa
+                                    en el pipeline sin restricciones.
+    EXCLUIDO_DURO                → misma CategoriaEmpresa que el cliente
+                                    (hard exclusion). Se descarta ANTES de
+                                    gastar cualquier crédito de M3 en ella.
+    REQUIERE_ANALISIS_SEMANTICO  → categorías vecinas/ambiguas (conditional
+                                    exclusion). La política pura no puede
+                                    decidir sola; requiere la Capa 2
+                                    (PuertoClasificadorPropuestaValor) antes
+                                    de aprobar o descartar.
+    PENDIENTE_REVISION_MANUAL    → la Capa 2 no pudo determinar es_vendor_it
+                                    (scraping falló, LLM no disponible, texto
+                                    insuficiente). Fail-CLOSED (bug corregido,
+                                    caso Parcero/UK): un análisis indeterminado
+                                    NUNCA se trata como "confirmado no
+                                    competidor". Va a cola manual en vez de
+                                    PERMITIDO automático.
+    """
+
+    PERMITIDO = "PERMITIDO"
+    EXCLUIDO_DURO = "EXCLUIDO_DURO"
+    REQUIERE_ANALISIS_SEMANTICO = "REQUIERE_ANALISIS_SEMANTICO"
+    PENDIENTE_REVISION_MANUAL = "PENDIENTE_REVISION_MANUAL"
+
+
+class EstadoValidacionGeografica(str, Enum):
+    """
+    Resultado de PoliticaValidacionGeografica (Motor 2 — waterfall geográfico).
+
+    PERMITIDO      → el país de la empresa candidata coincide con la
+                     geografía del ICP (o el ICP no restringe geografía).
+    EXCLUIDO       → el país candidato es conocido y NO coincide con la
+                     geografía del ICP (caso Parcero: HQ en Londres vs.
+                     ICP="CO").
+    INDETERMINADO  → no hay ningún país confiable para evaluar (ni
+                     TheirStack ni la Capa 2 semántica lo resolvieron).
+                     Fail-CLOSED: nunca se traduce en PERMITIDO automático.
+    """
+
+    PERMITIDO = "PERMITIDO"
+    EXCLUIDO = "EXCLUIDO"
+    INDETERMINADO = "INDETERMINADO"
 
 
 # ---------------------------------------------------------------------------
@@ -209,6 +286,46 @@ class Empresa(BaseModel):
         ),
     )
     fecha_captura: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# 2.1 EstimacionTamano — ValueObject para el waterfall de tamaño (Motor 2)
+# ---------------------------------------------------------------------------
+class EstimacionTamano(BaseModel):
+    """
+    ValueObject inmutable: una estimación CRUDA de tamaño de empresa,
+    reportada por UN solo origen (adaptador).
+
+    Diseño (investigación "Waterfall Enrichment" / Enlyft, ver
+    10-Memoria_Consolidada/tecnico/prospector-m3-m4-design.md y hallazgos de
+    auditoría): ningún adaptador individual es confiable por sí solo para
+    firmográficos. PoliticaCorroboracionTamano recibe una list[EstimacionTamano]
+    de distintos orígenes y exige consenso de al menos 2 antes de aceptar un
+    TamanoEmpresa como válido.
+
+    No reemplaza a Trigger: una EstimacionTamano no es una señal de compra,
+    es un dato firmográfico crudo. Se modela por separado para no forzar a
+    TriggerAggregationPolicy (que evalúa señales de intención) a interpretar
+    también datos de tamaño.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    origen: OrigenTrigger = Field(
+        ..., description="Adaptador que produjo esta estimación (mismo Enum que Trigger)."
+    )
+    tamano_estimado: TamanoEmpresa = Field(
+        ..., description="Rango de tamaño que el origen infiere para la empresa."
+    )
+    confianza: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confianza propia del origen en su estimación (0.0-1.0). Por defecto "
+            "1.0 para orígenes que no distinguen grados de certeza."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------

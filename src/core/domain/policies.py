@@ -19,13 +19,19 @@ from src.core.domain.models import (
     BaseLegal,
     CategoriaEmpresa,
     Decisor,
+    EstadoConsensoTamano,
     EstadoCorreo,
     EstadoMensaje,
+    EstadoValidacionGeografica,
+    EstimacionTamano,
     ManifiestoICP,
     Mensaje,
     OrigenTrigger,
+    PAIS_DESCONOCIDO,
     ResultadoEnvio,
+    ResultadoExclusionCompetidor,
     Seniority,
+    TamanoEmpresa,
     Trigger,
 )
 
@@ -344,3 +350,212 @@ class PoliticaRegistroRebote:
                 }
             )
         return decisor
+
+
+# ===========================================================================
+# MOTOR 2 (Discovery) — Políticas de Corroboración de Tamaño y Exclusión
+# de Competidores. Diseño: investigación "Waterfall Enrichment" / "Negative
+# ICP" (10-Memoria_Consolidada/tecnico/prospector-m3-m4-design.md, sesión de
+# afinamiento del Motor 2 post-piloto TBBC).
+# ===========================================================================
+class PoliticaCorroboracionTamano:
+    """
+    Waterfall de tamaño (Motor 2). Ningún origen individual (TheirStack,
+    Wappalyzer, GitHub, etc.) es confiable por sí solo para TamanoEmpresa —
+    ver hallazgos de la investigación de mercado (Enlyft: "predicting company
+    size from sparse, multi-source signals"; LinkedIn headcount decay ~22%/año).
+
+    Regla de negocio: un TamanoEmpresa solo se acepta como válido si al menos
+    MINIMO_ORIGENES estimaciones de orígenes DISTINTOS corroboran el mismo
+    rango, o rangos adyacentes en la escala ordinal STARTUP<SME<MID_MARKET<
+    ENTERPRISE (mismo principio de "tier distance" de la investigación:
+    un desacuerdo de 1 escalón es ruido de frontera; un desacuerdo de 2+
+    escalones es una señal real de conflicto, no de consenso).
+
+    Mismo principio que TriggerAggregationPolicy (mínimo 2 orígenes distintos
+    antes de confiar), aplicado a un campo firmográfico en vez de a intención
+    de compra.
+    """
+
+    MINIMO_ORIGENES: int = 2
+    MAX_DISTANCIA_TIER_PARA_CONSENSO: int = 1
+
+    _ORDEN_TIER: dict[TamanoEmpresa, int] = {
+        TamanoEmpresa.STARTUP: 0,
+        TamanoEmpresa.SME: 1,
+        TamanoEmpresa.MID_MARKET: 2,
+        TamanoEmpresa.ENTERPRISE: 3,
+    }
+
+    def corroborar(
+        self, estimaciones: list[EstimacionTamano]
+    ) -> tuple[EstadoConsensoTamano, TamanoEmpresa | None]:
+        """
+        Retorna (EstadoConsensoTamano, TamanoEmpresa | None).
+
+        - SIN_DATOS, None            → lista vacía.
+        - SIN_CONSENSO, None         → 2+ estimaciones pero sin acuerdo dentro
+                                        de MAX_DISTANCIA_TIER_PARA_CONSENSO, o
+                                        menos de MINIMO_ORIGENES orígenes
+                                        DISTINTOS reportaron.
+        - CONSENSO, TamanoEmpresa    → hay corroboración; se retorna la MODA
+                                        (el tier más frecuente; a igualdad de
+                                        frecuencia, el de mayor confianza
+                                        promedio) como el tamaño validado.
+
+        No lanza excepción. Determinista y pura: no importa adaptadores.
+        """
+        if not estimaciones:
+            return EstadoConsensoTamano.SIN_DATOS, None
+
+        origenes_distintos = {e.origen for e in estimaciones}
+        if len(origenes_distintos) < self.MINIMO_ORIGENES:
+            return EstadoConsensoTamano.SIN_CONSENSO, None
+
+        # Agrupar por tier y calcular soporte (conteo + confianza promedio).
+        conteo_por_tier: dict[TamanoEmpresa, int] = {}
+        confianza_por_tier: dict[TamanoEmpresa, list[float]] = {}
+        for est in estimaciones:
+            conteo_por_tier[est.tamano_estimado] = (
+                conteo_por_tier.get(est.tamano_estimado, 0) + 1
+            )
+            confianza_por_tier.setdefault(est.tamano_estimado, []).append(
+                est.confianza
+            )
+
+        # Candidato ganador: mayor conteo; desempate por mayor confianza promedio.
+        tier_ganador = max(
+            conteo_por_tier,
+            key=lambda t: (
+                conteo_por_tier[t],
+                sum(confianza_por_tier[t]) / len(confianza_por_tier[t]),
+            ),
+        )
+        posicion_ganador = self._ORDEN_TIER[tier_ganador]
+
+        # El soporte debe venir de orígenes DISTINTOS, no de duplicados del mismo.
+        origenes_del_soporte = {
+            est.origen
+            for est in estimaciones
+            if abs(self._ORDEN_TIER[est.tamano_estimado] - posicion_ganador)
+            <= self.MAX_DISTANCIA_TIER_PARA_CONSENSO
+        }
+
+        if len(origenes_del_soporte) < self.MINIMO_ORIGENES:
+            return EstadoConsensoTamano.SIN_CONSENSO, None
+
+        return EstadoConsensoTamano.CONSENSO, tier_ganador
+
+
+class PoliticaExclusionCompetidores:
+    """
+    Negative ICP (Motor 2). Excluye empresas candidatas que compiten con el
+    modelo de negocio del propio cliente ANTES de gastar cualquier crédito de
+    Motor 3 (Apollo/Hunter) en ellas.
+
+    Diseño de 3 cubetas (framework validado de la industria — ver
+    prospector-m3-m4-design.md, sección de investigación Negative ICP):
+        - Hard exclusion:  misma CategoriaEmpresa que el cliente. Nunca se
+                            contacta. Decisión determinista, sin LLM.
+        - Conditional:      categorías "vecinas" donde el modelo de negocio
+                            puede solaparse (ej. AGENCIA_IT vs CONSULTORA_IT)
+                            pero no es seguro sin leer la propuesta de valor
+                            real de la empresa candidata. Delega a la Capa 2
+                            (PuertoClasificadorPropuestaValor, fuera del Core).
+        - Permitido:        cualquier otra combinación. Sin restricción.
+
+    Pura: no lee sitios web, no llama LLM, no conoce Tavily ni Groq. Solo
+    compara dos valores de un Enum ya calculado por el Motor 1 (categoria del
+    cliente) y por el proceso de discovery (categoria de la empresa candidata,
+    inferida por el mismo LLM de M1 sobre su propio texto público — detalle de
+    implementación de la Capa 2, no de esta política).
+    """
+
+    # Pares de categorías cuyo modelo de negocio se solapa lo bastante como
+    # para requerir análisis semántico antes de decidir (no son idénticas,
+    # pero tampoco son claramente distintas). Se declara sin dirección: el
+    # par (A, B) cubre tanto cliente=A/candidata=B como cliente=B/candidata=A.
+    CATEGORIAS_AMBIGUAS: frozenset[frozenset[CategoriaEmpresa]] = frozenset(
+        {
+            frozenset({CategoriaEmpresa.AGENCIA_IT, CategoriaEmpresa.CONSULTORA_IT}),
+            frozenset(
+                {CategoriaEmpresa.AGENCIA_IT, CategoriaEmpresa.SAAS_B2B_HORIZONTAL}
+            ),
+            frozenset(
+                {CategoriaEmpresa.CONSULTORA_IT, CategoriaEmpresa.AI_ML_PLATFORM}
+            ),
+            frozenset(
+                {CategoriaEmpresa.AGENCIA_IT, CategoriaEmpresa.AI_ML_PLATFORM}
+            ),
+        }
+    )
+
+    def evaluar(
+        self,
+        categoria_cliente: CategoriaEmpresa,
+        categoria_candidata: CategoriaEmpresa,
+    ) -> ResultadoExclusionCompetidor:
+        """
+        Retorna el veredicto de exclusión determinista para el par de
+        categorías dado. No lanza excepción.
+
+        1. Categorías idénticas         → EXCLUIDO_DURO (hard exclusion).
+        2. Categorías en CATEGORIAS_AMBIGUAS → REQUIERE_ANALISIS_SEMANTICO
+           (conditional exclusion; el orquestador debe invocar la Capa 2
+           antes de decidir).
+        3. Cualquier otro par            → PERMITIDO.
+        """
+        if categoria_cliente == categoria_candidata:
+            return ResultadoExclusionCompetidor.EXCLUIDO_DURO
+
+        par = frozenset({categoria_cliente, categoria_candidata})
+        if par in self.CATEGORIAS_AMBIGUAS:
+            return ResultadoExclusionCompetidor.REQUIERE_ANALISIS_SEMANTICO
+
+        return ResultadoExclusionCompetidor.PERMITIDO
+
+
+class PoliticaValidacionGeografica:
+    """
+    Waterfall geográfico (Motor 2). Corrige la Falla 2 del caso Parcero: una
+    empresa candidata con HQ fuera de la geografía del ICP (ej. Londres, UK)
+    no debe calificar solo porque contrata remoto en LATAM o menciona
+    tecnologías del stack objetivo.
+
+    Pura y determinista: recibe el país candidato YA resuelto por el
+    orquestador (típicamente el primero disponible en el waterfall
+    Empresa.pais (TheirStack) → PropuestaValorAdapter.pais_hq() semántico) y
+    lo cruza contra manifiesto.geografia. No conoce adaptadores ni hace red.
+
+    Fail-CLOSED (mismo principio que ResultadoExclusionCompetidor.
+    PENDIENTE_REVISION_MANUAL): un país candidato desconocido (PAIS_DESCONOCIDO
+    o None) NUNCA se traduce en PERMITIDO automático — se retorna INDETERMINADO
+    para que el orquestador lo mande a revisión manual en vez de asumir que
+    "sin dato de país" significa "país correcto".
+    """
+
+    def evaluar(
+        self, pais_candidato: str | None, geografia_icp: str | None
+    ) -> EstadoValidacionGeografica:
+        """
+        Retorna el veredicto geográfico para el par (pais_candidato, geografia_icp).
+
+        1. Si el ICP no restringe geografía (geografia_icp es None/vacío)
+           → PERMITIDO: no hay criterio contra el cual comparar.
+        2. Si el país candidato es desconocido (None, cadena vacía, o el
+           centinela PAIS_DESCONOCIDO) → INDETERMINADO (fail-closed).
+        3. Si ambos códigos (normalizados a mayúsculas) coinciden → PERMITIDO.
+        4. Cualquier otro caso (países conocidos y distintos) → EXCLUIDO.
+
+        No lanza excepción. No importa adaptadores.
+        """
+        if not geografia_icp or not geografia_icp.strip():
+            return EstadoValidacionGeografica.PERMITIDO
+
+        if not pais_candidato or pais_candidato.strip().upper() == PAIS_DESCONOCIDO:
+            return EstadoValidacionGeografica.INDETERMINADO
+
+        if pais_candidato.strip().upper() == geografia_icp.strip().upper():
+            return EstadoValidacionGeografica.PERMITIDO
+
+        return EstadoValidacionGeografica.EXCLUIDO

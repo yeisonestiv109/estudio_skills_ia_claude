@@ -1,7 +1,8 @@
-# Flujo Estructural: Motores 1 y 2 (El Prospector) — v3.0 (Enrutador Dinámico)
+# Flujo Estructural: Motores 1 y 2 (El Prospector) — v4.1 (Blindaje Motor 2 — 17-Jul-2026)
 
 Este documento destila la arquitectura técnica y operativa de los Motores 1 y 2.
 **Cambio principal v3.0:** El Motor 1 ya no es solo un Analizador de ICP. Es un **Analizador + Enrutador Dinámico**. Produce un `ManifiestoICP` tipado Y una lista de adaptadores a activar, calculada por la `AdapterRoutingPolicy`. El Motor 2 ejecuta únicamente los adaptadores que el Motor 1 habilitó.
+**Cambio principal v4.1 (17-Jul-2026):** El Motor 2 incorpora tres capas de blindaje derivadas de los 3 fallos del caso Parcero/UK: Negative ICP en cascada (Capa 1 determinista + Capa 2 semántica con fail-closed), validación geográfica explícita, y filtro de co-ocurrencia semántica en Google Alerts. Los estados de salida se expanden de 2 a 3: **CALIFICA / DESCARTADA / PENDIENTE_REVISIÓN_MANUAL**.
 
 ---
 
@@ -153,12 +154,12 @@ class PuertoFuenteTriggers(ABC):
 
 ### Adaptadores y su Condición de Activación
 
-| Adaptador | Siempre activo | Condición de activación | Cobertura |
-|---|---|---|---|
-| `GoogleAlertsRSSAdapter` | ✅ SÍ | Siempre | 90% del árbol tech |
-| `TheirStackAdapter` | ❌ NO | `categoria_empresa` no es REGULADO_FINTECH ni REGULADO_HEALTHTECH | 65% |
-| `SecopSocrataAdapter` | ❌ NO | `es_gov_facing=True` o categoría gov-facing | 40% |
-| `WappalyzerHeadlessAdapter` | ❌ NO | `categoria_empresa` en {SAAS_B2B_HORIZONTAL, SAAS_B2B_VERTICAL, AGENCIA_IT} | 35% |
+| Adaptador                   | Siempre activo | Condición de activación                                                     | Cobertura          |
+| --------------------------- | -------------- | --------------------------------------------------------------------------- | ------------------ |
+| `GoogleAlertsRSSAdapter`    | ✅ SÍ           | Siempre                                                                     | 90% del árbol tech |
+| `TheirStackAdapter`         | ❌ NO           | `categoria_empresa` no es REGULADO_FINTECH ni REGULADO_HEALTHTECH           | 65%                |
+| `SecopSocrataAdapter`       | ❌ NO           | `es_gov_facing=True` o categoría gov-facing                                 | 40%                |
+| `WappalyzerHeadlessAdapter` | ❌ NO           | `categoria_empresa` en {SAAS_B2B_HORIZONTAL, SAAS_B2B_VERTICAL, AGENCIA_IT} | 35%                |
 
 #### 1. `GoogleAlertsRSSAdapter` — SIEMPRE ACTIVO
 - **Implementación:** Google Alerts con salida RSS. Parseo con `feedparser`.
@@ -202,33 +203,139 @@ class PuertoFuenteTriggers(ABC):
 - **⚠️ LIMITACIÓN DOCUMENTADA:** Solo lee la "corteza" web (frontend, scripts). No detecta deuda técnica de backend (BD colapsadas, microservicios internos). Útil únicamente cuando el síntoma es stack frontend/web observable. Para TBBC, es señal secundaria, no primaria.
 - **Desactivado para:** Ciberseguridad (ocultan stack deliberadamente), Fintech core (backend no web-visible), BPO, AI/ML platforms.
 
-### Flujo de Ejecución del Motor 2 (v3.0):
+### Flujo de Ejecución del Motor 2 (v4.1 — post-blindaje Parcero/UK):
 
 ```mermaid
 graph TD
-    A([Input: Empresa + Lista de Adaptadores Activos]) --> B[Filtro de Ejecución]
-    B --> C((Ejecución en<br>Paralelo))
-    C -->|Si activo| D[Google Alerts RSS]
-    C -->|Si activo| E[TheirStack API]
-    C -->|Si activo| F[SECOP Socrata]
-    C -->|Si activo| G[GitHub Search]
-    C -->|Si activo| H[Wappalyzer]
-    
-    D -.->|Triggers| I[Consolidación de Triggers]
-    E -.->|Triggers| I
-    F -.->|Triggers| I
-    G -.->|Triggers| I
-    H -.->|Triggers| I
-    
-    I --> J{TriggerAggregationPolicy}
-    J -->|Cruce validado:<br>Mínimo 2 señales distintas| K([🟢 Avanza al Motor 3])
-    J -->|Aislado:<br>Faltan señales de respaldo| L([🔴 Descartado / Cola futura])
-    
+    A([Empresa descubierta por TheirStack]) --> B
+
+    subgraph NEGATIVE_ICP ["🛡️ NEGATIVE ICP — Cascada 2 Capas"]
+        B["Capa 1 gratuita<br/>_heuristica_categoria_candidata()<br/>(keywords en nombre de empresa)"]
+        B -->|"match obvio<br/>vendor IT"| EX1([🔴 EXCLUIDO_DURO<br/>0 créditos gastados])
+        B -->|"sin match — caso ambiguo"| C
+        C["Capa 2 con costo<br/>PropuestaValorAdapter<br/>(scraping homepage + LLM)"]
+        C -->|"es_vendor_it=True"| EX2([🔴 EXCLUIDO_DURO])
+        C -->|"es_vendor_it=False"| GEO
+        C -->|"es_vendor_it=None<br/>(scraping falló / SPA / LLM no disponible)"| MANUAL1([🟡 PENDIENTE_REVISIÓN_MANUAL<br/>fail-closed])
+    end
+
+    subgraph GEOGRAFIA ["🌍 VALIDACIÓN GEOGRÁFICA"]
+        GEO["PoliticaValidacionGeografica<br/>pais_candidato vs manifiesto.geografia<br/>waterfall: Empresa.pais → pais_hq() semántico"]
+        GEO -->|"EXCLUIDO<br/>(país conocido distinto del ICP)"| EX3([🔴 DESCARTADA POR GEOGRAFÍA])
+        GEO -->|"INDETERMINADO<br/>(PAIS_DESCONOCIDO / None)"| MANUAL2([🟡 PENDIENTE_REVISIÓN_MANUAL<br/>fail-closed])
+        GEO -->|"PERMITIDO"| TAM
+    end
+
+    subgraph TAMANO ["📏 WATERFALL DE TAMAÑO"]
+        TAM["PoliticaCorroboracionTamano<br/>TheirStack.estimar_tamano()<br/>+ PropuestaValorAdapter.estimar_tamano()"]
+        TAM -->|"CONSENSO=ENTERPRISE<br/>e ICP pide SME"| EX4([🟠 DESCARTADA POR TAMAÑO])
+        TAM -->|"CONSENSO=SME o MID_MARKET<br/>o SIN_DATOS / SIN_CONSENSO"| TRIGGERS
+    end
+
+    subgraph TRIGGERS ["📡 TRIGGERS + CALIFICACIÓN"]
+        TRIGGERS_RUN["Recolectar triggers<br/>(adaptadores activos por M1)"]
+        TRIGGERS_RUN --> AGG["TriggerAggregationPolicy<br/>(mín. 2 orígenes distintos, ≤45 días)"]
+        AGG -->|"califica"| OK([🟢 CALIFICA — avanza a Motor 3])
+        AGG -->|"no califica"| NOOK([⬜ Señales insuficientes / cola futura])
+    end
+
+    TRIGGERS_RUN --> AGG
+
     style A fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
-    style K fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
-    style L fill:#ffebee,stroke:#c62828,stroke-width:2px
-    style C fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style OK fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
+    style EX1 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style EX2 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style EX3 fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style EX4 fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style MANUAL1 fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    style MANUAL2 fill:#fff9c4,stroke:#f9a825,stroke-width:2px
+    style NOOK fill:#eceff1,stroke:#546e7a,stroke-width:2px
 ```
+
+**Estados de salida (v4.1 — expandidos):**
+
+| Estado | Significado | Siguiente paso |
+|---|---|---|
+| 🟢 **CALIFICA** | Pasó todos los filtros y tiene señales suficientes | Avanza a Motor 3 |
+| 🔴 **EXCLUIDO_DURO** | Competidor confirmado (Capa 1 o Capa 2) o país distinto del ICP | Descarte permanente — 0 créditos de M3 gastados |
+| 🟠 **DESCARTADA POR TAMAÑO** | Consenso confirma ENTERPRISE cuando el ICP pide SME | Descarte del batch; podría revisitarse con ICP diferente |
+| 🟡 **PENDIENTE_REVISIÓN_MANUAL** | Análisis indeterminado (scraping/LLM fallaron, país no resoluble) | Cola manual — nunca se aprueba automáticamente |
+| ⬜ **SEÑALES INSUFICIENTES** | No alcanzó el umbral de TriggerAggregationPolicy | Cola futura; puede reactivarse si llega un trigger adicional |
+
+**Principio de diseño (fail-closed):** cualquier ambigüedad no resoluble va a `PENDIENTE_REVISIÓN_MANUAL`, nunca a `CALIFICA` por defecto. El costo de revisar manualmente un falso negativo es mucho menor que el costo de contaminar la reputación del dominio de correo con un falso positivo.
+
+---
+
+## Capas del Blindaje Negative ICP (v4.1)
+
+### Capa 1 — Heurística de nombre (gratis, determinista)
+
+```python
+_PALABRAS_CLAVE_VENDOR_IT: frozenset[str] = frozenset({
+    "software", "tecnolog", "consultora", "consulting", "it services",
+    "systems", "solutions", "soluciones digitales", "digital agency",
+    "agencia digital", "outsourcing", "development", "developers",
+    "system integrator", "fábrica de software", ...
+})
+```
+
+Si el nombre de la empresa candidata contiene alguna de estas palabras, se asume que tiene la misma `CategoriaEmpresa` que el cliente → `EXCLUIDO_DURO` instantáneo sin gastar un token de LLM.
+
+### Capa 2 — PropuestaValorAdapter (con costo — LLM sobre la homepage)
+
+Se invoca **solo** cuando la Capa 1 no pudo decidir. Lee el texto público de la homepage (con fallback a `<title>` + `<meta name="description">` para SPAs sin SSR) y llama a Groq `llama-3.3-70b-versatile` con un prompt JSON estructurado que retorna tres señales:
+
+```json
+{
+  "es_vendor_it": true/false,
+  "tamano_estimado": "STARTUP|SME|MID_MARKET|ENTERPRISE|null",
+  "pais_hq": "CO|GB|MX|null"
+}
+```
+
+- Si `es_vendor_it=True` → `EXCLUIDO_DURO`.
+- Si `es_vendor_it=False` → continúa al waterfall geográfico.
+- Si `es_vendor_it=None` (scraping falló, SPA opaca, LLM no disponible) → `PENDIENTE_REVISIÓN_MANUAL` (fail-closed). **NUNCA se interpreta como "no es competidor".**
+
+El resultado se cachea en un `dict[UUID, _AnalisisPropuestaValor | None]` por instancia del adaptador, de modo que las tres señales (`es_vendor_it`, `tamano_estimado`, `pais_hq`) se obtienen de una sola lectura web + una sola llamada LLM, reutilizadas por `PoliticaCorroboracionTamano` y `PoliticaValidacionGeografica` sin costo adicional.
+
+---
+
+## PoliticaValidacionGeografica (nueva en v4.1)
+
+```python
+class PoliticaValidacionGeografica:
+    def evaluar(self, pais_candidato: str | None, geografia_icp: str | None) -> EstadoValidacionGeografica:
+        # Si el ICP no restringe geografía → PERMITIDO
+        # Si pais_candidato es None / PAIS_DESCONOCIDO ("XX") → INDETERMINADO (fail-closed)
+        # Si ambos códigos ISO Alpha-2 coinciden → PERMITIDO
+        # Si son distintos y conocidos → EXCLUIDO
+```
+
+El país candidato se resuelve en waterfall barato→caro:
+1. `Empresa.pais` (ya viene de TheirStack/discovery, corregido tras bug del default `"CO"`).
+2. Si `Empresa.pais == PAIS_DESCONOCIDO` → se usa `PropuestaValorAdapter.pais_hq()` (ya cacheado).
+
+---
+
+## Blindaje Google Alerts — Co-ocurrencia Semántica (v4.1)
+
+**Problema raíz (caso Parcero):** el nombre de empresa "Parcero" es una palabra coloquial del español colombiano. Las comillas exactas en el query RSS reducen el ruido tokenizado pero no el ruido semántico (ej. noticias de fútbol donde aparece "el parcero del goleador").
+
+**Fix:** antes de aceptar una entrada RSS como trigger válido, se exige co-ocurrencia con al menos una palabra del glosario de negocio:
+
+```python
+_GLOSARIO_COOCURRENCIA_NEGOCIO = frozenset({
+    "empresa", "compañía", "company", "startup", "software",
+    "tecnología", "agencia", "consultora", "ceo", "cto", "cio",
+    "fundador", "inversión", "funding", "ronda", "clientes",
+    "servicios", "plataforma", "producto", "mercado", ...
+})
+```
+
+**Regla adicional:** si el nombre de la empresa tiene ≤8 caracteres (nombre corto/genérico), el nivel de confianza máximo para ese trigger se limita a `BAJA`, incluso si el texto contiene keywords de C-Level o inversión. Esto fuerza que `TriggerAggregationPolicy` requiera corroboración de otra fuente antes de calificar el lead.
+
+Los matches por `palabras_clave_extra` del ICP (dolor_operativo / anclaje_tecnologico) **no** pasan por este filtro adicional: ya son términos específicos de negocio.
 
 ---
 
@@ -282,3 +389,4 @@ flowchart TB
 ---
 *v3.0 — Motor 1 evolucionado a Enrutador Dinámico. AdapterRoutingPolicy documentada.*
 *Wappalyzer rebajado a adaptador condicional con limitaciones documentadas.*
+*v4.1 (17-Jul-2026) — Blindaje Motor 2: Negative ICP en cascada 2 capas, PoliticaValidacionGeografica, co-ocurrencia semántica Google Alerts, techo BAJA para nombres genéricos. Estados de salida expandidos. PropuestaValorAdapter documentado como adaptador dual con caché por instancia.*

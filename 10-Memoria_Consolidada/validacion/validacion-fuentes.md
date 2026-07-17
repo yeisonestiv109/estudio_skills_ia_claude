@@ -29,7 +29,7 @@ Documento del coach. Aquí se separa lo que es **dato verificado**, lo que es **
 | Next.js 16.2.6 + React 19 + Turbopack | 🟢 | Real. Next.js 16.2.6 estable (may-2026), Turbopack por defecto, React 19.2 |
 | Kiro = desarrollo basado en especificaciones (spec-driven) | 🟢 | Correcto; es la plataforma donde se redacta este repositorio |
 | ANI / AGI / ASI, LLM, API, sycophancy, vibe coding | 🟢 | Definiciones correctas y de uso estándar en la industria |
-| Stack del Prospector (FastAPI, Supabase/Postgres, Modal, Groq, Llama 4 Scout, Apify, Hunter, Tavily) | 🟢 | Todas son tecnologías reales y combinables; arquitectura coherente. Precios unitarios en §6 |
+| Stack del Prospector (FastAPI, Supabase/Postgres, Modal, Groq, llama-3.3-70b-versatile, Hunter, Tavily) | 🟢 | Todas son tecnologías reales y combinables; arquitectura coherente. Precios unitarios en §6 |
 
 ## 2. Marcos de negocio
 
@@ -50,7 +50,7 @@ Documento del coach. Aquí se separa lo que es **dato verificado**, lo que es **
 
 | Riesgo | Veredicto | Acción mínima / decisión |
 |--------|-----------|--------------------------|
-| Scraping de LinkedIn (Apify `google-search-scraper`) | 🔴 | Puede violar ToS → bloqueo de cuentas. Decisión: usar solo datos públicos de resultados de búsqueda, sin login ni simulación de sesión; tener fuentes alternativas (Apollo) y no depender de una sola técnica |
+| Scraping de LinkedIn (Evaluación de web scraping) | 🔴 | Puede violar ToS → bloqueo de cuentas. Decisión: usar solo datos públicos de resultados de búsqueda, sin login ni simulación de sesión; tener fuentes alternativas (Apollo) y no depender de una sola técnica |
 | Habeas Data (Ley 1581/2012, Colombia) — **CORREGIDO** | 🔴 | ⚠️ Corrección: Colombia NO usa "interés legítimo" como base legal (eso es GDPR europeo). La Ley 1581/2012 exige **consentimiento previo, expreso e informado**, y la SIC sanciona. Detalle y mitigación en §7 |
 | Cold email | 🟡 | Incluir identificación, motivo y opción de baja; no comprar listas dudosas; cuidar reputación de dominio (SPF/DKIM/DMARC) |
 | Dependencia de muchas APIs de pago | 🟡 → 🟢 en proceso | Métrica unitaria = costo por lead calificado. Tarifas ya verificadas (§6); falta medir consumo real de UNA corrida para cerrar el número |
@@ -58,10 +58,10 @@ Documento del coach. Aquí se separa lo que es **dato verificado**, lo que es **
 
 ## 4. Pendientes de validación — ESTADO ACTUALIZADO
 
-- ✅ **Precios/límites de las APIs** (Tavily, Apollo, Hunter, Groq, Apify). Resuelto. Tarifas verificadas en §6 (re-confirmadas jul-2026).
+- ✅ **Precios/límites de las APIs** (Tavily, Apollo, Hunter, Groq). Resuelto. Tarifas verificadas en §6 (re-confirmadas jul-2026).
 - ✅ **Versión y disponibilidad de Opus 4.8.** Confirmado: GA desde 28-may-2026.
 - 🟡 **Asesoría legal Habeas Data para prospección B2B en Colombia.** Sigue abierto: requiere abogado real (no IA). Marco de mitigación documentado en §7.
-- 🔴 **Medir el consumo real de una corrida del Prospector** (créditos Tavily + CU Apify + créditos Hunter/Apollo + tokens Groq por job) para confirmar el costo por lead estimado en §6. **No resoluble por IA:** exige correr un job real.
+- 🔴 **Medir el consumo real de una corrida del Prospector** (créditos Tavily + créditos Hunter/Apollo + tokens Groq por job) para confirmar el costo por lead estimado en §6. **No resoluble por IA:** exige correr un job real.
 
 ## 5. Credibilidad del perfil del fundador (lectura crítica)
 
@@ -78,10 +78,9 @@ Tarifas unitarias confirmadas vía páginas oficiales y comparativas. *Contenido
 | Servicio | Tarifa unitaria verificada | Plan de entrada | Fuente |
 |----------|-----------------------------|-----------------|--------|
 | **Tavily** (Search) | Búsqueda básica = 1 crédito; avanzada = 2 créditos | Gratis 1.000 créditos/mes (sin tarjeta), luego pago por uso | [docs](https://docs.tavily.com/documentation/api-credits) |
-| **Groq** (Llama 4 Scout 17B) | ~$0.11 / 1M tokens entrada · ~$0.34 / 1M tokens salida | Tier gratis ~30 req/min | [Groq](https://groq.com/pricing) |
-| **Apify** (scrapers) | ~$0.20 por compute unit (CU); migrando a pago por evento | Pago por uso | [Apify](https://apify.com/pricing) |
+| **Groq** (llama-3.3-70b-versatile) | ~$0.59 / 1M tokens entrada · ~$0.79 / 1M tokens salida | Tier gratis ~30 req/min | [Groq](https://groq.com/pricing) |
 | **Hunter.io** (email) | Verificar = 0.5 crédito/email | Gratis; Starter $34/mes anual ($49 mensual) | [cleanlist](https://www.cleanlist.ai/blog/2026-03-19-hunter-pricing-guide) |
-| **Apollo.io** (contactos) | Export email = 1 crédito; teléfono = 5–8 créditos | Gratis 10 export/mes; Basic $49, Pro $79, Org $119/usuario/mes (anual) | [cleanlist](https://www.cleanlist.ai/blog/2026-03-19-apollo-pricing-guide) |
+| **Apollo.io** (contactos) | Export email = 1 crédito; teléfono = 5–8 créditos | Gratis 10 export/mes; Basic $49 (SIN API), Pro $79 (CON API), Org $119/usuario/mes (anual) | [cleanlist](https://www.cleanlist.ai/blog/2026-03-19-apollo-pricing-guide) |
 
 > ⚠️ **Costo oculto que el coach subraya:** varios análisis coinciden en que el costo real de Apollo/Hunter corre **2–3× por encima** del precio de lista una vez sumas overages de créditos y verificación. Presupuesta con ese colchón.
 
@@ -90,13 +89,12 @@ Tarifas unitarias confirmadas vía páginas oficiales y comparativas. *Contenido
 Por empresa procesada, el Prospector consume aproximadamente:
 
 - **Tavily:** descubrimiento (3 consultas) + noticias (3 consultas + 3 extracts) → del orden de 10–15 créditos.
-- **Groq (Llama 4 Scout):** varias llamadas por fases; al ser tan barato (~$0.11/$0.34 por 1M), el costo por empresa es de centavos (típicamente < $0.02).
-- **Apify:** una corrida de búsqueda → fracción de CU → unos centavos.
+- **Groq (llama-3.3-70b-versatile):** varias llamadas por fases; al ser tan barato (~$0.59/$0.79 por 1M), el costo por empresa es de centavos (típicamente < $0.05).
 - **Hunter/Apollo:** 1 crédito de email por contacto válido (+5–8 si se pide teléfono en Apollo).
 
 **Orden de magnitud estimado:** el costo variable por empresa procesada está dominado por Tavily + enriquecimiento; si ~1 de cada 4–5 empresas produce un lead calificado, el costo variable por lead calificado cae en una banda baja (pocos dólares o menos). A esto hay que sumar el **piso fijo mensual** de suscripciones (Hunter desde ~$34, Apollo desde ~$49). Sin volumen, el costo fijo por lead es alto; con volumen, baja rápido.
 
-> ✅ **Acción para cerrar este punto en verde duro:** correr UN job real del Prospector y leer el consumo exacto (créditos Tavily, CU Apify, créditos Hunter/Apollo, tokens Groq). Con ese dato se reemplaza la estimación por el número real de costo por lead calificado.
+> ✅ **Acción para cerrar este punto en verde duro:** correr UN job real del Prospector y leer el consumo exacto (créditos Tavily, créditos Hunter/Apollo, tokens Groq). Con ese dato se reemplaza la estimación por el número real de costo por lead calificado.
 
 ## 7. Habeas Data Colombia — marco de mitigación (NO es asesoría legal)
 
@@ -121,11 +119,11 @@ Corrección crítica al doc anterior. **No soy abogado; esto es un marco operati
 
 Se re-corrieron las validaciones web clave. Resultado: **los datos de junio se sostienen.** Detalle:
 
-- **APIs:** Tavily (1.000 créditos gratis/mes, sin tarjeta) ✅; Groq Llama 4 Scout ($0.11 in / $0.34 out) ✅; Apollo (free 10 export/mes; $49/$79/$119 anual; email 1 crédito, teléfono 5–8; costo real 2–3×) ✅; Hunter (Starter $34 anual / $49 mensual; verificación 0.5 crédito) ✅. Sin cambios materiales.
+- **APIs:** Tavily (1.000 créditos gratis/mes, sin tarjeta) ✅; Groq llama-3.3-70b-versatile ($0.59 in / $0.79 out) ✅; Apollo (free 10 export/mes; $49/$79/$119 anual; email 1 crédito, teléfono 5–8; costo real 2–3×) ✅; Hunter (Starter $34 anual / $49 mensual; verificación 0.5 crédito) ✅. Sin cambios materiales.
 - **Tributario:** UVT 2026 = **COP $52.374** (confirmado por RSM/Bloomberg). ⚠️ Aparece dispersión menor en fuentes secundarias (una cita $52.347, otra $49.799); usar $52.374 y **confirmar con contador**. IVA general 19% estable. Umbral no responsable de IVA 3.500 UVT y renta 0% hasta 1.090 UVT: vigentes.
 - **Legal:** Habeas Data (Ley 1581/2012 + Ley 1266/2008 + Decreto 1377/2013): consentimiento previo/expreso/informado, SIC como autoridad. Sin cambios; sigue 🔴.
 - **Naming (nuevo hallazgo):** al validar el favorito **"Cierzo"** aparecieron **colisiones fonéticas en el mismo espacio**: **"Cizo"** (perfil corporativo *cizo1*, "AI product engineering + business process automation") es casi homófono y compite en IA/automatización; también existen **"Ciergo"** (plataforma de experiencia de residentes) y **"Ciertech"** (dev Odoo). → Riesgo de confusión de marca. Detalle en [`../../estrategia/marca-naming.md`](../../estrategia/marca-naming.md) §Ronda 3.
 
 ## Metodología
 
-Validación vía búsqueda web sobre fuentes oficiales/documentación (Anthropic, Next.js, Groq, Tavily, Apify, Hunter, Apollo, SIC, DIAN/RSM) y cruce de múltiples resultados. *Contenido de fuentes externas reformulado y resumido para cumplir restricciones de licencia; se citan los enlaces originales.*
+Validación vía búsqueda web sobre fuentes oficiales/documentación (Anthropic, Next.js, Groq, Tavily, Hunter, Apollo, SIC, DIAN/RSM) y cruce de múltiples resultados. *Contenido de fuentes externas reformulado y resumido para cumplir restricciones de licencia; se citan los enlaces originales.*

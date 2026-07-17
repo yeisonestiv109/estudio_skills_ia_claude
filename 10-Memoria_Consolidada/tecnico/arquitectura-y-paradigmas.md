@@ -29,8 +29,86 @@ Puedes usar **herramientas generales** (FastAPI, Postgres, un LLM, etc.) — eso
 | Jobs / workers | **Arq** o **Celery/RQ**, o **Modal** serverless; jobs **idempotentes y reanudables** | — |
 | Observabilidad | Logging estructurado + **métricas de costo por job** + trazas | Alimenta el modelo de costo por lead |
 | Config | **Variables de entorno** (12-factor), workers **stateless** | Secretos fuera del repo |
-| Enriquecimiento | Proveedores detrás de **adaptadores** (Hunter/Apollo/Tavily/Apify intercambiables) | Evita lock-in y baja el riesgo de "cuello de botella Hunter" |
+| Enriquecimiento | Proveedores detrás de **adaptadores** (Hunter/Apollo/Tavily intercambiables) | Evita lock-in y baja el riesgo de "cuello de botella Hunter" |
 | Cumplimiento | **Habeas Data by design**: base legal por campaña, opt-out, datos corporativos | Ley 1581/2012 (ver validación §7) |
+
+## 2.1 Diagrama de Arquitectura General del Pipeline (M1 → M4)
+
+> **Estado real del código a 15-Jul-2026.** Este diagrama consolida los 4 motores construidos
+> (specs detalladas en `prospector-m1-m2-design.md`, `prospector-m3-m4-design.md` y
+> `prospector-m4-design.md`). Muestra cómo cada motor entrega su salida al siguiente y **cierra el
+> lazo**: el webhook de rebotes de M4 escribe de vuelta sobre el `Decisor` que produjo M3, cerrando
+> el KPI de bounce rate pendiente del piloto.
+
+```mermaid
+graph TB
+    IN([Input: texto libre del usuario]) --> M1
+
+    subgraph M1 ["🧭 MOTOR 1 — Analizador ICP + Enrutador Dinámico"]
+        direction TB
+        M1_LLM["GroqICPAdapter<br/>(llama-3.3-70b-versatile)"] --> M1_MAN["ManifiestoICP"]
+        M1_MAN --> M1_ROUTE["AdapterRoutingPolicy<br/>→ adaptadores activos"]
+    end
+
+    M1_ROUTE --> M2
+
+    subgraph M2 ["📡 MOTOR 2 — Cascada de Triggers (5 adaptadores)"]
+        direction TB
+        M2_ADAPT["GoogleAlerts · TheirStack · Wappalyzer<br/>SECOP · GitHub<br/>(solo los activos por M1)"] --> M2_AGG["TriggerAggregationPolicy<br/>(mín. 2 orígenes distintos, &lt;45 días)"]
+    end
+
+    M2_AGG -->|"califica"| DTO1["ProspectoCalificado<br/>(Empresa + Triggers + ManifiestoICP)"]
+    M2_AGG -->|"no califica"| M2_OUT([Descartado / cola futura])
+
+    DTO1 --> M3
+
+    subgraph M3 ["💰 MOTOR 3 — Enriquecimiento (escudo financiero)"]
+        direction TB
+        M3_APOLLO["ApolloClient<br/>(api_search → people/match)"] -->|"perfil + email candidato"| M3_HUNTER["HunterClient<br/>(verify / domain-search)"]
+        M3_APOLLO -->|"0 perfiles"| M3_NORES(["NO_RESUELTO<br/>⛔ Hunter NO se invoca"])
+        M3_HUNTER --> M3_MAP["PoliticaMapeoEstadoCorreo<br/>→ EstadoCorreo + confianza_dato"]
+        M3_MAP --> M3_UMB["UmbralCalidadDecisor<br/>(confianza≥0.7 + VERIFICADO/INFERIDO)"]
+    end
+
+    M3_UMB -->|"aptos"| DTO2["PaqueteOutbound<br/>(ProspectoCalificado + decisores_aptos)"]
+    M3_UMB -->|"no aptos"| M3_MANUAL([Cola manual])
+
+    DTO2 --> M4
+
+    subgraph M4 ["📤 MOTOR 4 — Outbound RAG (única salida real)"]
+        direction TB
+        M4_SEL["PoliticaSeleccionMejorDecisor<br/>(1 decisor por empresa)"] --> M4_RAG["TavilyContextoAdapter<br/>(PuertoContextoRAG)"]
+        M4_RAG --> M4_RED["GroqRedactorAdapter<br/>(PuertoRedactorOutbound)"]
+        M4_RED --> M4_HITL{{"👤 Modo Borrador<br/>(HITL aprueba/rechaza)"}}
+        M4_HITL -->|"aprobado + legal OK + pacing OK"| M4_SEND["ResendEnvioAdapter<br/>(PuertoEnvioCorreo)"]
+        M4_HITL -->|"rechazado"| M4_DESCARTE([Mensaje descartado])
+    end
+
+    M4_SEND -->|"webhook async"| M4_WEBHOOK["procesar_webhook_rebote()<br/>(función pura)"]
+    M4_WEBHOOK --> M4_FEED["PoliticaRegistroRebote<br/>→ EstadoCorreo.REBOTADO"]
+    M4_FEED -.->|"writeback — CIERRA EL KPI DE M3"| M3_MAP
+
+    style IN fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    style DTO1 fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
+    style DTO2 fill:#e8eaf6,stroke:#3f51b5,stroke-width:2px
+    style M2_OUT fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style M3_NORES fill:#eceff1,stroke:#546e7a,stroke-width:2px
+    style M3_MANUAL fill:#fff8e1,stroke:#f9a825,stroke-width:2px
+    style M4_DESCARTE fill:#ffebee,stroke:#c62828,stroke-width:2px
+    style M4_WEBHOOK fill:#fce4ec,stroke:#ad1457,stroke-width:2px
+    style M4_FEED fill:#fce4ec,stroke:#ad1457,stroke-width:2px
+```
+
+**Cómo leerlo:**
+- Cada motor es una compuerta de costo: M2 no deja pasar señales aisladas, M3 no deja pasar contactos
+  dudosos, M4 no deja pasar mensajes sin revisión humana.
+- La flecha punteada rosa (`M4_FEED -.-> M3_MAP`) es el **lazo de retroalimentación de rebotes**: es
+  el mecanismo, no solo un adorno visual, que permite medir el bounce rate real y cerrar el KPI
+  pendiente del piloto de M3 (ver `prospector-m3-m4-design.md` §3.5).
+- `ApolloClient` aparece con su flujo real de 2 pasos (`api_search` → `people/match`), vigente desde
+  el fix aplicado tras la depreciación del endpoint directo de Apollo.
+
+---
 
 ## 3. Repos/recursos para ESTUDIAR (no copiar)
 
@@ -39,9 +117,81 @@ Puedes usar **herramientas generales** (FastAPI, Postgres, un LLM, etc.) — eso
 - **ECC** (ver [`evaluacion-ecc.md`](evaluacion-ecc.md)) — skills `cost-aware-llm-pipeline`, `api-design`, `backend-patterns` como referencia.
 - Referencias de **Arquitectura Hexagonal / Clean Architecture** para estructurar el dominio.
 
-## 4. Arquitectura COMERCIAL (las 3 reglas de oro en el producto)
+## 3.1 Principios de Arquitectura Derivados del Blindaje Motor 2 (17-Jul-2026)
 
-El software es la mitad; el negocio es la otra. Diseñar el producto como **SaaS multi-tenant** con:
+Los siguientes principios surgieron de los 3 bugs descubiertos en el caso Parcero/UK. Se elevan a principios de arquitectura porque aplican a cualquier adaptador del sistema, no solo al Motor 2.
+
+### Principio: Fail-Closed para Datos de Terceros
+
+> **Cuando un adaptador externo retorna datos insuficientes, ambiguos o un error, el resultado de la operación es siempre `INDETERMINADO/PENDIENTE_REVISIÓN`, nunca `PERMITIDO` por defecto.**
+
+**Motivación:** el comportamiento fail-open (asumir que "sin señal de peligro" = "seguro") es correcto en sistemas donde el costo del falso negativo supera al costo del falso positivo. En El Prospector, el costo de un falso positivo es mucho mayor que el de un falso negativo (mandar un prospecto válido a revisión manual). La revisión manual es barata y local; el daño de reputación del dominio de correo es costoso y sistémico.
+
+**Contraejemplo (fail-open, PROHIBIDO):**
+```python
+# Anti-patrón: interpretar None como "no hay problema"
+if adapter_pv.clasificar(empresa) is None:
+    return PERMITIDO  # ← BUG: "no pude analizar" ≠ "confirmado no competidor"
+```
+
+**Implementación correcta (tri-estado explícito):**
+```python
+es_vendor: bool | None = adapter_pv.es_vendor_it(empresa)
+# True  → EXCLUIDO_DURO
+# False → continúa el pipeline
+# None  → PENDIENTE_REVISIÓN_MANUAL  ← fail-closed
+```
+
+---
+
+### Principio: Caché por Instancia en Adaptadores Duales
+
+> **Cuando un adaptador implementa múltiples puertos que requieren los mismos datos externos, se usa un `dict[UUID, resultado | None]` por instancia del adaptador para reutilizar el resultado de la primera llamada en todas las invocaciones posteriores sobre la misma entidad.**
+
+**Motivación:** `PropuestaValorAdapter` implementa `PuertoClasificadorPropuestaValor` y `PuertoEstimadorTamano` más expone `es_vendor_it()` y `pais_hq()`. Sin caché, el orquestador pagaría 4 lecturas web + 4 llamadas LLM por empresa. Con caché por instancia: 1 lectura web + 1 llamada LLM, con los 4 resultados derivados del mismo análisis.
+
+```python
+class PropuestaValorAdapter:
+    def __init__(self) -> None:
+        self._cache: dict[uuid.UUID, _AnalisisPropuestaValor | None] = {}
+
+    def _analizar(self, empresa: Empresa) -> _AnalisisPropuestaValor | None:
+        if empresa.id in self._cache:
+            return self._cache[empresa.id]
+        resultado = self._analizar_sin_cache(empresa)  # 1 lectura + 1 LLM
+        self._cache[empresa.id] = resultado
+        return resultado
+```
+
+**Invariante:** el caché es por instancia (no global). Para un orquestador multi-tenant real, el TTL apropiado sería la duración de un job de descubrimiento.
+
+---
+
+### Principio: Datos Ausentes con Centinela Explícito
+
+> **Un campo que "no se sabe" nunca toma el valor del contexto del llamador como default silencioso. Se usa un centinela explícito del Core que el código que lo consume detecta y trata de forma fail-closed.**
+
+**Contraejemplo (PROHIBIDO):**
+```python
+pais = empresa_data.get("country_code", "CO") or "CO"
+# ← Miente: asume el país del ICP del cliente cuando el dato es ausente
+```
+
+**Implementación correcta:**
+```python
+# En models.py — constante del Core
+PAIS_DESCONOCIDO: str = "XX"  # ISO 3166-1 reservado — no colisiona con ningún país real
+
+# En TheirStackAdapter
+pais_raw = empresa_data.get("country_code")
+pais = pais_raw.upper()[:2] if pais_raw else PAIS_DESCONOCIDO
+```
+
+`PoliticaValidacionGeografica` trata `PAIS_DESCONOCIDO` como `INDETERMINADO` (fail-closed), nunca como aprobación automática.
+
+---
+
+## 4. Arquitectura COMERCIAL (las 3 reglas de oro en el producto) Diseñar el producto como **SaaS multi-tenant** con:
 
 | Componente | Qué hace | Regla de oro |
 |------------|----------|--------------|

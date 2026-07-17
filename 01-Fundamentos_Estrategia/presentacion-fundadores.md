@@ -6,7 +6,7 @@ Pieza reutilizable para presentar el emprendimiento ante clientes (uso actual: p
 
 ## Quiénes somos (párrafo de presentación)
 
-Somos Yeison Delgado y Yulieth Jaramillo, fundadores de **[nombre del emprendimiento]**. Combinamos inteligencia artificial con visión de negocio: no implementamos tecnología por moda, sino para resolver problemas reales. Antes de proponer una solución entendemos cómo funciona el negocio y su cliente, y a partir de ahí construimos sistemas de IA que generan ingresos, ahorran tiempo o reducen costos. Eso es lo que nos define: traducir la inteligencia artificial en resultados concretos para la empresa.
+Somos Yeison Delgado y Yulieth Gabriela Jaramillo, fundadores de **[nombre del emprendimiento]**. Combinamos inteligencia artificial con visión de negocio: no implementamos tecnología por moda, sino para resolver problemas reales. Antes de proponer una solución entendemos cómo funciona el negocio y su cliente, y a partir de ahí construimos sistemas de IA que generan ingresos, ahorran tiempo o reducen costos. Eso es lo que nos define: traducir la inteligencia artificial en resultados concretos para la empresa.
 
 > 💡 **El núcleo del posicionamiento ("Arquitecto Digital"):** no vendemos tareas técnicas, vendemos resultados de negocio (las 3 reglas de oro + las 4 áreas de la empresa). Ver `perfil-fundador.md` y `02-principios-valor-empresarial.md`.
 

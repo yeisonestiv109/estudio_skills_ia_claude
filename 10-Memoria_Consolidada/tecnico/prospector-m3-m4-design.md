@@ -189,12 +189,19 @@ class PuertoEnriquecedorContactos(ABC):
 
 **Orden de ejecución (barato → caro, con corte temprano):**
 
+> **✅ Actualizado (fix real de producción, 15-Jul-2026):** Apollo deprecó el endpoint directo
+> `/v1/mixed_people/search` (respondía 422). `ApolloClient` ahora ejecuta el descubrimiento en **2
+> pasos**: `api_search` encuentra los IDs de personas candidatas, y `people/match` resuelve cada ID a
+> su perfil completo (incluido el email candidato). El diagrama refleja este flujo real, ya
+> materializado en `src/adapters/enrichment/apollo_client.py` y confirmado en el piloto LATAM.
+
 ```mermaid
 graph TD
-    A([Empresa calificada + cargos_objetivo]) --> B[Apollo: buscar decisores por cargo]
-    B -->|0 perfiles| Z([Decisor NO_RESUELTO → cola manual])
-    B -->|perfiles + email candidato| C[Hunter: verificar email]
-    B -->|perfil sin email| D[Hunter: inferir patrón del dominio]
+    A([Empresa calificada + cargos_objetivo]) --> B["Apollo — Paso 1: api_search<br/>(descubre IDs de perfiles por cargo)"]
+    B -->|0 IDs encontrados| Z([Decisor NO_RESUELTO → cola manual])
+    B -->|N IDs encontrados| M["Apollo — Paso 2: people/match<br/>(resuelve cada ID → perfil + email candidato)"]
+    M -->|perfil + email candidato| C[Hunter: verificar email]
+    M -->|perfil sin email| D[Hunter: inferir patrón del dominio]
     C --> E{Status Hunter}
     E -->|valid / score alto| V([estado_correo = VERIFICADO<br/>confianza ≥ 0.9])
     E -->|accept_all / webmail / score medio| I([estado_correo = INFERIDO<br/>confianza 0.6-0.7])
@@ -203,11 +210,20 @@ graph TD
     D -->|sin patrón| Z
 
     style A fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    style B fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
+    style M fill:#e3f2fd,stroke:#1565c0,stroke-width:2px
     style V fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px
     style I fill:#fff8e1,stroke:#f9a825,stroke-width:2px
     style R fill:#ffebee,stroke:#c62828,stroke-width:2px
     style Z fill:#eceff1,stroke:#546e7a,stroke-width:2px
 ```
+
+**Nota sobre el gate de calidad de Hunter (frontera de costo dentro del paso 2):** el corte temprano
+original (Apollo 0 perfiles → cero llamadas a Hunter) sigue vigente exactamente igual con el flujo de
+2 pasos: si `api_search` retorna 0 IDs, `people/match` nunca se invoca, y por tanto Hunter tampoco.
+El costo adicional de `people/match` (una llamada extra por perfil descubierto) se paga solo sobre
+IDs que `api_search` ya confirmó como candidatos reales — el mismo principio barato→caro, con un
+peldaño más dentro de "Apollo".
 
 **Regla de corte de costo:** Hunter (0.5 crédito por verificación) solo se invoca sobre emails que
 Apollo (1 crédito por export) efectivamente descubrió. Si Apollo no encuentra a nadie, **cero créditos

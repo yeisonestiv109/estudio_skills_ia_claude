@@ -63,11 +63,17 @@ Tres formas concretas en que este diseño protege el negocio:
 
 ## 2. Diagrama de Arquitectura Hexagonal (M4)
 
+> **✅ Actualizado con las decisiones cerradas (15-Jul-2026, ver §11):** el diagrama muestra los
+> adaptadores CONCRETOS ya materializados (`GroqRedactorAdapter`, `ResendEnvioAdapter`), no nombres
+> genéricos de placeholder. Se agrega el webhook asíncrono de Resend como parte explícita del lazo de
+> retroalimentación de rebotes (antes solo se mencionaba en texto, en §6).
+
 ```mermaid
 graph TB
     subgraph EXT_IN["🌐 Driving Side"]
         ORQ["Orquestador de Aplicación<br/>(use case: preparar y enviar outbound)"]
-        HITL["👤 Revisor Humano<br/>(aprueba borradores)"]
+        HITL["👤 Revisor Humano<br/>(aprueba borradores — Modo Borrador)"]
+        WEBHOOK_IN(["Webhook Resend<br/>(evento async de entrega/rebote)"])
     end
 
     subgraph CORE["🎯 CORE DEL DOMINIO — agnóstico de proveedor"]
@@ -76,9 +82,10 @@ graph TB
             IN["ProspectoCalificado<br/>(Empresa + Triggers + Decisores)"]
             SEL["PoliticaSeleccionMejorDecisor<br/>(1 decisor por empresa)"]
             MSG["Mensaje (borrador tipado)"]
-            RED["PoliticaRedaccionOutbound<br/>(estructura/tono, sin LLM)"]
+            RED["PoliticaRedaccionOutbound<br/>(estructura/tono, sin LLM — abstracción, Fase 2+)"]
             FRA["PoliticaFronterasEnvio<br/>(reputación + legal + pacing)"]
-            FEED["PoliticaRegistroRebote<br/>(resultado envío → EstadoCorreo)"]
+            FLEG["PoliticaFronteraLegal<br/>(Habeas Data)"]
+            FEED["PoliticaRegistroRebote<br/>(ResultadoEnvio → EstadoCorreo)"]
         end
         subgraph OUTPORTS["Outbound Ports"]
             RAGP["«port» PuertoContextoRAG"]
@@ -87,38 +94,44 @@ graph TB
         end
     end
 
-    subgraph OUTADAPT["🔌 Outbound Adapters (Driven)"]
+    subgraph OUTADAPT["🔌 Outbound Adapters (Driven) — src/adapters/outbound/"]
         TAV["TavilyContextoAdapter"]
-        PERP["PerplexityContextoAdapter<br/>(alternativa)"]
-        LLMR["LLMRedactorAdapter<br/>(Groq / Claude)"]
-        SEND["ProveedorEnvioAdapter<br/>(SES / Resend / SMTP)"]
+        PERP["PerplexityContextoAdapter<br/>(alternativa futura)"]
+        GROQ["GroqRedactorAdapter<br/>(llama-3.3-70b-versatile)"]
+        RESEND["ResendEnvioAdapter<br/>+ procesar_webhook_rebote()<br/>(función pura desacoplada)"]
     end
 
     ORQ --> IN --> SEL --> RAGP
     RAGP --> RED --> REDP --> MSG
-    MSG --> FRA
+    MSG --> FLEG
+    FLEG --> FRA
     FRA --> HITL
     HITL -->|aprueba| SNDP
-    SNDP --> FEED
+    SNDP -->|"resultado síncrono<br/>(ENTREGADO optimista)"| ORQ
+
+    WEBHOOK_IN --> RESEND
+    RESEND -->|"procesar_webhook_rebote()<br/>→ ResultadoEnvio real"| FEED
 
     RAGP -.impl.-> TAV
     RAGP -. impl (sin tocar Core) .-> PERP
-    REDP -.impl.-> LLMR
-    SNDP -.impl.-> SEND
+    REDP -.impl.-> GROQ
+    SNDP -.impl.-> RESEND
 
     classDef core fill:#1e3a5f,stroke:#4fa3ff,color:#fff
     classDef port fill:#2d4a22,stroke:#7ec850,color:#fff
     classDef adapter fill:#4a2d3a,stroke:#ff7eb0,color:#fff
     classDef future fill:#3a3a1e,stroke:#ffd24f,color:#fff,stroke-dasharray: 5 5
-    class IN,SEL,MSG,RED,FRA,FEED core
+    class IN,SEL,MSG,RED,FRA,FLEG,FEED core
     class RAGP,REDP,SNDP port
-    class TAV,LLMR,SEND adapter
+    class TAV,GROQ,RESEND adapter
     class PERP future
 ```
 
 **Cómo leerlo:** la caja azul (Core) solo contiene reglas puras y contratos de puerto. Todo lo rosado
-(Tavily, LLM, proveedor de envío) es reemplazable. El revisor humano (HITL) está en el camino crítico:
-ningún mensaje llega a `PuertoEnvioCorreo` sin pasar por él.
+(Tavily, Groq, Resend) es reemplazable. El revisor humano (HITL) está en el camino crítico: ningún
+mensaje llega a `PuertoEnvioCorreo` sin pasar por él. El webhook de Resend entra por la izquierda
+(driving side) como un segundo disparador asíncrono — es la mitad que cierra el KPI de bounce de M3,
+separada intencionalmente de la llamada síncrona de envío (ver §6 y `resend_envio_adapter.py`).
 
 ---
 

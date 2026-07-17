@@ -1,4 +1,4 @@
-# Modelos de Dominio y Contratos (Core) — v3.4 (Motor 3 — Fase 1)
+# Modelos de Dominio y Contratos (Core) — v4.1 (Blindaje Motor 2 — 17-Jul-2026)
 
 Este documento especifica los contratos de datos (entidades de dominio) para el sistema El Prospector, usando Pydantic v2.
 
@@ -54,6 +54,7 @@ class OrigenTrigger(str, Enum):
     SECOP_SOCRATA   = "SECOP_SOCRATA"
     GOOGLE_ALERTS   = "GOOGLE_ALERTS"
     GITHUB          = "GITHUB"          # v3.2 — Inteligencia de código
+    PROPUESTA_VALOR = "PROPUESTA_VALOR" # v4.1 — Capa 2 Negative ICP (PropuestaValorAdapter)
 
 class EstadoEmpresa(str, Enum):
     # v3.1 — Ciclo de vida de la Empresa (Discovery vs pre-CRM)
@@ -137,6 +138,15 @@ class ManifiestoICP(BaseModel):
 
 Entidad principal del pre-CRM. Inmutable por diseño DDD.
 
+**Principio de diseño crítico — "un dato ausente NUNCA asume el valor del ICP" (v4.1):**
+El campo `pais` tenía históricamente un default silencioso `"CO"` en el adaptador TheirStack
+(`pais = empresa_data.get("country_code", "CO") or "CO"`). Este bug permitió que una empresa con
+HQ en Londres (UK) pasara como candidata colombiana porque TheirStack no reportaba `country_code`
+y el adaptador asumía el país del ICP del cliente. Fix: se eliminó el default. Si la fuente no
+reporta el país, el campo recibe la constante `PAIS_DESCONOCIDO` (ver sección 2.2), que
+`PoliticaValidacionGeografica` trata como `INDETERMINADO` (fail-closed), nunca como aprobación
+automática. **Documentar con fecha = evidencia de decisión de arquitectura.**
+
 **Vulnerabilidades cerradas en v2.1:**
 - Campos "estándar" ahora están explícitamente definidos. Especificación "datos firmográficos estándar" era inimplementable.
 - `model_config = ConfigDict(frozen=True)` ahora está explícito. Sin esto, el desarrollador puede omitirlo.
@@ -163,6 +173,83 @@ class Empresa(BaseModel):
 ```
 
 **Nota v3.1:** El campo `estado` distingue empresas descubiertas automáticamente (Caso B) de las verificadas. El default `VERIFICADA` preserva compatibilidad con registros creados manualmente.
+
+---
+
+## 2.2 Constante Centinela PAIS_DESCONOCIDO (nueva en v4.1)
+
+```python
+# En src/core/domain/models.py — antes de la clase EstadoEmpresa
+PAIS_DESCONOCIDO: str = "XX"
+```
+
+**Por qué existe:** "XX" es el rango reservado ISO 3166-1 para "código de usuario/no asignado". No es ningún país real, por lo que no puede colisionar con ningún dato legítimo. Se usa como centinela explícito para representar "el origen de datos no reportó el país de esta empresa".
+
+**Qué resuelve:** la alternativa de usar `None`, `""` o un país real por defecto (`"CO"`) son todas opciones peligrosas:
+- `None`/`""` puede confundirse con "sin restricción geográfica" si el código que lo consume no distingue claramente entre "sin dato" y "sin restricción".
+- Un país real como `"CO"` miente activamente — afirma saber el país cuando no se sabe.
+
+**Cómo se usa:** `PoliticaValidacionGeografica.evaluar()` trata `PAIS_DESCONOCIDO` igual que `None`: retorna `EstadoValidacionGeografica.INDETERMINADO` (fail-closed). El orquestador manda estas empresas a la cola de revisión manual.
+
+---
+
+## 2.3 Enums de Afinamiento Motor 2 (nuevos en v4.1)
+
+```python
+class EstadoConsensoTamano(str, Enum):
+    """
+    Resultado de PoliticaCorroboracionTamano (Motor 2 — waterfall de tamaño).
+    Ningún origen individual es confiable por sí solo para TamanoEmpresa.
+    """
+    CONSENSO    = "CONSENSO"     # 2+ orígenes distintos coinciden (o tiers adyacentes)
+    SIN_CONSENSO = "SIN_CONSENSO" # 2+ estimaciones pero en conflicto
+    SIN_DATOS   = "SIN_DATOS"    # Ningún origen reportó tamaño
+
+class ResultadoExclusionCompetidor(str, Enum):
+    """
+    Resultado de PoliticaExclusionCompetidores (Motor 2 — Negative ICP).
+    3 cubetas del framework de la industria (hard / conditional / permitido)
+    + 1 cuarto estado fail-closed (v4.1).
+    """
+    PERMITIDO                   = "PERMITIDO"                   # No compite con el cliente
+    EXCLUIDO_DURO               = "EXCLUIDO_DURO"               # Misma CategoriaEmpresa → descarte
+    REQUIERE_ANALISIS_SEMANTICO = "REQUIERE_ANALISIS_SEMANTICO" # Categorías vecinas → delegar a Capa 2
+    PENDIENTE_REVISION_MANUAL   = "PENDIENTE_REVISION_MANUAL"   # Capa 2 indeterminada (fail-closed, v4.1)
+
+class EstadoValidacionGeografica(str, Enum):
+    """
+    Resultado de PoliticaValidacionGeografica (Motor 2 — waterfall geográfico).
+    Nuevo en v4.1.
+    """
+    PERMITIDO     = "PERMITIDO"     # País candidato coincide con geografía del ICP (o ICP sin restricción)
+    EXCLUIDO      = "EXCLUIDO"      # País candidato conocido y distinto del ICP
+    INDETERMINADO = "INDETERMINADO" # País candidato desconocido — fail-closed, nunca PERMITIDO
+```
+
+**Diseño del cuarto estado `PENDIENTE_REVISION_MANUAL`:** antes de v4.1, `ResultadoExclusionCompetidor` solo tenía 3 valores. Cuando la Capa 2 (`PropuestaValorAdapter`) no podía determinar `es_vendor_it` (scraping falló, SPA opaca, LLM no disponible), el orquestador (`sandbox_tbbc_real.py`) retornaba `PERMITIDO` por defecto — el "fail-open". Este es exactamente el fallo que dejó pasar a Parcero/UK. El cuarto estado fuerza que el orquestador trate la ambigüedad como "revisar manualmente", no como "aprobado".
+
+---
+
+## 2.4 ValueObject EstimacionTamano (nuevo en v4.1)
+
+```python
+class EstimacionTamano(BaseModel):
+    """
+    Una estimación CRUDA de tamaño de empresa, reportada por UN solo origen.
+    PoliticaCorroboracionTamano recibe list[EstimacionTamano] de orígenes distintos
+    y exige consenso de al menos 2 antes de aceptar un TamanoEmpresa como válido.
+    No es un Trigger: es un dato firmográfico crudo, no una señal de intención de compra.
+    """
+    model_config = ConfigDict(frozen=True)
+
+    origen: OrigenTrigger    # Mismo Enum que Trigger — reutilización intencional
+    tamano_estimado: TamanoEmpresa
+    confianza: float         = Field(default=1.0, ge=0.0, le=1.0)
+    # TheirStack usa 1.0 (dato firmográfico real de employee_count)
+    # PropuestaValorAdapter usa 0.6 (inferencia de lenguaje corporativo, no headcount real)
+```
+
+**Por qué está separado de Trigger:** un `Trigger` es una señal de intención de compra con fecha de evento, nivel de confianza y descripción legible. Una `EstimacionTamano` es un dato firmográfico crudo sin fecha de evento ni relación con señales de compra. `TriggerAggregationPolicy` no debe interpretar datos de tamaño; `PoliticaCorroboracionTamano` no debe interpretar señales de intención. Son policies distintas sobre datos distintos.
 
 ---
 
@@ -355,70 +442,52 @@ class PuertoFuenteTriggers(ABC):
 class PuertoDescubridorEmpresas(ABC):
     """
     v3.1 — Puerto Caso B: DISCOVERY. Descubre empresas nuevas a partir de un ICP.
+    ...
+    """
+    ...
 
-    Semántica distinta a PuertoFuenteTriggers (patrón CQRS aplicado al dominio):
-        - PuertoFuenteTriggers      → SCORING:   ¿Tiene señales ESTA empresa conocida?
-        - PuertoDescubridorEmpresas → DISCOVERY: ¿Qué empresas desconocidas encajan con este ICP?
-
-    Los adaptadores que soportan discovery (ej. TheirStackAdapter) implementan AMBOS
-    puertos. Los que solo hacen scoring (Google Alerts, Wappalyzer, SECOP, GitHub)
-    solo implementan PuertoFuenteTriggers.
+class PuertoEstimadorTamano(ABC):
+    """
+    v4.1 — Puerto SECUNDARIO y OPCIONAL (Motor 2).
+    Adaptadores que pueden estimar tamaño implementan este puerto ADEMÁS de PuertoFuenteTriggers.
+    Alimenta PoliticaCorroboracionTamano, que exige consenso de al menos 2 orígenes distintos.
+    Implementaciones: TheirStackAdapter, PropuestaValorAdapter.
     """
 
     @abstractmethod
-    def descubrir_empresas(self, manifesto: ManifiestoICP) -> list[Empresa]:
+    def estimar_tamano(self, empresa: Empresa) -> EstimacionTamano | None:
         """
-        Dado un ManifiestoICP, retorna Empresas candidatas (estado=DESCUBIERTA).
-        El orquestador ejecuta luego obtener_triggers() sobre cada una.
-        Contrato: nunca lanza excepción hacia el Core. Errores → [].
+        Retorna una EstimacionTamano cruda, o None si no tiene señal suficiente.
+        Silencio válido — no todo origen tiene que opinar sobre toda empresa.
+        Contrato: nunca lanza excepción. Errores de red/API → None con log.
+        """
+        ...
+
+class PuertoClasificadorPropuestaValor(ABC):
+    """
+    v4.1 — Puerto Motor 2: Capa 2 del Negative ICP (análisis semántico profundo).
+    Se invoca SOLO cuando PoliticaExclusionCompetidores retorna
+    REQUIERE_ANALISIS_SEMANTICO. Control de costo: LLM solo donde la Capa 1 no decidió.
+    Implementación: PropuestaValorAdapter.
+    """
+
+    @abstractmethod
+    def clasificar(self, empresa: Empresa) -> CategoriaEmpresa | None:
+        """
+        Retorna la CategoriaEmpresa inferida del texto público de la empresa,
+        o None si el análisis no pudo completarse (scraping/LLM fallaron).
+        Contrato de error: None nunca significa "no es competidor" — es señal
+        de indeterminismo que el orquestador debe tratar como PENDIENTE_REVISIÓN_MANUAL.
         """
         ...
 
 class PuertoAnalizadorICP(ABC):
     """Puerto que el adaptador LLM del Motor 1 debe implementar."""
-
-    @abstractmethod
-    def analizar(self, descripcion_libre: str) -> ManifiestoICP:
-        """
-        Dado texto libre, retorna un ManifiestoICP validado por Pydantic.
-        El ManifiestoICP incluye categoria_empresa y es_gov_facing,
-        que la AdapterRoutingPolicy usa para decidir qué adaptadores activar.
-        Si el LLM no puede estructurar los datos, lanza ValueError con
-        las preguntas de clarificación (máximo 3).
-        """
-        ...
-
+    ...
 
 class PuertoEnriquecedorContactos(ABC):
-    """
-    v3.4 — Puerto Caso C: ENRIQUECIMIENTO (Motor 3).
-    Diseño completo en `tecnico/prospector-m3-m4-design.md` §3.1.
-
-    Semántica respecto a los puertos existentes:
-        - PuertoDescubridorEmpresas   → DISCOVERY:   ¿Qué empresas encajan con el ICP?
-        - PuertoFuenteTriggers        → SCORING:     ¿Tiene señales esta empresa?
-        - PuertoEnriquecedorContactos → ENRICHMENT:  ¿Quién decide y cómo lo contacto
-                                                      de forma verificable?
-
-    Firma stateless (decisión de arquitectura, 14-Jul-2026): `cargos` viaja
-    explícito en cada llamada (normalmente ManifiestoICP.cargos_decisores,
-    resuelto por el orquestador), no se infiere de estado interno. Esto habilita
-    ejecución paralela segura sobre múltiples empresas.
-    """
-
-    @abstractmethod
-    def enriquecer(self, empresa: Empresa, cargos: list[str]) -> list[Decisor]:
-        """
-        Dada una Empresa ya calificada y los cargos objetivo del ICP, retorna
-        los Decisores encontrados con estado_correo y confianza_dato ya
-        resueltos por la cascada Apollo→Hunter (ver §3.2 del documento de diseño).
-
-        Contrato: nunca lanza excepción hacia el Core. Errores de red o de
-        proveedor se capturan internamente y retornan lista vacía con log.
-        Lista vacía es un resultado válido, no un error. Este puerto NO filtra
-        por calidad; el filtrado hacia el Motor 4 lo hace UmbralCalidadDecisor.
-        """
-        ...
+    """v3.4 — Puerto Caso C: ENRIQUECIMIENTO (Motor 3)."""
+    ...
 ```
 
 **Nota arquitectónica sobre AdapterRoutingPolicy:**
@@ -475,6 +544,8 @@ classDiagram
 *AdapterRoutingPolicy documentada en flujos_motor_1_y_2.md.*
 *v3.4 (14-Jul-2026) — Fase 1 del Motor 3 materializada en Core: `PuertoEnriquecedorContactos`*
 *(firma stateless `enriquecer(empresa, cargos)`), `ProspectoCalificado` (contrato de transición*
-*M2→M3) y `UmbralCalidadDecisor` (gate de calidad hacia Motor 4). Diseño completo, cascada*
-*Apollo→Hunter y caveat LATAM en `tecnico/prospector-m3-m4-design.md`. Adaptadores concretos*
-*(Apollo/Hunter) quedan fuera de esta fase. 120 tests verdes.*
+*M2→M3) y `UmbralCalidadDecisor` (gate de calidad hacia Motor 4).*
+*v4.1 (17-Jul-2026) — Blindaje Motor 2: `PAIS_DESCONOCIDO` (centinela fail-closed), `EstimacionTamano`*
+*(ValueObject waterfall de tamaño), `EstadoConsensoTamano`, `ResultadoExclusionCompetidor` extendido a 4 valores*
+*(+PENDIENTE_REVISION_MANUAL), `EstadoValidacionGeografica`. `OrigenTrigger.PROPUESTA_VALOR` agregado.*
+*Puertos nuevos: `PuertoEstimadorTamano`, `PuertoClasificadorPropuestaValor`. 275 tests verdes.*

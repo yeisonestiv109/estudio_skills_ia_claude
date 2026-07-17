@@ -1,77 +1,43 @@
-# Costo por Lead y Modelo de Planes — el Prospector
+# Modelo de Costo por Lead y Precios de APIs
 
-> ✅ **Datos REALES aportados por el fundador (jul-2026)**, verificados sobre facturación de las plataformas. Reemplaza la estimación modelada anterior. Referencia: **TRM $4.000 COP/USD**.
->
-> ⚠️ Nota crítica de estructura de negocio: este modelo asume que **quien paga el stack se queda el margen**. Hoy eso no está definido (ver [`../../estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)). Si operas bajo comisión del 15%, **estos márgenes NO son tuyos**.
+> **Nota Operativa Actual (Fase de Pruebas):** Actualmente, durante el Laboratorio Real (TBBC) y las pruebas de desarrollo, **operaremos en la capa gratuita (Free Tier)** de estas herramientas, rotando cuentas si es necesario para mantener el costo en cero. Sin embargo, para escalar a producción o cotizar a clientes a gran escala, dependemos del siguiente modelo de costos reales de API.
 
-## 1. Stack pagado (solo 3 plataformas)
+## 1. Costos Unitarios y Planes de las APIs Integradas (Actualizado)
 
-| Plataforma | Plan | Costo/mes (USD) | COP (~) | Para qué |
-|------------|------|-----------------|---------|----------|
-| Tavily | Project | $30 | ~$120.000 | Descubrir empresas, noticias/triggers, buscar contactos |
-| Apify | Starter | $29 | ~$116.000 | Scraping LinkedIn (solo modo profundo/empresas) |
-| Hunter | Starter | $49 | ~$196.000 | Correos verificados |
-| **Stack completo (empresas)** | — | **$108** | **~$432.000** | Los 3 servicios |
-| Stack solo personas (sin Apify) | — | $79 | ~$316.000 | Tavily + Hunter |
+*Los precios corresponden al uso programático vía API. Es importante notar que algunas plataformas no separan el costo de la API del costo de la suscripción.*
 
-> Vercel, Supabase, Modal y Groq operan en **capa gratuita** → no suman costo.
+### A. Herramientas de Descubrimiento e Investigación
+*   **Tavily (Search API):**
+    *   *Free Tier:* 1.000 créditos gratis al mes.
+    *   *Pago:* Pay-as-you-go a ~$0.008 por crédito. Búsquedas complejas gastan más créditos.
+*   **Groq (llama-3.3-70b-versatile):**
+    *   *Free Tier:* ~30 request/minuto.
+    *   *Pago:* ~$0.59 por 1 Millón de tokens de entrada / ~$0.79 por 1 Millón de tokens de salida. Al ser tan barato, el costo por empresa analizada sigue siendo de centavos.
 
-## 2. Límites (el cuello de botella lo pone Hunter)
+### B. Herramientas de Enriquecimiento (La Frontera de Costo Real)
+*   **Hunter.io (Verificador y Buscador de Correos):**
+    *   *Free Tier:* 25 búsquedas / 50 verificaciones al mes.
+    *   *Pago:* Plan Starter desde **$34-$49/mes**. El consumo vía API se descuenta del mismo fondo de créditos que la aplicación web (ej. 500 créditos por el plan básico).
+*   **Apollo.io (Base de datos de contactos):**
+    *   *Restricción de API:* Apollo no vende la API "por consumo". **Exige tener un plan de pago (Professional u Organization)** para acceder al uso de la API.
+    *   *Pago:* Plan Professional desde **~$79 por usuario/mes**. El consumo de API consume los créditos mensuales de la cuenta.
 
-| Plataforma | Cupo/mes | Capacidad real |
-|------------|----------|----------------|
-| **Hunter** | 2.000 créditos | **~1.500 contactos verificados → LÍMITE MAESTRO** |
-| Tavily | 4.000 créditos | ~950 empresas profundas · o ~5.000 búsquedas rápidas |
-| Apify | ~$29 de uso | ~1.300 empresas (solo profundo) |
+### C. Herramientas de Salida y Cierre
+*   **Resend (Envío de correos e infraestructura SMTP):**
+    *   *Free Tier:* Volumen básico para pruebas de desarrollo (estricto en límites diarios).
+    *   *Pago:* Plan Pro desde **$20/mes** (incluye hasta 50.000 correos enviados) sin límite diario y acceso total a la REST API + Webhooks de rebote.
 
-**Tope del sistema: ~1.500 contactos verificados/mes.** Tavily y Apify tienen holgura.
+## 2. Cálculo del Costo Fijo y Variable
+*(Este es un esqueleto analítico. Se debe correr un job de 100 empresas con los logs activos para obtener el número de créditos consumidos en la vida real y llenar esta tabla).*
 
-## 3. Costo marginal por lead (lo que consume de cupos ya pagados)
+| Métrica | Valor |
+| :--- | :--- |
+| **Costo Fijo Mensual Piso** (Suscripciones básicas Hunter + Apollo + Resend) | ~$133 - $148 USD / mes |
+| **Consumo Variable por Empresa Analizada** (Tokens Groq + Búsquedas Tavily) | *Pendiente de Job de prueba* |
+| **Tasa de Conversión a Lead Calificado** | *Pendiente de Job de prueba* |
+| **COSTO FINAL POR LEAD CALIFICADO** | *Pendiente de Job de prueba* |
 
-| Tipo de lead | Consumo | Costo | COP (~) |
-|--------------|---------|-------|---------|
-| Contacto rápido (persona) | 0,8 cr Tavily + 1,3 cr Hunter | ~$0,04 | ~$155 |
-| Contacto profundo (empresa) | 1,2 cr Tavily + Apify + 1,3 cr Hunter | ~$0,05 | ~$190 |
-| Empresa completa (~3,5 contactos) | 4,2 cr Tavily + $0,022 Apify + ~4 cr Hunter | ~$0,16 | ~$625 |
-
-**Costo real por lead = stack mensual ÷ total de contactos del mes:**
-- Media capacidad (750 contactos): **~$576 COP/lead**
-- Plena capacidad (1.500 contactos): **~$290 COP/lead**
-
-> Cuanto más se llena el stack, más barato el lead. **1 cliente = caro; 3+ = el costo por lead se desploma.**
-
-## 4. Planes de venta propuestos
-
-| Plan | Modalidad | Precio/mes | Cupo | Costo/lead (tú) |
-|------|-----------|------------|------|------------------|
-| Natural | Persona (rápido) | $149.000 (~$37) | 150 contactos | ~$155 |
-| Negocio | Empresa (profundo) | $390.000 (~$98) | 150 leads | ~$190 |
-| Growth | Empresa (profundo) | $790.000 (~$198) | 450 leads | ~$190 |
-| Business | Empresa (profundo) | $1.900.000 (~$475) | 1.200 leads | ~$190 |
-
-> Referencia de mercado: **Enginy** (plataforma casi idéntica) cobra desde **€799/mes (~$3,4M COP)** → hay amplio margen de precio por debajo del competidor.
-
-## 5. Combinaciones que soporta el stack actual (respetando ~1.500 contactos)
-
-| Combinación | Contactos | Stack | Ingreso/mes | Ganancia | Margen |
-|-------------|-----------|-------|-------------|----------|--------|
-| 8 Naturales (sin Apify) | 1.200 | $316.000 | $1.192.000 | $876.000 | ~73% |
-| 1 Growth + 3 Negocios | 900 | $432.000 | $1.960.000 | $1.528.000 | ~78% |
-| 1 Growth + 4 Negocios + 2 Naturales | 1.350 | $432.000 | $2.648.000 | $2.216.000 | ~84% |
-| 1 Business | 1.200 | $432.000 | $1.900.000 | $1.468.000 | ~77% |
-
-## 6. Conclusiones (del informe real)
-
-1. Solo se pagan 3 plataformas: **$108/mes**. Todo lo demás es gratis.
-2. El tope es **Hunter (~1.500 contactos verificados/mes)**.
-3. Cada lead cuesta **~$155–190 COP marginal**; diluido baja a **~$290 COP** a plena capacidad.
-4. El stack sostiene **~8 clientes pequeños o 3–4 Growth**, con margen **73–84%**.
-5. Persona natural no usa Apify → arranca con stack de solo **$79/mes**.
-6. **Palanca de margen:** enriquecer solo al **decisor principal** por empresa (1 contacto en vez de 3–4) **triplica** la capacidad de Hunter.
-
-## 7. ⚠️ Lectura crítica del coach (lo que el informe no dice)
-
-- **El límite es comercial, no técnico.** El sistema soporta ~$2,6M COP/mes de ingreso con el stack mínimo. El reto no es capacidad: es **conseguir y retener esos 3–8 clientes**.
-- **El margen depende de QUIÉN paga el stack y QUIÉN cobra la venta.** Con margen 73–84% *para el dueño del negocio*. Bajo un esquema de **comisión del 15%**, tu parte sería una fracción pequeña (ver análisis en [`situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md) §3). No confundir el margen del negocio con tu ingreso.
-- **Cuidado con el "costo cero" de Groq/Supabase/Modal:** es real a bajo volumen, pero si escalas, esas capas gratuitas tienen tope y empezarán a costar. Re-medir al crecer.
-- **Hunter como cuello de botella = riesgo de dependencia.** Si Hunter sube precios o cambia cupos, tu economía unitaria se mueve. Tener plan B de verificación de correos.
+## 3. Estrategia de Mitigación de Costos
+La arquitectura está diseñada con una **política de gasto defensivo**:
+1. El despachador dinámico apaga fuentes innecesarias.
+2. Apollo y Hunter (el costo fijo más alto) *solo* se invocan si los sensores de bajo costo detectan señales fuertes de necesidad comercial. Cero señales = Cero consultas de enriquecimiento.

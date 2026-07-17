@@ -1,6 +1,6 @@
 # 00 · Visión y Enfoque
 
-Propósito de este repositorio: es la **fuente de la verdad** del proyecto de vida en negocios y emprendimiento tecnológico de Yeison. Consolida mentalidad, principios de valor, estrategia de ventas, conocimiento técnico y planes de ejecución para que tanto el fundador como cualquier agente de IA puedan operar con el mismo contexto.
+Propósito de este repositorio: es la **fuente de la verdad** del proyecto de vida en negocios y emprendimiento tecnológico de Yeison y Yulieth Gabriela Jaramillo. Consolida mentalidad, principios de valor, estrategia de ventas, conocimiento técnico y planes de ejecución para que tanto los fundadores como cualquier agente de IA puedan operar con el mismo contexto.
 
 ## El planteamiento en una frase
 
@@ -8,10 +8,10 @@ Usar la IA como **vehículo** (no como producto) para resolver problemas de alto
 
 ## Enfoque de dos velocidades
 
-| Vía | Objetivo | Horizonte | Riesgo |
-|-----|----------|-----------|--------|
-| **A — Freelance / servicios** | Generar caja, experiencia y portafolio reales | Corto plazo (0–6 meses) | Bajo (solo tiempo) |
-| **B — Proyectos B2B / producto** | Margen alto, escalable, activos propios (ej. el Prospector) | Medio-largo plazo (6–24 meses) | Medio |
+| Vía                              | Objetivo                                                    | Horizonte                      | Riesgo             |
+| -------------------------------- | ----------------------------------------------------------- | ------------------------------ | ------------------ |
+| **A — Freelance / servicios**    | Generar caja, experiencia y portafolio reales               | Corto plazo (0–6 meses)        | Bajo (solo tiempo) |
+| **B — Proyectos B2B / producto** | Margen alto, escalable, activos propios (ej. el Prospector) | Medio-largo plazo (6–24 meses) | Medio              |
 
 **La regla:** la Vía A paga las cuentas y compra experiencia; la Vía B construye el patrimonio. Nunca abandonar B por estar "ocupado" en A.
 

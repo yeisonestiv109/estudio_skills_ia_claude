@@ -6,15 +6,12 @@
 *   **Autoría:** Yeison Estiven Delgado Ordoñez · Fuente de la Verdad
 ---
 
-> **Naturaleza del documento.** Especificación de diseño técnico (no código de producción) para la
-> fundación del nuevo Prospector. Build **greenfield / clean-room**: no reutiliza ni referencia
-> ningún sistema anterior. El Core del dominio es **agnóstico de sector**; el caso de uso base para
-> validar el comportamiento es la empresa **TBBC** (sector tecnología, Colombia), pero ningún sector
-> vive dentro del Core.
+> 🔴 **ATENCIÓN: DOCUMENTO DE DISEÑO CONCEPTUAL (SUPERADO)**
+> Este documento fue redactado el 6-Jul como sandbox mental. El vocabulario de puertos (`IntentParserPort`, `WaterfallEnrichmentAdapter`, etc.) **fue descartado** en favor del código real documentado en `modelos_dominio_core.md` y `flujos_motor_1_y_2.md` (ej. `PuertoAnalizadorICP`, `ApolloClient`). 
+> **NO utilices este documento para referenciar clases o adaptadores reales.** Úsalo solo para entender los conceptos de "Frontera de Costo" y la filosofía Hexagonal.
 >
-> Alineado con `docs/tecnico/arquitectura-y-paradigmas.md` (hexagonal + 12-factor agents + cost-aware)
-> y con las reglas de negocio de `estrategia/reglas-del-juego.md` (3 reglas de oro, costo por lead
-> calificado vigilado, Habeas Data).
+> Alineado conceptualmente con `docs/tecnico/arquitectura-y-paradigmas.md` (hexagonal + 12-factor agents + cost-aware)
+> y con las reglas de negocio de `estrategia/reglas-del-juego.md`.
 
 ---
 
@@ -368,8 +365,7 @@ Un CTO/VP nuevo reestructura presupuesto y proveedores en sus primeros 90 días:
   `TriggerType.LEADERSHIP_CHANGE`.
 
 ### TIER 3 — Señal Technográfica (stack / ineficiencia)
-- **Fuentes:** TheirStack / BuiltWith (histórico, amplia cobertura) / alternativas Wappalyzer vía
-  actor de Apify.
+- **Fuentes:** TheirStack / BuiltWith (histórico, amplia cobertura) / alternativas Wappalyzer.
 - **Lógica:** stack legacy/desactualizado, migración cloud en curso, o tecnologías que TBBC integra →
   `TriggerType.TECH_SIGNAL`. (Opcional: monitoreo de status/uptime público como señal de fragilidad.)
 
@@ -458,6 +454,104 @@ estructural: nueva funcionalidad por extensión, no por modificación.
 - **Riesgo de dependencia de proveedor:** toda fuente vive tras un puerto; ningún proveedor está
   cableado al Core (mitiga cambios de pricing/roadmap de terceros).
 - **Costo por lead calificado:** métrica unitaria de rentabilidad, vigilada vía telemetría (§7.4).
+
+---
+
+## 11. Correcciones Post-Piloto TBBC (17-Jul-2026) — 3 Bugs en Producción
+
+> Esta sección documenta los fallos encontrados en la corrida real del sandbox con batch=15, su diagnóstico y la solución de arquitectura aplicada. Las correcciones son **código real en producción**, no propuestas.
+
+### 11.1 Contexto: Caso Parcero/UK
+
+La corrida TBBC con batch=15 calificó a "Parcero" (parcero.digital) como lead válido. Auditoría manual del fundador reveló:
+- Es una agencia de transformación digital que construye apps y sitios para terceros → **competidor directo del cliente TBBC**.
+- HQ en 12 Constance Street, Londres, UK → **fuera de la geografía del ICP (Colombia)**.
+- Las alertas de Google capturaron noticias de fútbol (en Colombia, "parcero" = amigo en lenguaje coloquial) → **falso positivo por ruido semántico**.
+
+Los tres fallos eran independientes y simultáneos, lo que multiplicó el riesgo.
+
+---
+
+### 11.2 Falla 1 — Fail-Open en PropuestaValorAdapter (Negative ICP)
+
+**Causa raíz:** cuando `_leer_texto_homepage()` fallaba (caso típico: SPA en JavaScript donde BeautifulSoup solo ve el `<div id="root">` vacío sin ejecutar JavaScript), `_analizar_sin_cache()` retornaba `None`. El orquestador interpretaba `None` como "sin evidencia de competencia" → `PERMITIDO` automático (fail-open). Parcero.digital era una SPA que devolvía cuerpo vacío al scraper.
+
+**Falla adicional dentro de la misma:** sin `pais_hq` en el JSON del LLM, la validación geográfica era imposible aunque el scraping hubiera funcionado.
+
+**Fix aplicado:**
+
+1. **Mejora del scraper:** se extrae `<title>` y `<meta name="description">` **antes** de `decompose()` de scripts. Si el body visible tiene <100 caracteres (umbral `_MIN_CARACTERES_TEXTO_SUFICIENTE`), se antepone el texto de meta tags como fallback. Parcero.digital tiene `<title>Parcero | Digital Agency</title>` y `<meta description="We build apps and sites for clients worldwide. HQ London, UK.">` — información suficiente para que el LLM la clasifique correctamente.
+
+2. **Fail-closed en el orquestador:** el orquestador usa ahora `adapter_pv.es_vendor_it(empresa)` en lugar de `adapter_pv.clasificar(empresa)`. Esto permite distinguir:
+   - `True` → EXCLUIDO_DURO
+   - `False` → continúa pipeline
+   - `None` → **PENDIENTE_REVISIÓN_MANUAL** (fail-closed) — nunca PERMITIDO
+
+3. **Campo `pais_hq` en el prompt del LLM:** el `_SYSTEM_PROMPT` se actualizó para pedir tres campos en lugar de dos. `_RespuestaClasificacion` (BaseModel), `_AnalisisPropuestaValor` (dataclass) y el método `pais_hq()` público se actualizaron acordemente. `_normalizar_pais_hq()` valida que el valor sea exactamente 2 letras alfabéticas (código ISO Alpha-2) antes de aceptarlo — defensa contra alucinación del LLM (ej. "United Kingdom" en lugar de "GB").
+
+---
+
+### 11.3 Falla 2 — Default Silencioso de País en TheirStackAdapter
+
+**Causa raíz:** línea en `_parsear_empresas_descubiertas()`:
+```python
+# ANTES (bug):
+pais = empresa_data.get("country_code", "CO") or "CO"
+```
+Cuando TheirStack no reportaba `country_code` (caso común para empresas con presencia remota en LATAM pero HQ en otro continente), el adaptador asignaba Colombia silenciosamente. Esto violaba el principio "un dato ausente nunca asume el valor del ICP del cliente".
+
+**Fix aplicado:**
+```python
+# DESPUÉS (correcto):
+pais_raw = empresa_data.get("country_code")
+pais = pais_raw.upper()[:2] if pais_raw else PAIS_DESCONOCIDO
+```
+
+Se agregó la constante `PAIS_DESCONOCIDO = "XX"` al Core (`models.py`) — código ISO reservado, no colisiona con ningún país real — y se creó `PoliticaValidacionGeografica` en `policies.py`:
+
+```python
+class PoliticaValidacionGeografica:
+    def evaluar(self, pais_candidato: str | None, geografia_icp: str | None) -> EstadoValidacionGeografica:
+        # 1. ICP sin restricción geográfica → PERMITIDO
+        # 2. pais_candidato es None / "" / PAIS_DESCONOCIDO → INDETERMINADO (fail-closed)
+        # 3. Ambos coinciden (insensible a mayúsculas) → PERMITIDO
+        # 4. Distintos y conocidos → EXCLUIDO
+```
+
+El waterfall de resolución de país en el orquestador es:
+1. `Empresa.pais` (ya corregido por TheirStack, costo cero).
+2. Si es `PAIS_DESCONOCIDO` → `PropuestaValorAdapter.pais_hq()` (ya cacheado de la Capa 2 del Negative ICP).
+
+---
+
+### 11.4 Falla 3 — Falso Positivo en Google Alerts por Nombre Genérico
+
+**Causa raíz:** `_empresa_mencionada()` hace substring match. "Parcero" matchea en textos como "El parcero de Falcao marcó el gol" (noticia de fútbol). Las comillas exactas en el query RSS reducen el ruido tokenizado pero no el ruido semántico.
+
+**Fix aplicado:**
+
+**Filtro de co-ocurrencia semántica:** una entrada RSS solo se acepta como trigger si, además del match de nombre/dominio, el texto contiene al menos una palabra del glosario de negocio (`empresa`, `software`, `agencia`, `CEO`, `startup`, `inversión`, `funding`, `ronda`, `clientes`, `plataforma`, etc.). Este filtro **solo** aplica a matches por nombre de empresa — los matches por `palabras_clave_extra` del ICP ya son términos específicos de negocio y no necesitan verificación adicional.
+
+**Techo de confianza para nombres cortos:** si `len(empresa.nombre.strip()) <= 8` (heurística de nombre genérico/corto), el nivel de confianza del trigger se capea a `BAJA` independientemente de las keywords detectadas. Esto fuerza que `TriggerAggregationPolicy` requiera corroboración de otra fuente antes de calificar el lead.
+
+---
+
+### 11.5 Resultado: Corrida de Validación Post-Blindaje (batch=15, 17-Jul-2026)
+
+| Categoría | Cantidad | Detalle |
+|---|---|---|
+| Empresas descubiertas | 13 | TheirStack discovery |
+| Excluidas por competencia | 3 | Periferia IT Group, Parcero, Hitss Colombia — LLM confirmó es_vendor_it=True |
+| Pendientes revisión manual | 2 | Itaú, Keralty — SPAs con JS que resistieron al fallback de meta tags |
+| Descartadas por tamaño ENTERPRISE | 4 | Altipal, Seguros Bolívar, Berlitz, PwC |
+| **Califican para Motor 3** | **2** | **Cielito (cielito.co), Colsubsidio** |
+| Tasa de calificación bruta | 15.4% | Sobre empresas descubiertas |
+
+**Validación del fundador sobre los 2 leads calificados:**
+- **Colsubsidio:** división específica buscando desarrolladores. Probable construcción de plataforma interna o modernización de sistemas legacy. **Lead válido — avanza a Motor 3 con verificación previa.**
+- **Cielito (cielito.co):** TheirStack encontró 3+ vacantes de Python/AWS/Kubernetes en ese dominio. No es la marca de alimentos "Cielito Lindo". Puede ser startup tech o empresa no-tecnológica armando equipo in-house — ambos perfiles son el ICP perfecto de TBBC. **Requiere verificación manual antes de enriquecer.**
+
+**Suite de tests post-blindaje:** 275 tests pasando, 28 nuevos (política geográfica, `pais_hq`, fallback de meta tags, co-ocurrencia semántica, enum extendido). 0 regresiones. `ruff` limpio en todos los archivos tocados.
 
 ---
 

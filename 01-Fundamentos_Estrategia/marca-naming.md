@@ -1,6 +1,6 @@
 # Marca — Naming del Emprendimiento
 
-> Documento de trabajo para definir el nombre de la marca (fundadores: Yeison + Yulieth). Referencia de estilo del fundador: nombres tipo Apple, Meta, Google, Gemini, Cisco, Amazon — cortos, pegajosos, prestigiosos, minimalistas. Posicionamiento a comunicar: **IA + visión de negocio** ("traducir la IA en resultados concretos").
+> Documento de trabajo para definir el nombre de la marca (fundadores: Yeison + Yulieth Gabriela). Referencia de estilo del fundador: nombres tipo Apple, Meta, Google, Gemini, Cisco, Amazon — cortos, pegajosos, prestigiosos, minimalistas. Posicionamiento a comunicar: **IA + visión de negocio** ("traducir la IA en resultados concretos").
 
 ## Criterios de un buen nombre (checklist)
 

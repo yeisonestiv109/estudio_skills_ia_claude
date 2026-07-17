@@ -57,7 +57,7 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 
 ### Cliente / oportunidad B2B activa
 - `proyectos/catalina-prospector/` — **Catalina Rúa, clienta potencial del Prospector** para su propio emprendimiento. Playbooks de Módulo 4 y 5 afinados. Ver [`README`](../../proyectos/catalina-prospector/README.md).
-- ⚠️ El proyecto SEO de **TBBC lo maneja el fundador aparte**, fuera de este repo. No mezclar.
+
 
 ## Los 5 Módulos del Vendedor Híbrido (marco oficial de ventas)
 

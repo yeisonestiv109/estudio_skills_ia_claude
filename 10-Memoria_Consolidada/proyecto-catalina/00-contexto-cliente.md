@@ -1,48 +1,55 @@
-# 00 · Contexto de la Clienta — Catalina Rúa
+# 00 · Contexto de la Clienta — Catalina Rúa y Javier Suarez (TBBC)
 
 > Disciplina del proyecto: **separar lo que sabemos de lo que suponemos.** No inventar datos.
 
-## Lo que sabemos (confirmado por el fundador)
+## 1. El Origen de la Relación
 
-- **Catalina Rúa** es una **clienta potencial** interesada en trabajar con nosotros.
-- Su interés inicial es el **Prospector de leads** (nuestro producto propio, Vía B).
-- Catalina **tiene otro emprendimiento**, y es por/para ese emprendimiento que le interesa el Prospector.
-- **Contacto propio del fundador:** se conocieron en un **evento de emprendimiento en Popayán** y desde entonces están en contacto. **No es cliente de la contratante** → sin restricción de no-competencia (cláusula 9ª N/A).
-- **Ya hubo una primera reunión** y se corrió una **prueba genérica** del Prospector (no calibrada a su negocio). El ICP específico de Catalina **quedó pendiente**.
+- **Catalina Rúa** (Chief Growth Officer) y **Luis Javier Suarez Meza** son los directivos clave.
+- **Contacto propio del fundador:** se conocieron en un evento de emprendimiento en Popayán. Inicialmente se les propuso mejorar la web de TBBC (propuesta ya archivada y descartada).
+- En reuniones posteriores, se les presentó **El Prospector B2B**, el cual generó un gran interés y detonó la propuesta de alianza estratégica actual.
 
-## Plan antes de la próxima reunión (definido 4-jul-2026)
+## 2. La Propuesta de Alianza Estratégica (Acuerdo Actual)
 
-Antes de volver a reunirnos con Catalina, hay que **afinar el Prospector con un caso de prueba real** para llegar con evidencia, no con una demo genérica:
+La alianza está estructurada en fases y frentes paralelos, actuando como un "laboratorio real" para el software.
 
-- [ ] **Correr un job de prueba usando datos públicos de TBBC** (lo que encontremos en internet) como sujeto de prueba/benchmark para calibrar triggers, calidad de decisor y copy.
-- [ ] Con ese job, **llenar la plantilla de costo por lead** ([`../../docs/tecnico/costo-por-lead.md`](../../docs/tecnico/costo-por-lead.md) §4) → tener el número real.
-- [ ] Ajustar el *pain framework* y el geo-fit según lo que falle en la prueba.
-- [ ] Llegar a la reunión con Catalina con: una **demo calibrada** + un **rango de costo/precio de piloto** defendible.
+### Fase 1: El Laboratorio de Pruebas (TBBC)
+- **Objetivo:** Uso del Prospector en un entorno real durante 15 a 30 días máximos.
+- **Mecánica:** El Prospector generará prospectos calificados y el equipo comercial de TBBC será quien los contacte e intente cerrar las oportunidades.
+- **Feedback Loop:** Existirá una retroalimentación constante para que los desarrolladores ajusten y robustezcan la herramienta.
+- **Compensación:** A cambio de esta prueba, si se generan ventas a partir de los prospectos, se pagará a los desarrolladores una comisión o porcentaje del negocio.
 
-> 📌 Aquí TBBC se usa **solo como sujeto de prueba con datos públicos** para pulir el producto. El proyecto SEO de TBBC lo maneja el fundador aparte; no se mezclan.
+### Fase 2: Segundo Frente (Expansión)
+- **Condición:** Supeditado al éxito y buena ejecución del laboratorio inicial.
+- **Nuevo alcance:** Se implementará tecnología (automatización de WhatsApp y chats) para una **segunda empresa** que ellos manejan, la cual ya cuenta con un alto volumen de clientes potenciales (no necesitan prospección, necesitan gestión y atención).
 
-## Lo que NO sabemos aún (pendiente de confirmar — preguntar)
+### Fase 3: El "Trueque" (Asesoría por Tecnología)
+- **Intercambio de valor:** A cambio de que los desarrolladores implementen la tecnología y presten el apoyo técnico, los directivos (Catalina/Javier) entregarán **asesoría y metodología de negocio** para ayudar a la agencia de IA a escalar su propia facturación de $0 a $10k.
 
-Estos huecos son los que impiden un diagnóstico M4 real. **Hay que llenarlos antes de cotizar o prometer.**
+## 3. Acuerdos Legales y Siguientes Pasos
 
-- [ ] **¿A qué se dedica el emprendimiento de Catalina?** (industria, producto/servicio) → define si encaja con el nicho del Prospector (hoy optimizado a logística / ciencias de la vida).
-- [ ] **¿Quién es su cliente ideal (ICP)?** ¿A quién querría prospectar? ¿B2B? ¿en qué país/región?
-- [ ] **¿Cómo consigue clientes hoy?** (para dimensionar el dolor: ¿prospección manual? ¿referidos? ¿ads?)
-- [ ] **¿Cuánto tiempo/dinero le cuesta hoy** conseguir un cliente nuevo? (base para el ROI)
-- [ ] **¿Tiene equipo comercial** que reciba y contacte los leads? (área de *delivery*: ¿puede absorber el resultado?)
-- [ ] **¿Presupuesto y autoridad** (BANT)? ¿Ella decide o hay un socio?
-- [ ] **¿Volumen esperado** de leads/mes? (impacta el costo por lead y el pricing)
-- [ ] **¿País de los prospectos?** (clave para Habeas Data / legalidad del cold email)
+- **Formalidad y Propiedad Intelectual (IP):** Se firmará un documento sencillo con fechas de inicio y fin. Quedará por escrito explícitamente que **la plataforma (El Prospector) y su IP pertenecen 100% a los desarrolladores**.
+- **Gestión de Socios:** Se comunicará esta iniciativa a los demás socios para asegurar alineación sobre el esquema de comisiones, entendiendo que el ciclo de venta tecnológica puede tardar hasta 3 meses.
+- **Cronograma Inmediato:**
+  - Los clientes estarán de vacaciones hasta el miércoles de la próxima semana.
+  - Se fijó una reunión entre miércoles y jueves para firmar el documento y arrancar oficialmente.
+  - *Agilidad:* Si el frente de TBBC se retrasa, existe el acuerdo de iniciar con el segundo frente (WhatsApp/chats) para no perder velocidad.
+- **Canal:** Comunicación centralizada por grupo de WhatsApp.
 
-## Por qué esto importa (encaje de producto)
+---
 
-El Prospector hoy está afinado para **logística y ciencias de la vida** (triggers regulatorios tipo INVIMA, cadena de frío, expansión). Si el emprendimiento de Catalina está en otro sector, hay que evaluar:
+## 4. Perfil del Cliente Ideal (ICP) Confirmado para TBBC (Fase 1)
 
-1. Si el motor de *triggers* funciona bien en su industria (o requiere ajuste del "pain framework").
-2. Si su ICP es alcanzable con las fuentes actuales (Tavily/Apify/Apollo/Hunter) y en su geografía.
+Este es el ICP base con el que el Prospector deberá ejecutar la Fase 1:
 
-> ⚠️ **Riesgo a nombrar con honestidad:** vender el Prospector fuera de su nicho probado puede degradar la calidad del lead (falsos positivos) y quemar la relación. Antes de cerrar, validar encaje con un **piloto pequeño y medido**, no con una promesa.
-
-## Legalidad (recordatorio)
-
-Si sus prospectos son personas/empresas en Colombia, aplica **Habeas Data (Ley 1581/2012)**: consentimiento y buenas prácticas de cold email. Documentar base legal por campaña. Ver [validación §7](../../docs/validacion/validacion-fuentes.md).
+```json
+{
+  "mi_empresa": "TBBC",
+  "sector": "tecnologia",
+  "pais": "COLOMBIA",
+  "mercado_objetivo": "",
+  "tamano_empresa": "51-200",
+  "cargo_decision": "CTO, VP DE VENTAS, VP DE OPERACIONES",
+  "dolor_cliente": "NECESITAN ABASTO EN PROYECTOS DE TECNOLOGIA, PIERDEN TIEMPO, RECURSOS, RETRASOS EN LAS ENTREGAS, ENCONTRAR TALENTO ADECUADO, SISTEMAS MAL ESTRUCTURADOS, TRABAJO LENTO",
+  "propuesta_valor": "ACOMPAÑAMOS DESDE LA PREVENTA TECNICA, EL DISEÑO LA IMPLEMENTACION Y LA OPERACION PARA APOYAR EN LA EJECUCION DE TECNOLOGIA, POR MEDIO DE INTELIGENCIA ARTIFICIAL, ARQUITECTURA BACKEND E INTEGRACIONES EN NUBE"
+}
+```

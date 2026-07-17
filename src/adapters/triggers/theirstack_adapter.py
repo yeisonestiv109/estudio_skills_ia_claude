@@ -13,15 +13,21 @@ from datetime import datetime, timezone
 import requests
 
 from src.core.domain.models import (
+    PAIS_DESCONOCIDO,
     Empresa,
     EstadoEmpresa,
+    EstimacionTamano,
     ManifiestoICP,
     NivelConfianza,
     OrigenTrigger,
     TamanoEmpresa,
     Trigger,
 )
-from src.core.ports.interfaces import PuertoDescubridorEmpresas, PuertoFuenteTriggers
+from src.core.ports.interfaces import (
+    PuertoDescubridorEmpresas,
+    PuertoEstimadorTamano,
+    PuertoFuenteTriggers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +80,15 @@ def _inferir_tamano(employee_count: int | None) -> TamanoEmpresa:
     return TamanoEmpresa.ENTERPRISE
 
 
-class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
+class TheirStackAdapter(
+    PuertoFuenteTriggers, PuertoDescubridorEmpresas, PuertoEstimadorTamano
+):
     """
-    Adaptador Motor 2 dual — TheirStack.
+    Adaptador Motor 2 triple — TheirStack.
 
-    Implementa PuertoFuenteTriggers (Caso A: Scoring) y
-    PuertoDescubridorEmpresas (Caso B: Discovery).
+    Implementa PuertoFuenteTriggers (Caso A: Scoring), PuertoDescubridorEmpresas
+    (Caso B: Discovery) y PuertoEstimadorTamano (waterfall de tamaño — alimenta
+    PoliticaCorroboracionTamano junto con otros orígenes independientes).
 
     Args:
         api_key: Clave de API de TheirStack. Si None, lee de THEIRSTACK_API_KEY.
@@ -259,7 +268,14 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
             empresas_vistas.add(dominio)
 
             tamano = _inferir_tamano(empresa_data.get("employee_count"))
-            pais = empresa_data.get("country_code", "CO") or "CO"
+            # BUG CORREGIDO (caso Parcero/UK): antes se asumía "CO" cuando
+            # TheirStack no reportaba country_code, disfrazando de local a
+            # empresas extranjeras. Un dato ausente NUNCA debe traducirse en
+            # "es Colombia" — se usa el centinela PAIS_DESCONOCIDO explícito,
+            # que PoliticaValidacionGeografica trata como no verificable
+            # (no lo aprueba automáticamente, no lo descarta automáticamente).
+            pais_raw = empresa_data.get("country_code")
+            pais = pais_raw.upper()[:2] if pais_raw else PAIS_DESCONOCIDO
 
             empresa = Empresa(
                 nombre=nombre,
@@ -277,6 +293,59 @@ class TheirStackAdapter(PuertoFuenteTriggers, PuertoDescubridorEmpresas):
             manifesto.categoria_empresa.value,
         )
         return empresas
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Caso C: WATERFALL DE TAMAÑO — PuertoEstimadorTamano
+    # ──────────────────────────────────────────────────────────────────────
+    def estimar_tamano(self, empresa: Empresa) -> EstimacionTamano | None:
+        """
+        Estima el tamaño de la Empresa a partir del campo employee_count que
+        TheirStack asocia a la vacante más reciente encontrada para su dominio.
+        Implementa PuertoEstimadorTamano.estimar_tamano().
+
+        Esta es UNA sola opinión (un origen). No se usa de forma aislada: la
+        PoliticaCorroboracionTamano exige que al menos 2 orígenes distintos
+        coincidan antes de aceptar el TamanoEmpresa como válido.
+
+        Retorna None si no hay API key, no hay vacantes, o el campo
+        employee_count no viene en la respuesta (silencio válido — no forzar
+        una opinión sin dato real).
+        """
+        if not self._api_key:
+            return None
+
+        payload = {
+            "limit": 1,
+            "order_by": [{"desc": True, "field": "date_posted"}],
+            "company_domain_or": [empresa.dominio],
+        }
+        data = self._llamar_api(
+            payload, contexto=f"estimacion_tamano de '{empresa.nombre}'"
+        )
+        if data is None:
+            return None
+
+        vacantes = data.get("data", [])
+        if not vacantes:
+            return None
+
+        empresa_data = vacantes[0].get("company_object", {}) or {}
+        employee_count = empresa_data.get("employee_count")
+        if not employee_count:
+            # Sin dato real de headcount: no forzar SME por defecto aquí.
+            # _inferir_tamano() sí usa SME por defecto para Discovery (donde
+            # una Empresa DEBE nacer con algún tamaño), pero el waterfall de
+            # corroboración necesita silencio real, no un relleno.
+            return None
+
+        tamano = _inferir_tamano(employee_count)
+        logger.info(
+            "TheirStack ESTIMACION_TAMANO: '%s' → %s (employee_count=%s)",
+            empresa.nombre,
+            tamano.value,
+            employee_count,
+        )
+        return EstimacionTamano(origen=OrigenTrigger.THEIRSTACK, tamano_estimado=tamano)
 
     # ──────────────────────────────────────────────────────────────────────
     # Método HTTP compartido — lógica de red centralizada

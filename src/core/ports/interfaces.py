@@ -15,9 +15,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.core.domain.models import (
+    CategoriaEmpresa,
     ContextoRAG,
     Decisor,
     Empresa,
+    EstimacionTamano,
     ManifiestoICP,
     Mensaje,
     ResultadoEnvio,
@@ -73,6 +75,64 @@ class PuertoDescubridorEmpresas(ABC):
 
         Contrato: nunca lanza excepción hacia el Core. Los errores de red
         se capturan internamente y retornan lista vacía con log.
+        """
+        ...
+
+
+class PuertoEstimadorTamano(ABC):
+    """
+    Puerto Motor 2 — Estimación cruda de tamaño de empresa (waterfall de tamaño).
+
+    Puerto SECUNDARIO y OPCIONAL: no todos los adaptadores del Motor 2 pueden
+    estimar tamaño (ej. GoogleAlertsRSSAdapter no tiene señal firmográfica).
+    Los que sí pueden (TheirStackAdapter, WappalyzerHeadlessAdapter, etc.)
+    implementan este puerto ADEMÁS de PuertoFuenteTriggers — mismo patrón dual
+    que ya usa TheirStackAdapter con PuertoDescubridorEmpresas (ISP — SOLID).
+
+    Alimenta a PoliticaCorroboracionTamano, que exige consenso de al menos 2
+    orígenes distintos antes de aceptar un TamanoEmpresa como válido.
+    """
+
+    @abstractmethod
+    def estimar_tamano(self, empresa: Empresa) -> EstimacionTamano | None:
+        """
+        Retorna una EstimacionTamano cruda para la Empresa dada, o None si
+        este origen no tiene señal suficiente para pronunciarse (silencio
+        válido — no todo origen tiene que opinar sobre toda empresa).
+
+        Contrato de error: nunca lanza excepción hacia el Core. Errores de
+        red/API → None con log interno (idéntico al resto de puertos).
+        """
+        ...
+
+
+class PuertoClasificadorPropuestaValor(ABC):
+    """
+    Puerto Motor 2 — Capa 2 del Negative ICP (análisis semántico profundo).
+
+    Se invoca SOLO cuando PoliticaExclusionCompetidores.evaluar() retorna
+    ResultadoExclusionCompetidor.REQUIERE_ANALISIS_SEMANTICO — es decir,
+    únicamente sobre el subconjunto ambiguo de candidatos, no sobre el 100%
+    del flujo (control de costo: LLM solo donde la Capa 1, gratis y pura, no
+    pudo decidir).
+
+    Lee el texto público de la empresa candidata (ej. "about us"/homepage) y
+    usa un LLM para inferir si su lenguaje corresponde a un "vendor" (vende
+    tecnología/servicios a terceros) o un "buyer" (usa tecnología para su
+    propio negocio) — la misma heurística semántica documentada en la
+    investigación de mercado (ver prospector-m3-m4-design.md).
+    """
+
+    @abstractmethod
+    def clasificar(self, empresa: Empresa) -> CategoriaEmpresa | None:
+        """
+        Retorna la CategoriaEmpresa inferida a partir del texto público de la
+        empresa candidata, o None si no hay suficiente texto/señal para
+        clasificar con confianza.
+
+        Contrato de error: nunca lanza excepción hacia el Core. Fallo de red,
+        de scraping o del LLM → None con log interno. El orquestador decide
+        qué hacer con un None (ej. enviar a cola manual, no descartar de plano).
         """
         ...
 

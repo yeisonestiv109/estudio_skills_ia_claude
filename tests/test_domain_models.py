@@ -20,32 +20,42 @@ from src.core.domain.models import (
     ContextoRAG,
     Decisor,
     Empresa,
+    EstadoConsensoTamano,
     EstadoCorreo,
     EstadoMensaje,
+    EstadoValidacionGeografica,
+    EstimacionTamano,
     ManifiestoICP,
     Mensaje,
     NivelConfianza,
     OrigenTrigger,
+    PAIS_DESCONOCIDO,
     PaqueteOutbound,
     ProspectoCalificado,
     ResultadoEnvio,
+    ResultadoExclusionCompetidor,
     Seniority,
     TamanoEmpresa,
     Trigger,
 )
 from src.core.domain.policies import (
     AdapterRoutingPolicy,
+    PoliticaCorroboracionTamano,
+    PoliticaExclusionCompetidores,
     PoliticaFronteraLegal,
     PoliticaFronterasEnvio,
     PoliticaRegistroRebote,
     PoliticaSeleccionMejorDecisor,
+    PoliticaValidacionGeografica,
     TriggerAggregationPolicy,
     UmbralCalidadDecisor,
 )
 from src.core.ports.interfaces import (
+    PuertoClasificadorPropuestaValor,
     PuertoContextoRAG,
     PuertoEnriquecedorContactos,
     PuertoEnvioCorreo,
+    PuertoEstimadorTamano,
     PuertoRedactorOutbound,
 )
 
@@ -746,3 +756,289 @@ class TestPoliticaRegistroRebote:
         d = _decisor(estado_correo=EstadoCorreo.INFERIDO, confianza=0.70)
         actualizado = self.policy.aplicar(d, ResultadoEnvio.DIFERIDO)
         assert actualizado.estado_correo == EstadoCorreo.INFERIDO
+
+
+# ===========================================================================
+# MOTOR 2 (Afinamiento) — PoliticaCorroboracionTamano, PoliticaExclusionCompetidores
+# Diseño: investigación "Waterfall Enrichment" / "Negative ICP"
+# ===========================================================================
+
+
+def _estimacion(
+    origen: OrigenTrigger, tamano: TamanoEmpresa, confianza: float = 1.0
+) -> EstimacionTamano:
+    return EstimacionTamano(origen=origen, tamano_estimado=tamano, confianza=confianza)
+
+
+# ---------------------------------------------------------------------------
+# Bloque 16: EstimacionTamano — ValueObject
+# ---------------------------------------------------------------------------
+class TestEstimacionTamano:
+    def test_construccion_valida_con_confianza_default(self):
+        est = EstimacionTamano(
+            origen=OrigenTrigger.THEIRSTACK, tamano_estimado=TamanoEmpresa.SME
+        )
+        assert est.confianza == 1.0
+
+    def test_es_inmutable(self):
+        est = _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME)
+        with pytest.raises(ValidationError):
+            est.tamano_estimado = TamanoEmpresa.ENTERPRISE  # type: ignore[misc]
+
+    def test_confianza_fuera_de_rango_rechazada(self):
+        with pytest.raises(ValidationError):
+            EstimacionTamano(
+                origen=OrigenTrigger.THEIRSTACK,
+                tamano_estimado=TamanoEmpresa.SME,
+                confianza=1.5,
+            )
+
+
+# ---------------------------------------------------------------------------
+# Bloque 17: PoliticaCorroboracionTamano — waterfall de tamaño
+# ---------------------------------------------------------------------------
+class TestPoliticaCorroboracionTamano:
+    policy = PoliticaCorroboracionTamano()
+
+    def test_lista_vacia_retorna_sin_datos(self):
+        estado, tamano = self.policy.corroborar([])
+        assert estado == EstadoConsensoTamano.SIN_DATOS
+        assert tamano is None
+
+    def test_un_solo_origen_retorna_sin_consenso(self):
+        """Un solo origen, sin importar su confianza, no basta (mínimo 2 distintos)."""
+        estimaciones = [_estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME)]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.SIN_CONSENSO
+        assert tamano is None
+
+    def test_dos_origenes_distintos_mismo_tamano_da_consenso(self):
+        estimaciones = [
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME),
+            _estimacion(OrigenTrigger.WAPPALYZER, TamanoEmpresa.SME),
+        ]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.CONSENSO
+        assert tamano == TamanoEmpresa.SME
+
+    def test_dos_origenes_en_tiers_adyacentes_da_consenso(self):
+        """STARTUP y SME son adyacentes (distancia 1): se acepta como consenso."""
+        estimaciones = [
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.STARTUP),
+            _estimacion(OrigenTrigger.WAPPALYZER, TamanoEmpresa.SME),
+        ]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.CONSENSO
+
+    def test_dos_origenes_en_tiers_lejanos_da_sin_consenso(self):
+        """SME vs ENTERPRISE (distancia 3): conflicto real, no se fuerza un tamaño."""
+        estimaciones = [
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME),
+            _estimacion(OrigenTrigger.WAPPALYZER, TamanoEmpresa.ENTERPRISE),
+        ]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.SIN_CONSENSO
+        assert tamano is None
+
+    def test_mismo_origen_repetido_no_cuenta_como_dos(self):
+        """Dos estimaciones del MISMO origen no satisfacen el mínimo de 2 distintos."""
+        estimaciones = [
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME),
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME),
+        ]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.SIN_CONSENSO
+        assert tamano is None
+
+    def test_tres_origenes_mayoria_gana_desempate_por_confianza(self):
+        """2 orígenes dicen SME, 1 dice ENTERPRISE aislado: gana SME por mayoría."""
+        estimaciones = [
+            _estimacion(OrigenTrigger.THEIRSTACK, TamanoEmpresa.SME, confianza=0.9),
+            _estimacion(OrigenTrigger.WAPPALYZER, TamanoEmpresa.SME, confianza=0.8),
+            _estimacion(OrigenTrigger.GITHUB, TamanoEmpresa.ENTERPRISE, confianza=1.0),
+        ]
+        estado, tamano = self.policy.corroborar(estimaciones)
+        assert estado == EstadoConsensoTamano.CONSENSO
+        assert tamano == TamanoEmpresa.SME
+
+
+# ---------------------------------------------------------------------------
+# Bloque 18: PoliticaExclusionCompetidores — Negative ICP (3 cubetas)
+# ---------------------------------------------------------------------------
+class TestPoliticaExclusionCompetidores:
+    policy = PoliticaExclusionCompetidores()
+
+    def test_categorias_identicas_es_excluido_duro(self):
+        """Caso TBBC: cliente AGENCIA_IT descubre otra AGENCIA_IT → hard exclusion."""
+        resultado = self.policy.evaluar(
+            categoria_cliente=CategoriaEmpresa.AGENCIA_IT,
+            categoria_candidata=CategoriaEmpresa.AGENCIA_IT,
+        )
+        assert resultado == ResultadoExclusionCompetidor.EXCLUIDO_DURO
+
+    def test_categorias_ambiguas_requiere_analisis_semantico(self):
+        resultado = self.policy.evaluar(
+            categoria_cliente=CategoriaEmpresa.AGENCIA_IT,
+            categoria_candidata=CategoriaEmpresa.CONSULTORA_IT,
+        )
+        assert resultado == ResultadoExclusionCompetidor.REQUIERE_ANALISIS_SEMANTICO
+
+    def test_ambiguedad_es_simetrica_sin_importar_el_orden(self):
+        resultado_ab = self.policy.evaluar(
+            categoria_cliente=CategoriaEmpresa.CONSULTORA_IT,
+            categoria_candidata=CategoriaEmpresa.AGENCIA_IT,
+        )
+        resultado_ba = self.policy.evaluar(
+            categoria_cliente=CategoriaEmpresa.AGENCIA_IT,
+            categoria_candidata=CategoriaEmpresa.CONSULTORA_IT,
+        )
+        assert resultado_ab == resultado_ba == ResultadoExclusionCompetidor.REQUIERE_ANALISIS_SEMANTICO
+
+    def test_categorias_claramente_distintas_es_permitido(self):
+        """TBBC (AGENCIA_IT) buscando un cliente fintech regulado: sin conflicto."""
+        resultado = self.policy.evaluar(
+            categoria_cliente=CategoriaEmpresa.AGENCIA_IT,
+            categoria_candidata=CategoriaEmpresa.REGULADO_FINTECH,
+        )
+        assert resultado == ResultadoExclusionCompetidor.PERMITIDO
+
+    def test_no_lanza_excepcion_con_cualquier_par_de_enum(self):
+        """La política debe resolver TODOS los pares posibles sin lanzar."""
+        for cat_cliente in CategoriaEmpresa:
+            for cat_candidata in CategoriaEmpresa:
+                resultado = self.policy.evaluar(cat_cliente, cat_candidata)
+                assert isinstance(resultado, ResultadoExclusionCompetidor)
+
+
+# ---------------------------------------------------------------------------
+# Bloque 19: Puertos nuevos del Motor 2 — ABCs no instanciables
+# ---------------------------------------------------------------------------
+class TestPuertosMotor2AfinamientoABC:
+    def test_estimador_tamano_no_instanciable(self):
+        with pytest.raises(TypeError):
+            PuertoEstimadorTamano()  # type: ignore[abstract]
+
+    def test_clasificador_propuesta_valor_no_instanciable(self):
+        with pytest.raises(TypeError):
+            PuertoClasificadorPropuestaValor()  # type: ignore[abstract]
+
+    def test_implementacion_concreta_de_estimador_tamano_respeta_firma(
+        self, empresa_valida: Empresa
+    ):
+        class _EstimadorFake(PuertoEstimadorTamano):
+            def estimar_tamano(self, empresa: Empresa) -> EstimacionTamano | None:
+                return _estimacion(OrigenTrigger.GITHUB, TamanoEmpresa.SME)
+
+        resultado = _EstimadorFake().estimar_tamano(empresa_valida)
+        assert resultado.tamano_estimado == TamanoEmpresa.SME
+
+    def test_implementacion_concreta_de_clasificador_puede_retornar_none(
+        self, empresa_valida: Empresa
+    ):
+        class _ClasificadorFake(PuertoClasificadorPropuestaValor):
+            def clasificar(self, empresa: Empresa) -> CategoriaEmpresa | None:
+                return None
+
+        assert _ClasificadorFake().clasificar(empresa_valida) is None
+
+
+# ---------------------------------------------------------------------------
+# Bloque 20: PoliticaValidacionGeografica — waterfall geográfico (fix Falla 2,
+# caso Parcero/UK)
+# ---------------------------------------------------------------------------
+class TestPoliticaValidacionGeografica:
+    policy = PoliticaValidacionGeografica()
+
+    def test_paises_coincidentes_es_permitido(self):
+        resultado = self.policy.evaluar(pais_candidato="CO", geografia_icp="CO")
+        assert resultado == EstadoValidacionGeografica.PERMITIDO
+
+    def test_paises_coincidentes_normaliza_minusculas(self):
+        """El cruce debe ser insensible a mayúsculas/minúsculas."""
+        resultado = self.policy.evaluar(pais_candidato="co", geografia_icp="CO")
+        assert resultado == EstadoValidacionGeografica.PERMITIDO
+
+    def test_paises_distintos_es_excluido(self):
+        """Caso Parcero: HQ en Londres (GB) vs. ICP='CO' → EXCLUIDO."""
+        resultado = self.policy.evaluar(pais_candidato="GB", geografia_icp="CO")
+        assert resultado == EstadoValidacionGeografica.EXCLUIDO
+
+    def test_icp_sin_restriccion_geografica_es_permitido(self):
+        """Si el ICP no declara geografía, no hay criterio para excluir."""
+        resultado = self.policy.evaluar(pais_candidato="GB", geografia_icp=None)
+        assert resultado == EstadoValidacionGeografica.PERMITIDO
+
+    def test_icp_con_geografia_vacia_es_permitido(self):
+        resultado = self.policy.evaluar(pais_candidato="GB", geografia_icp="   ")
+        assert resultado == EstadoValidacionGeografica.PERMITIDO
+
+    def test_pais_candidato_none_es_indeterminado_fail_closed(self):
+        """
+        Fail-closed: sin ningún país candidato disponible, NUNCA se aprueba
+        automáticamente, incluso si el ICP sí restringe geografía.
+        """
+        resultado = self.policy.evaluar(pais_candidato=None, geografia_icp="CO")
+        assert resultado == EstadoValidacionGeografica.INDETERMINADO
+
+    def test_pais_candidato_desconocido_centinela_es_indeterminado(self):
+        """El centinela PAIS_DESCONOCIDO ('XX') se trata igual que None."""
+        resultado = self.policy.evaluar(
+            pais_candidato=PAIS_DESCONOCIDO, geografia_icp="CO"
+        )
+        assert resultado == EstadoValidacionGeografica.INDETERMINADO
+
+    def test_pais_candidato_cadena_vacia_es_indeterminado(self):
+        resultado = self.policy.evaluar(pais_candidato="", geografia_icp="CO")
+        assert resultado == EstadoValidacionGeografica.INDETERMINADO
+
+    def test_indeterminado_nunca_se_confunde_con_permitido(self):
+        """Sanidad de enum: INDETERMINADO y PERMITIDO son valores distintos."""
+        assert (
+            EstadoValidacionGeografica.INDETERMINADO
+            != EstadoValidacionGeografica.PERMITIDO
+        )
+
+    def test_no_lanza_excepcion_con_ninguna_combinacion(self):
+        paises = [None, "", "XX", "CO", "GB", "co", "gb"]
+        for candidato in paises:
+            for icp in paises:
+                resultado = self.policy.evaluar(candidato, icp)
+                assert isinstance(resultado, EstadoValidacionGeografica)
+
+
+# ---------------------------------------------------------------------------
+# Bloque 21: ResultadoExclusionCompetidor.PENDIENTE_REVISION_MANUAL (fix
+# fail-open → fail-closed, Falla 1, caso Parcero/UK)
+# ---------------------------------------------------------------------------
+class TestResultadoExclusionCompetidorFailClosed:
+    def test_pendiente_revision_manual_existe_como_valor_del_enum(self):
+        assert (
+            ResultadoExclusionCompetidor.PENDIENTE_REVISION_MANUAL
+            == "PENDIENTE_REVISION_MANUAL"
+        )
+
+    def test_pendiente_revision_manual_es_distinto_de_permitido(self):
+        """
+        Sanidad del fix: un análisis indeterminado NUNCA debe ser igual a
+        (ni confundirse con) un análisis que confirmó ausencia de competencia.
+        """
+        assert (
+            ResultadoExclusionCompetidor.PENDIENTE_REVISION_MANUAL
+            != ResultadoExclusionCompetidor.PERMITIDO
+        )
+
+    def test_pendiente_revision_manual_es_distinto_de_excluido_duro(self):
+        assert (
+            ResultadoExclusionCompetidor.PENDIENTE_REVISION_MANUAL
+            != ResultadoExclusionCompetidor.EXCLUIDO_DURO
+        )
+
+    def test_enum_completo_tiene_cuatro_valores(self):
+        """El enum extendido debe conservar los 3 valores originales + 1 nuevo."""
+        valores = {r.value for r in ResultadoExclusionCompetidor}
+        assert valores == {
+            "PERMITIDO",
+            "EXCLUIDO_DURO",
+            "REQUIERE_ANALISIS_SEMANTICO",
+            "PENDIENTE_REVISION_MANUAL",
+        }

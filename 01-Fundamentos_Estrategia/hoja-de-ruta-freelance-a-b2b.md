@@ -46,9 +46,9 @@
 
 **Objetivo:** convertir el activo en ingreso recurrente.
 
-- [ ] Calcular el **costo por lead calificado** (validar precios Tavily/Apollo/Hunter/Groq/Apify).
+- [ ] Calcular el **costo por lead calificado** (validar precios Tavily/Apollo/Hunter/Groq y demas herramientas que se usen).
 - [ ] Validar legalidad del modelo (Habeas Data, Ley 1581/2012) con asesoría puntual.
-- [ ] Conseguir **3 clientes piloto** en el nicho (logística / ciencias de la vida). *(Catalina Rúa es la primera oportunidad activa — ver [`proyectos/catalina-prospector/`](../proyectos/catalina-prospector/README.md).)*
+- [ ] Conseguir **3 clientes piloto** en el nicho (tecnologia / logística / ciencias de la vida). *(Catalina Rúa es la primera oportunidad activa — ver [`proyectos/catalina-prospector/`](../proyectos/catalina-prospector/README.md).)*
 - [ ] Diferenciación = **nicho + calidad de trigger/copy**, no "tenemos scraper".
 - [ ] Definir pricing recurrente (suscripción / por lead calificado / híbrido).
 
