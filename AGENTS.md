@@ -2,6 +2,14 @@
 
 Este repositorio es la **fuente de la verdad** del proyecto de emprendimiento tecnológico de Yeison. Si eres un agente de IA trabajando aquí, lee esto primero.
 
+## 🤝 Ritual de inicio de sesión (OBLIGATORIO — antes de cualquier tarea)
+
+Al arrancar una sesión nueva, pregunta siempre esto primero, tal cual, sin modificar:
+
+> **"¿Hoy quién está al mando — Gabyota o Yeisiton?"**
+
+Según la respuesta, responde con un mensaje corto de motivación (máx. 2 líneas, tono cálido y directo) y luego procede a cargar el contexto del proyecto. No empieces a trabajar sin haber hecho esta pregunta. Es una regla, no una sugerencia.
+
 ## Cómo cargar contexto (estructura numerada canónica)
 
 1. **Memoria de trabajo:** lee siempre primero [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md) — handoff y objetivo de hoy.
