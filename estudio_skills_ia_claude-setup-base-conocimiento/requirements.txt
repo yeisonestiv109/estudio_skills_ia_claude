@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# El Prospector — Dependencias del Proyecto
+# Versiones pineadas (11-Jul-2026).
+# Instalar: python -m venv .venv & .venv\Scripts\pip install -r requirements.txt
+# ---------------------------------------------------------------------------
+
+# --- Core de dominio -------------------------------------------------------
+pydantic==2.13.4
+email-validator==2.3.0
+
+# --- Adaptadores externos --------------------------------------------------
+
+# Motor 1: SDK oficial de la API de Groq (LLM)
+groq==1.5.0
+
+# Reintentos con backoff exponencial (manejo de Rate Limits 429)
+tenacity==9.1.4
+
+# Motor 2: HTTP para TheirStack API y Wappalyzer ligero
+requests==2.34.2
+
+# Motor 2: Parseo de HTML para WappalyzerHeadlessAdapter (headers + meta tags)
+beautifulsoup4==4.15.0
+
+# Motor 2: Parseo de feeds RSS de Google Alerts
+feedparser==6.0.12
+
+# --- Infraestructura de desarrollo ----------------------------------------
+pytest==9.1.1
+ruff==0.15.21
+python-dotenv==1.2.2
