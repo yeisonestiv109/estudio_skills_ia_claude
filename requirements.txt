@@ -25,6 +25,11 @@ beautifulsoup4==4.15.0
 # Motor 2: Parseo de feeds RSS de Google Alerts
 feedparser==6.0.12
 
+# Motor 2 (Capa 2, PropuestaValorAdapter): fallback de renderizado con
+# navegador real para SPAs en JavaScript sin server-side rendering. Requiere
+# 'playwright install chromium' una sola vez tras instalar el paquete.
+playwright==1.61.0
+
 # --- Infraestructura de desarrollo ----------------------------------------
 pytest==9.1.1
 ruff==0.15.21

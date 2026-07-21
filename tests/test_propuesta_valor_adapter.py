@@ -13,6 +13,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
+import groq as groq_sdk
+
+from src.adapters.llm.groq_key_pool import GroqKeyPool
 from src.adapters.triggers.propuesta_valor_adapter import PropuestaValorAdapter
 from src.core.domain.models import (
     CategoriaEmpresa,
@@ -21,6 +24,12 @@ from src.core.domain.models import (
     OrigenTrigger,
     TamanoEmpresa,
 )
+
+
+def _rate_limit_error(mensaje: str) -> groq_sdk.RateLimitError:
+    mock_response = MagicMock()
+    mock_response.request = MagicMock()
+    return groq_sdk.RateLimitError(mensaje, response=mock_response, body=None)
 
 
 @pytest.fixture
@@ -38,9 +47,7 @@ def _mock_html_response(texto_visible: str, status_code: int = 200) -> MagicMock
     mock.status_code = status_code
     mock.text = f"<html><body><p>{texto_visible}</p></body></html>"
     if status_code >= 400:
-        mock.raise_for_status.side_effect = requests.exceptions.HTTPError(
-            response=mock
-        )
+        mock.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock)
     else:
         mock.raise_for_status.return_value = None
     return mock
@@ -55,7 +62,10 @@ def _mock_groq_client(contenido_json: str | None) -> MagicMock:
 
 
 def _mock_html_response_spa(
-    title: str = "", meta_description: str = "", body_visible: str = "", status_code: int = 200
+    title: str = "",
+    meta_description: str = "",
+    body_visible: str = "",
+    status_code: int = 200,
 ) -> MagicMock:
     """
     Simula una SPA en JavaScript: <head> con title/meta description estáticos,
@@ -80,7 +90,10 @@ class TestPropuestaValorAdapterClasificar:
     def test_vendor_it_true_mapea_a_agencia_it(self, empresa: Empresa):
         json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME"}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Somos una fábrica de software")),
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una fábrica de software"),
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -91,7 +104,10 @@ class TestPropuestaValorAdapterClasificar:
     def test_vendor_it_false_retorna_none(self, empresa: Empresa):
         json_llm = '{"es_vendor_it": false, "tamano_estimado": "MID_MARKET"}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Somos un banco regional")),
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos un banco regional"),
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -102,7 +118,10 @@ class TestPropuestaValorAdapterClasificar:
     def test_es_vendor_it_expone_la_senal_binaria_cruda(self, empresa: Empresa):
         json_llm = '{"es_vendor_it": false, "tamano_estimado": null}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Somos un banco regional")),
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos un banco regional"),
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -135,7 +154,9 @@ class TestPropuestaValorAdapterClasificar:
         mock_client.chat.completions.create.assert_not_called()
 
     def test_http_error_leyendo_homepage_retorna_none(self, empresa: Empresa):
-        with patch("requests.get", return_value=_mock_html_response("", status_code=404)):
+        with patch(
+            "requests.get", return_value=_mock_html_response("", status_code=404)
+        ):
             adapter = PropuestaValorAdapter(api_key="test-key")
             resultado = adapter.clasificar(empresa)
 
@@ -143,7 +164,9 @@ class TestPropuestaValorAdapterClasificar:
 
     def test_llm_contenido_vacio_retorna_none(self, empresa: Empresa):
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto de la empresa")),
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(None)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -153,8 +176,13 @@ class TestPropuestaValorAdapterClasificar:
 
     def test_llm_respuesta_con_formato_invalido_retorna_none(self, empresa: Empresa):
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto de la empresa")),
-            patch("groq.Groq", return_value=_mock_groq_client('{"campo_incorrecto": true}')),
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ),
+            patch(
+                "groq.Groq",
+                return_value=_mock_groq_client('{"campo_incorrecto": true}'),
+            ),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
             resultado = adapter.clasificar(empresa)
@@ -169,7 +197,9 @@ class TestPropuestaValorAdapterClasificar:
             message="rate limited", response=MagicMock(), body=None
         )
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto de la empresa")),
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ),
             patch("groq.Groq", return_value=mock_client),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -201,7 +231,10 @@ class TestPropuestaValorAdapterEstimarTamano:
     def test_retorna_estimacion_con_origen_propuesta_valor(self, empresa: Empresa):
         json_llm = '{"es_vendor_it": true, "tamano_estimado": "MID_MARKET"}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Somos una empresa mediana")),
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una empresa mediana"),
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -236,7 +269,9 @@ class TestPropuestaValorAdapterEstimarTamano:
         mock_groq = _mock_groq_client(json_llm)
 
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto de la empresa")) as mock_get,
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ) as mock_get,
             patch("groq.Groq", return_value=mock_groq),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -251,9 +286,7 @@ class TestPropuestaValorAdapterPaisHq:
     """Fix Falla 2 (caso Parcero/UK): señal semántica de país de HQ."""
 
     def test_pais_hq_extraido_correctamente(self, empresa: Empresa):
-        json_llm = (
-            '{"es_vendor_it": true, "tamano_estimado": "SME", "pais_hq": "GB"}'
-        )
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME", "pais_hq": "GB"}'
         with (
             patch(
                 "requests.get",
@@ -269,7 +302,10 @@ class TestPropuestaValorAdapterPaisHq:
     def test_pais_hq_null_del_llm_retorna_none(self, empresa: Empresa):
         json_llm = '{"es_vendor_it": true, "tamano_estimado": null, "pais_hq": null}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto sin pistas de país")),
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Texto sin pistas de país"),
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -281,7 +317,9 @@ class TestPropuestaValorAdapterPaisHq:
         """Compatibilidad hacia atrás: el campo es opcional en el esquema del LLM."""
         json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME"}'
         with (
-            patch("requests.get", return_value=_mock_html_response("Texto de la empresa")),
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ),
             patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
@@ -325,9 +363,7 @@ class TestPropuestaValorAdapterPaisHq:
 
     def test_pais_hq_comparte_cache_con_clasificar(self, empresa: Empresa):
         """Mismo patrón de cache que estimar_tamano(): una sola llamada LLM."""
-        json_llm = (
-            '{"es_vendor_it": true, "tamano_estimado": "SME", "pais_hq": "CO"}'
-        )
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME", "pais_hq": "CO"}'
         mock_groq = _mock_groq_client(json_llm)
 
         with (
@@ -357,7 +393,7 @@ class TestPropuestaValorAdapterFallbackMetaTags:
         json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME", "pais_hq": "GB"}'
         html_mock = _mock_html_response_spa(
             title="Parcero | Digital Agency",
-            meta_description="We build apps and sites for clients worldwide. HQ London, UK.",
+            meta_description="We build apps for clients worldwide. HQ London.",
             body_visible="",  # SPA: nada renderizado sin JS
         )
         mock_client = _mock_groq_client(json_llm)
@@ -385,7 +421,9 @@ class TestPropuestaValorAdapterFallbackMetaTags:
         self, empresa: Empresa
     ):
         """Si NI el fallback tiene contenido, el comportamiento previo se preserva."""
-        html_mock = _mock_html_response_spa(title="", meta_description="", body_visible="")
+        html_mock = _mock_html_response_spa(
+            title="", meta_description="", body_visible=""
+        )
         mock_client = MagicMock()
 
         with (
@@ -423,3 +461,381 @@ class TestPropuestaValorAdapterFallbackMetaTags:
 
         assert resultado is None
         mock_client.chat.completions.create.assert_called_once()
+
+
+class TestPropuestaValorAdapterReintentosTecnicos:
+    """
+    Estrategia de reintentos técnicos (respuesta a hallazgo de corrida real):
+    muchos casos PENDIENTE_REVISION_MANUAL son fallas técnicas de lectura,
+    no ambigüedad semántica real. La cascada es: raíz → rutas alternas
+    (/nosotros, /about, /quienes-somos, /about-us) → fallback Playwright
+    (render con JS), deteniéndose en el primer resultado utilizable.
+    """
+
+    def _mock_html_vacio(self) -> MagicMock:
+        mock = MagicMock()
+        mock.status_code = 200
+        mock.text = "<html><body><script>solo_js();</script></body></html>"
+        mock.raise_for_status.return_value = None
+        return mock
+
+    def test_ruta_alterna_nosotros_recupera_texto_cuando_raiz_esta_vacia(
+        self, empresa: Empresa
+    ):
+        """Si la raíz no da texto, debe probar /nosotros antes de rendirse."""
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME"}'
+        respuesta_raiz_vacia = self._mock_html_vacio()
+        respuesta_nosotros_con_texto = _mock_html_response(
+            "Somos una consultora de tecnología con más de veinte años de "
+            "experiencia ayudando a empresas a transformar sus procesos."
+        )
+
+        with (
+            patch(
+                "requests.get",
+                side_effect=[respuesta_raiz_vacia, respuesta_nosotros_con_texto],
+            ) as mock_get,
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.clasificar(empresa)
+
+        assert resultado == CategoriaEmpresa.AGENCIA_IT
+        # 1ra llamada a la raíz, 2da a /nosotros (primera ruta alterna probada).
+        assert mock_get.call_count == 2
+        segunda_url = mock_get.call_args_list[1].args[0]
+        assert segunda_url.endswith("/nosotros")
+
+    def test_prueba_multiples_rutas_alternas_en_orden_hasta_encontrar_texto(
+        self, empresa: Empresa
+    ):
+        """Si /nosotros también está vacía, debe seguir con /about, etc."""
+        json_llm = '{"es_vendor_it": false, "tamano_estimado": null}'
+        vacio = self._mock_html_vacio()
+        con_texto = _mock_html_response(
+            "We are a regional bank serving clients across the country with "
+            "a wide range of financial products and personalized service."
+        )
+
+        with (
+            patch(
+                "requests.get",
+                side_effect=[vacio, vacio, con_texto],  # raíz, /nosotros, /about
+            ) as mock_get,
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.clasificar(empresa)
+
+        assert resultado is None  # es_vendor_it=false, pero SÍ se pudo clasificar
+        assert mock_get.call_count == 3
+        tercera_url = mock_get.call_args_list[2].args[0]
+        assert tercera_url.endswith("/about")
+
+    def test_raiz_con_texto_corto_no_activa_rutas_alternas(self, empresa: Empresa):
+        """
+        Si la raíz SÍ dio algo de texto (aunque corto), no debe gastar
+        llamadas adicionales en rutas alternas — solo se activan si la raíz
+        no dio absolutamente nada utilizable.
+        """
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "STARTUP"}'
+        respuesta_corta = _mock_html_response("Somos ACME.")
+
+        with (
+            patch("requests.get", return_value=respuesta_corta) as mock_get,
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            adapter.clasificar(empresa)
+
+        mock_get.assert_called_once()
+
+    def test_todas_las_rutas_alternas_vacias_activa_fallback_playwright(
+        self, empresa: Empresa
+    ):
+        """
+        Si NINGUNA ruta liviana (raíz + alternas) dio texto, debe invocarse
+        el fallback pesado de Playwright como último recurso.
+        """
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "MID_MARKET"}'
+        vacio = self._mock_html_vacio()
+
+        with (
+            patch("requests.get", return_value=vacio),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value="Somos una plataforma SaaS mediana con oficinas regionales.",
+            ) as mock_playwright,
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.clasificar(empresa)
+
+        mock_playwright.assert_called_once()
+        assert resultado == CategoriaEmpresa.AGENCIA_IT
+
+    def test_playwright_tambien_falla_retorna_none_sin_lanzar(self, empresa: Empresa):
+        """Si ni las rutas alternas ni Playwright dan texto, retorna None (no lanza)."""
+        vacio = self._mock_html_vacio()
+
+        with (
+            patch("requests.get", return_value=vacio),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value=None,
+            ),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.clasificar(empresa)
+
+        assert resultado is None
+
+    def test_renderizar_con_playwright_sin_libreria_instalada_retorna_none(self):
+        """Contrato de degradación: si playwright no está disponible, no debe lanzar."""
+        import builtins
+
+        from src.adapters.triggers.propuesta_valor_adapter import (
+            _renderizar_con_playwright,
+        )
+
+        real_import = builtins.__import__
+
+        def _import_bloqueando_playwright(name, *args, **kwargs):
+            if name == "playwright.sync_api" or name.startswith("playwright"):
+                raise ImportError("simulado: playwright no instalado")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=_import_bloqueando_playwright):
+            resultado = _renderizar_con_playwright("https://ejemplo.com")
+
+        assert resultado is None
+
+    def test_renderizar_con_playwright_excepcion_de_navegador_retorna_none(self):
+        """Si Playwright está instalado pero el navegador falla al lanzar, retorna None."""
+        from src.adapters.triggers.propuesta_valor_adapter import (
+            _renderizar_con_playwright,
+        )
+
+        mock_pw_context = MagicMock()
+        mock_pw_context.__enter__.side_effect = RuntimeError("navegador no disponible")
+
+        with patch(
+            "playwright.sync_api.sync_playwright", return_value=mock_pw_context
+        ):
+            resultado = _renderizar_con_playwright("https://ejemplo.com")
+
+        assert resultado is None
+
+    def test_renderizar_con_playwright_exito_retorna_texto(self):
+        """Camino feliz del fallback: retorna el texto visible renderizado."""
+        from src.adapters.triggers.propuesta_valor_adapter import (
+            _renderizar_con_playwright,
+        )
+
+        mock_page = MagicMock()
+        mock_page.inner_text.return_value = "Texto renderizado con JavaScript"
+        mock_browser = MagicMock()
+        mock_browser.new_page.return_value = mock_page
+        mock_chromium = MagicMock()
+        mock_chromium.launch.return_value = mock_browser
+        mock_pw_instance = MagicMock(chromium=mock_chromium)
+        mock_pw_context = MagicMock()
+        mock_pw_context.__enter__.return_value = mock_pw_instance
+
+        with patch(
+            "playwright.sync_api.sync_playwright", return_value=mock_pw_context
+        ):
+            resultado = _renderizar_con_playwright("https://ejemplo.com")
+
+        assert resultado == "Texto renderizado con JavaScript"
+        mock_browser.close.assert_called_once()
+
+
+class TestPropuestaValorAdapterSnippetHomepage:
+    """
+    snippet_homepage() expone el texto leído/enviado al LLM para el Paquete
+    de Revisión Manual — sin duplicar lecturas de red.
+    """
+
+    def test_snippet_disponible_tras_clasificar(self, empresa: Empresa):
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME"}'
+        with (
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una fábrica de software"),
+            ) as mock_get,
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            adapter.clasificar(empresa)
+            snippet = adapter.snippet_homepage(empresa)
+
+        assert snippet is not None
+        assert "fábrica de software" in snippet
+        mock_get.assert_called_once()  # snippet_homepage no repite la lectura
+
+    def test_snippet_forzado_sin_analisis_previo(self, empresa: Empresa):
+        """Si se llama sin haber invocado clasificar()/estimar_tamano() antes."""
+        with patch(
+            "requests.get",
+            return_value=_mock_html_response("Texto público de la empresa"),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            snippet = adapter.snippet_homepage(empresa)
+
+        assert snippet is not None
+        assert "Texto público" in snippet
+
+    def test_snippet_none_cuando_no_hay_texto_disponible(self, empresa: Empresa):
+        mock_vacio = MagicMock()
+        mock_vacio.status_code = 200
+        mock_vacio.text = "<html><body><script>solo_js();</script></body></html>"
+        mock_vacio.raise_for_status.return_value = None
+
+        with (
+            patch("requests.get", return_value=mock_vacio),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value=None,
+            ),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            snippet = adapter.snippet_homepage(empresa)
+
+        assert snippet is None
+
+
+class TestPropuestaValorAdapterFailoverMultiplesClaves:
+    """
+    Rotación reactiva con cooldown (Hallazgo de corrida real, 2026-07): un
+    batch grande agota el límite de Tokens Por Día de una sola clave gratuita
+    de Groq. Con un GroqKeyPool de varias claves inyectado, un 429 en la
+    clave activa debe hacer failover automático a la siguiente en la MISMA
+    llamada — sin que el llamador (orquestador del sandbox) note el fallo.
+    """
+
+    def test_rate_limit_en_primera_clave_hace_failover_y_completa_la_llamada(
+        self, empresa: Empresa
+    ):
+        json_llm = '{"es_vendor_it": true, "tamano_estimado": "SME"}'
+
+        with patch("groq.Groq") as mock_groq_cls:
+            cliente_1 = MagicMock()
+            cliente_1.chat.completions.create.side_effect = _rate_limit_error(
+                "Please try again in 5s"
+            )
+            cliente_2 = MagicMock()
+            cliente_2.chat.completions.create.return_value = MagicMock(
+                choices=[MagicMock(message=MagicMock(content=json_llm))]
+            )
+            mock_groq_cls.side_effect = [cliente_1, cliente_2]
+
+            pool = GroqKeyPool(api_keys=["key-1", "key-2"])
+
+            with patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una fábrica de software"),
+            ):
+                adapter = PropuestaValorAdapter(key_pool=pool)
+                resultado = adapter.clasificar(empresa)
+
+        assert resultado == CategoriaEmpresa.AGENCIA_IT
+        cliente_1.chat.completions.create.assert_called_once()
+        cliente_2.chat.completions.create.assert_called_once()
+
+    def test_todas_las_claves_agotadas_retorna_none_sin_lanzar(self, empresa: Empresa):
+        with patch("groq.Groq") as mock_groq_cls:
+            cliente_1 = MagicMock()
+            cliente_1.chat.completions.create.side_effect = _rate_limit_error(
+                "Please try again in 5s"
+            )
+            cliente_2 = MagicMock()
+            cliente_2.chat.completions.create.side_effect = _rate_limit_error(
+                "Please try again in 5s"
+            )
+            mock_groq_cls.side_effect = [cliente_1, cliente_2]
+
+            pool = GroqKeyPool(api_keys=["key-1", "key-2"])
+
+            with patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ):
+                adapter = PropuestaValorAdapter(key_pool=pool)
+                resultado = adapter.clasificar(empresa)
+
+        assert resultado is None
+
+    def test_pool_ya_agotado_antes_de_llamar_retorna_none_sin_llamar_llm(
+        self, empresa: Empresa
+    ):
+        """Si TODAS las claves ya están en enfriamiento, ni se intenta la llamada."""
+        with patch("groq.Groq") as mock_groq_cls:
+            cliente_1 = MagicMock()
+            mock_groq_cls.return_value = cliente_1
+            pool = GroqKeyPool(api_keys=["key-1"])
+            pool.registrar_rate_limit(_rate_limit_error("Please try again in 999s"))
+
+            with patch("requests.get") as mock_get:
+                adapter = PropuestaValorAdapter(key_pool=pool)
+                resultado = adapter.clasificar(empresa)
+
+        assert resultado is None
+        mock_get.assert_not_called()
+        cliente_1.chat.completions.create.assert_not_called()
+
+    def test_api_key_explicita_tiene_prioridad_sobre_key_pool(self, empresa: Empresa):
+        """Compatibilidad hacia atrás: api_key sigue funcionando (pool de 1 clave)."""
+        json_llm = '{"es_vendor_it": false, "tamano_estimado": null}'
+        with (
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="clave-explicita")
+            resultado = adapter.clasificar(empresa)
+
+        assert resultado is None  # es_vendor_it=false -> comportamiento esperado
+        assert adapter._pool.num_claves == 1
+
+    def test_sin_api_key_ni_pool_descubre_del_entorno(
+        self, empresa: Empresa, monkeypatch
+    ):
+        """Sin argumentos, el adaptador construye un GroqKeyPool() por defecto."""
+        for i in range(1, 21):
+            monkeypatch.delenv(f"GROQ_API_KEY_{i}", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+        with patch("groq.Groq"):
+            adapter = PropuestaValorAdapter()
+
+        assert adapter._pool.tiene_claves is False
+
+    def test_segundo_429_en_clave_de_failover_tambien_retorna_none(
+        self, empresa: Empresa
+    ):
+        """Con 2 claves, si la segunda TAMBIÉN da 429, no hay más reintentos."""
+        with patch("groq.Groq") as mock_groq_cls:
+            cliente_1 = MagicMock()
+            cliente_1.chat.completions.create.side_effect = _rate_limit_error(
+                "Please try again in 5s"
+            )
+            cliente_2 = MagicMock()
+            cliente_2.chat.completions.create.side_effect = _rate_limit_error(
+                "Please try again in 8s"
+            )
+            mock_groq_cls.side_effect = [cliente_1, cliente_2]
+
+            pool = GroqKeyPool(api_keys=["key-1", "key-2"])
+
+            with patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ):
+                adapter = PropuestaValorAdapter(key_pool=pool)
+                resultado = adapter.clasificar(empresa)
+
+        assert resultado is None
+        cliente_1.chat.completions.create.assert_called_once()
+        cliente_2.chat.completions.create.assert_called_once()
+        # Ambas claves deben haber quedado marcadas en enfriamiento
+        assert pool.cliente_activo() is None

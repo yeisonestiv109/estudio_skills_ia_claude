@@ -41,7 +41,6 @@ métodos — el orquestador decide qué hacer con la ambigüedad no resuelta
 from __future__ import annotations
 
 import logging
-import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -51,6 +50,7 @@ import requests
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, ValidationError
 
+from src.adapters.llm.groq_key_pool import GroqKeyPool
 from src.core.domain.models import (
     CategoriaEmpresa,
     Empresa,
@@ -96,6 +96,66 @@ _BROWSER_HEADERS: dict[str, str] = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "es-419,es;q=0.9,en;q=0.8",
 }
+
+# Estrategia de reintentos técnicos (respuesta a hallazgo de corrida real:
+# muchos casos que caen en PENDIENTE_REVISION_MANUAL no son ambigüedad
+# semántica real, sino fallas técnicas de lectura — la raíz del dominio
+# viene vacía pero la empresa SÍ tiene texto público en otra ruta). Se
+# intentan, EN ORDEN, solo cuando la raíz del dominio no dio NINGÚN texto
+# utilizable (ni body visible ni meta-fallback) — nunca cuando la raíz sí
+# dio algo, por corto que sea (preserva el comportamiento histórico: un
+# texto corto pero real sigue siendo mejor señal que gastar más llamadas).
+_RUTAS_ALTERNAS: tuple[str, ...] = ("/nosotros", "/about", "/quienes-somos", "/about-us")
+
+# Timeout del fallback pesado (renderizado con navegador real). Más holgado
+# que _REQUEST_TIMEOUT_SECS porque un render completo con JS es
+# intrínsecamente más lento que un GET simple.
+_PLAYWRIGHT_TIMEOUT_MS = 15_000
+
+
+def _renderizar_con_playwright(url: str) -> str | None:
+    """
+    Fallback pesado: renderiza `url` con un navegador real (Chromium
+    headless vía Playwright) y retorna el texto visible del DOM YA
+    ejecutado JS. Se invoca SOLO cuando ni la raíz del dominio ni ninguna
+    ruta alterna (ambas vía `requests` + BeautifulSoup, sin ejecutar JS)
+    dieron texto utilizable — es decir, es el ÚLTIMO recurso ante el caso
+    SPA sin server-side rendering, no el camino feliz.
+
+    Contrato de error: nunca lanza excepción hacia el llamador. Si
+    Playwright no está instalado, si el navegador no está descargado
+    (`playwright install chromium` pendiente en el entorno), o si la
+    página falla al cargar/renderizar, retorna None con log — mismo
+    contrato de "silencio válido, nunca asumir éxito" que el resto del
+    adaptador.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        logger.debug(
+            "PropuestaValorAdapter: playwright no instalado. Sin fallback JS "
+            "disponible para '%s'.",
+            url,
+        )
+        return None
+
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.goto(url, timeout=_PLAYWRIGHT_TIMEOUT_MS, wait_until="domcontentloaded")
+                texto = page.inner_text("body")
+            finally:
+                browser.close()
+        return texto
+    except Exception as exc:  # noqa: BLE001 — contrato: nunca propagar, fallback opcional
+        logger.warning(
+            "PropuestaValorAdapter: fallback Playwright falló para '%s': %s",
+            url,
+            exc,
+        )
+        return None
 
 _SYSTEM_PROMPT = """Eres un analista de clasificación de empresas B2B para un sistema de prospección.
 
@@ -174,21 +234,50 @@ class _AnalisisPropuestaValor:
 class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTamano):
     """
     Args:
-        api_key: Clave de API de Groq. Si None, lee de GROQ_API_KEY.
+        api_key: Clave de API de Groq única. Si se provee, tiene prioridad
+            sobre `key_pool` y sobre el descubrimiento automático — construye
+            un pool de una sola clave (comportamiento previo, preservado
+            para no romper integraciones existentes).
+        key_pool: GroqKeyPool ya construido, inyectable para tests o para
+            compartir el mismo pool entre varios adaptadores del Motor 2 en
+            un mismo proceso. Si None y no se pasa `api_key`, se construye
+            un GroqKeyPool() que descubre GROQ_API_KEY_1..N del entorno (o
+            GROQ_API_KEY como fallback de una sola clave).
+
+    Rotación reactiva con cooldown (failover): este adaptador es el mayor
+    consumidor de tokens del Motor 2 (una lectura de homepage + una llamada
+    LLM por cada empresa candidata ambigua del Negative ICP), y el primero
+    en agotar el límite de Tokens Por Día del tier gratuito de Groq en
+    corridas de batch grande (confirmado en corrida real, 2026-07: falla a
+    partir de la empresa #15 de un lote de 50). Ver
+    `src/adapters/llm/groq_key_pool.py` para el diseño de la rotación.
     """
 
-    def __init__(self, api_key: str | None = None) -> None:
-        resolved_key = api_key or os.getenv("GROQ_API_KEY")
-        self._client = groq_sdk.Groq(api_key=resolved_key) if resolved_key else None
-        if not resolved_key:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        key_pool: GroqKeyPool | None = None,
+    ) -> None:
+        if api_key is not None:
+            self._pool = GroqKeyPool(api_keys=[api_key])
+        elif key_pool is not None:
+            self._pool = key_pool
+        else:
+            self._pool = GroqKeyPool()
+
+        if not self._pool.tiene_claves:
             logger.warning(
-                "GROQ_API_KEY no configurada. "
+                "GROQ_API_KEY (o GROQ_API_KEY_1..N) no configurada(s). "
                 "PropuestaValorAdapter retornará None hasta que se configure."
             )
         # Cache por instancia: evita pagar 2 lecturas web + 2 llamadas LLM
         # cuando el orquestador invoca clasificar() y estimar_tamano() sobre
         # la MISMA empresa en el mismo pase (caso normal en el sandbox).
         self._cache: dict[uuid.UUID, _AnalisisPropuestaValor | None] = {}
+        # Cache separado del texto leído (independiente de si el análisis
+        # LLM tuvo éxito o no) — usado por snippet_homepage() para exponer
+        # evidencia al Paquete de Revisión Manual sin duplicar lecturas de red.
+        self._cache_texto: dict[uuid.UUID, str | None] = {}
 
     # ──────────────────────────────────────────────────────────────────────
     # PuertoClasificadorPropuestaValor — Capa 2 del Negative ICP
@@ -250,6 +339,24 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
         analisis = self._analizar(empresa)
         return analisis.es_vendor_it if analisis is not None else None
 
+    def snippet_homepage(self, empresa: Empresa) -> str | None:
+        """
+        Expone el texto público que se leyó (y se envió al LLM) para esta
+        empresa. Pensado para el Paquete de Revisión Manual (ver
+        src/adapters/revision_manual/paquete_revision_adapter.py): el humano
+        ve exactamente el mismo texto que vio el LLM al no poder decidir,
+        en vez de tener que re-investigar desde cero.
+
+        Reutiliza el cache de texto poblado por _analizar() — nunca dispara
+        una segunda lectura de red para la misma empresa. Si la empresa
+        nunca pasó por _analizar() (ej. se llama snippet_homepage() antes de
+        cualquier otro método), fuerza esa primera lectura una sola vez.
+        Retorna None si no hay texto disponible (mismo contrato del resto).
+        """
+        if empresa.id not in self._cache_texto:
+            self._analizar(empresa)
+        return self._cache_texto.get(empresa.id)
+
     def pais_hq(self, empresa: Empresa) -> str | None:
         """
         Expone el país de HQ inferido semánticamente (código ISO Alpha-2),
@@ -277,53 +384,22 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
         return resultado
 
     def _analizar_sin_cache(self, empresa: Empresa) -> _AnalisisPropuestaValor | None:
-        if self._client is None:
+        cliente = self._pool.cliente_activo()
+        if cliente is None:
+            logger.warning(
+                "PropuestaValorAdapter: sin clientes Groq disponibles "
+                "(sin claves configuradas o todas en enfriamiento) para '%s'.",
+                empresa.nombre,
+            )
             return None
 
         texto = self._leer_texto_homepage(empresa.dominio)
+        self._cache_texto[empresa.id] = texto
         if not texto:
             return None
 
-        try:
-            logger.info(
-                "PropuestaValorAdapter: clasificando '%s' con LLM.", empresa.nombre
-            )
-            completion = self._client.chat.completions.create(
-                model=_DEFAULT_MODEL,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": texto},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.1,
-                max_tokens=200,
-            )
-            contenido = completion.choices[0].message.content
-        except groq_sdk.RateLimitError as exc:
-            logger.warning(
-                "PropuestaValorAdapter: rate limit para '%s': %s", empresa.nombre, exc
-            )
-            return None
-        except groq_sdk.APIError as exc:
-            logger.error(
-                "PropuestaValorAdapter: error de API para '%s': %s",
-                empresa.nombre,
-                exc,
-            )
-            return None
-        except Exception as exc:  # noqa: BLE001 — contrato: nunca propagar al Core
-            logger.error(
-                "PropuestaValorAdapter: error inesperado con LLM para '%s': %s",
-                empresa.nombre,
-                exc,
-            )
-            return None
-
+        contenido = self._llamar_llm_con_failover(cliente, texto, empresa)
         if not contenido:
-            logger.warning(
-                "PropuestaValorAdapter: LLM retornó contenido vacío para '%s'.",
-                empresa.nombre,
-            )
             return None
 
         try:
@@ -352,17 +428,163 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
             pais_hq=pais_hq_normalizado,
         )
 
+    def _llamar_llm_con_failover(
+        self, cliente: groq_sdk.Groq, texto: str, empresa: Empresa
+    ) -> str | None:
+        """
+        Invoca al LLM con el cliente activo del pool. Ante un RateLimitError
+        (429), registra la clave agotada en el pool (que la marca en
+        enfriamiento por el tiempo parseado del propio mensaje de error) y
+        reintenta UNA vez con la siguiente clave disponible — afinidad
+        preservada: no rota en cada llamada, solo cuando la activa se agota.
+
+        Si el failover también agota el pool completo (todas en
+        enfriamiento) o si el segundo intento también recibe 429, retorna
+        None — mismo contrato de "nunca propagar al Core" que el resto del
+        adaptador.
+        """
+        try:
+            return self._invocar_llm(cliente, texto)
+        except groq_sdk.RateLimitError as exc:
+            logger.warning(
+                "PropuestaValorAdapter: rate limit para '%s': %s", empresa.nombre, exc
+            )
+            cliente_failover = self._pool.registrar_rate_limit(exc)
+            if cliente_failover is None:
+                logger.error(
+                    "PropuestaValorAdapter: pool de claves Groq agotado "
+                    "(todas en enfriamiento). Sin reintento para '%s'.",
+                    empresa.nombre,
+                )
+                return None
+            try:
+                return self._invocar_llm(cliente_failover, texto)
+            except groq_sdk.RateLimitError as exc2:
+                logger.warning(
+                    "PropuestaValorAdapter: rate limit también en la clave de "
+                    "failover para '%s': %s. Sin más reintentos.",
+                    empresa.nombre,
+                    exc2,
+                )
+                self._pool.registrar_rate_limit(exc2)
+                return None
+            except groq_sdk.APIError as exc2:
+                logger.error(
+                    "PropuestaValorAdapter: error de API (failover) para '%s': %s",
+                    empresa.nombre,
+                    exc2,
+                )
+                return None
+            except Exception as exc2:  # noqa: BLE001 — contrato: nunca propagar al Core
+                logger.error(
+                    "PropuestaValorAdapter: error inesperado con LLM (failover) "
+                    "para '%s': %s",
+                    empresa.nombre,
+                    exc2,
+                )
+                return None
+        except groq_sdk.APIError as exc:
+            logger.error(
+                "PropuestaValorAdapter: error de API para '%s': %s",
+                empresa.nombre,
+                exc,
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001 — contrato: nunca propagar al Core
+            logger.error(
+                "PropuestaValorAdapter: error inesperado con LLM para '%s': %s",
+                empresa.nombre,
+                exc,
+            )
+            return None
+
+    def _invocar_llm(self, cliente: groq_sdk.Groq, texto: str) -> str | None:
+        """Llamada directa al SDK. Sin manejo de errores — eso lo hace el llamador."""
+        completion = cliente.chat.completions.create(
+            model=_DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": texto},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=200,
+        )
+        return completion.choices[0].message.content
+
     def _leer_texto_homepage(self, dominio: str) -> str | None:
         """
         Descarga la homepage pública del dominio y extrae texto visible
         limpio (sin scripts/estilos), truncado a _MAX_CARACTERES_TEXTO_HOMEPAGE.
 
-        Contrato: nunca lanza excepción. Cualquier fallo de red/parseo → None.
+        Estrategia de reintentos técnicos (respuesta a hallazgo de corrida
+        real: un "indeterminado" frecuentemente no es ambigüedad semántica
+        real sino una falla técnica de lectura — ver _RUTAS_ALTERNAS y
+        _renderizar_con_playwright arriba). Cascada, del más barato al más
+        caro, deteniéndose en el primer resultado utilizable:
+            1. Raíz del dominio vía `requests` + BeautifulSoup (camino feliz,
+               sin cambios respecto a la versión anterior).
+            2. Si (1) no dio NADA de texto (ni body ni meta-fallback): rutas
+               alternas comunes (/nosotros, /about, /quienes-somos,
+               /about-us), mismo método liviano.
+            3. Si ninguna ruta alterna dio texto: fallback pesado con
+               Playwright (navegador real, ejecuta JS) sobre la raíz del
+               dominio — último recurso para SPAs sin server-side rendering.
+
+        Contrato: nunca lanza excepción. Cualquier fallo de red/parseo en
+        TODA la cascada → None.
         """
         if not dominio:
             return None
 
-        url = _construir_url(dominio)
+        url_raiz = _construir_url(dominio)
+        texto = self._leer_texto_url(url_raiz)
+        if texto:
+            return texto
+
+        logger.info(
+            "PropuestaValorAdapter: sin texto utilizable en raíz '%s'. "
+            "Probando rutas alternas...",
+            url_raiz,
+        )
+        for ruta in _RUTAS_ALTERNAS:
+            texto = self._leer_texto_url(url_raiz.rstrip("/") + ruta)
+            if texto:
+                logger.info(
+                    "PropuestaValorAdapter: texto recuperado en ruta alterna "
+                    "'%s' para '%s'.",
+                    ruta,
+                    dominio,
+                )
+                return texto
+
+        logger.info(
+            "PropuestaValorAdapter: ninguna ruta alterna dio texto para '%s'. "
+            "Intentando fallback Playwright (render con JS)...",
+            dominio,
+        )
+        texto_render = _renderizar_con_playwright(url_raiz)
+        if texto_render:
+            texto_limpio = re.sub(r"\s+", " ", texto_render).strip()
+            if texto_limpio:
+                logger.info(
+                    "PropuestaValorAdapter: texto recuperado vía Playwright "
+                    "para '%s'.",
+                    dominio,
+                )
+                return texto_limpio[:_MAX_CARACTERES_TEXTO_HOMEPAGE]
+
+        return None
+
+    def _leer_texto_url(self, url: str) -> str | None:
+        """
+        Descarga UNA url específica y extrae texto visible limpio (con el
+        mismo fallback de title/meta description que el camino histórico).
+        Sin cascada — es el bloque reusable que _leer_texto_homepage invoca
+        tanto sobre la raíz del dominio como sobre cada ruta alterna.
+
+        Contrato: nunca lanza excepción. Cualquier fallo de red/parseo → None.
+        """
         try:
             response = requests.get(
                 url,
@@ -438,9 +660,7 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
                 len(texto_limpio),
                 url,
             )
-            texto_limpio = re.sub(
-                r"\s+", " ", f"{texto_meta} {texto_limpio}"
-            ).strip()
+            texto_limpio = re.sub(r"\s+", " ", f"{texto_meta} {texto_limpio}").strip()
 
         if not texto_limpio:
             return None
