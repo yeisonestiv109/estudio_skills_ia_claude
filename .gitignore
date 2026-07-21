@@ -59,3 +59,13 @@ Thumbs.db
 # Graphify — grafo de conocimiento del código (regenerable con `graphify extract`)
 # ---------------------------------------------------------------------------
 graphify-out/
+
+# ---------------------------------------------------------------------------
+# Estado operativo generado en runtime (no es código, no es fuente de verdad
+# del repo) — la cola de revisión manual persiste decisiones humanas que
+# varían por corrida y por operador local; no debe versionarse ni generar
+# conflictos de merge entre corridas de distintas personas. Anclado a la
+# raíz del repo (/) para NO afectar el paquete de código homónimo en
+# src/adapters/revision_manual/.
+# ---------------------------------------------------------------------------
+/revision_manual/
