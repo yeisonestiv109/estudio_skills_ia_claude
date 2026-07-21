@@ -48,16 +48,26 @@ def _mock_get(json_data, status_code: int = 200) -> MagicMock:
 # ──────────────────────────────────────────────────────────────────────────
 class TestSecopSocrataAdapter:
     def _contrato(self, dias_atras: int = 30, valor: str = "150000000") -> dict:
+        """
+        Esquema REAL del dataset jbjy-vk9h (confirmado por ingeniería inversa
+        del endpoint, 2026-07) — reemplaza los nombres de columna anteriores
+        que no existen en SECOP II (fecha_adjudicacion, entidad_nombre,
+        objeto_contrato, valor_contrato, numero_contrato/id_proceso).
+        """
         fecha = (datetime.now(timezone.utc) - timedelta(days=dias_atras)).strftime(
             "%Y-%m-%dT%H:%M:%S.000"
         )
         return {
-            "numero_contrato": "CON-2026-001",
+            "id_contrato": "CON-2026-001",
             "proveedor_adjudicado": "ACME TECH SAS",
-            "objeto_contrato": "Desarrollo de plataforma de gestión documental",
-            "entidad_nombre": "Ministerio de Tecnología",
-            "valor_contrato": valor,
-            "fecha_adjudicacion": fecha,
+            "objeto_del_contrato": "Desarrollo de plataforma de gestión documental",
+            "nombre_entidad": "Ministerio de Tecnología",
+            "valor_del_contrato": valor,
+            "fecha_de_firma": fecha,
+            "es_pyme": "Sí",
+            "urlproceso": {"url": "https://community.secop.gov.co/Public/Tendering/x"},
+            "codigo_de_categoria_principal": "V1.81112006",
+            "direcci_n_de_ejecuci_n_del_contrato": "Calle 1\nBogotá\nCOLOMBIA",
         }
 
     def test_contrato_reciente_genera_trigger_alta(self, empresa: Empresa):
@@ -107,24 +117,85 @@ class TestSecopSocrataAdapter:
         assert triggers == []
 
     def test_timeout_no_propaga_al_core(self, empresa: Empresa):
+        """
+        Regresión de causa raíz (full scan de LIKE '%...%'): un Timeout ahora
+        reintenta _MAX_INTENTOS veces antes de rendirse. Se mockea
+        time.sleep para no esperar los backoffs reales en el test.
+        """
         from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
         import requests
 
-        with patch("requests.get", side_effect=requests.exceptions.Timeout):
+        with (
+            patch("requests.get", side_effect=requests.exceptions.Timeout),
+            patch("src.adapters.triggers.secop_adapter.time.sleep"),
+        ):
             adapter = SecopSocrataAdapter()
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
+
+    def test_timeout_reintenta_hasta_max_intentos(self, empresa: Empresa):
+        """Verifica que un Timeout persistente agota exactamente _MAX_INTENTOS llamadas."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        import requests
+
+        with (
+            patch(
+                "requests.get", side_effect=requests.exceptions.Timeout
+            ) as mock_get,
+            patch("src.adapters.triggers.secop_adapter.time.sleep"),
+        ):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+        assert mock_get.call_count == 3
+
+    def test_timeout_luego_exito_recupera_datos(self, empresa: Empresa):
+        """Un Timeout en el primer intento no debe perder la señal si el reintento funciona."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        import requests
+
+        resp_ok = _mock_get([self._contrato(dias_atras=10)])
+        with (
+            patch(
+                "requests.get",
+                side_effect=[requests.exceptions.Timeout(), resp_ok],
+            ),
+            patch("src.adapters.triggers.secop_adapter.time.sleep"),
+        ):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
 
     def test_http_error_no_propaga(self, empresa: Empresa):
         from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
 
         resp = _mock_get({}, status_code=503)
-        with patch("requests.get", return_value=resp):
+        with (
+            patch("requests.get", return_value=resp),
+            patch("src.adapters.triggers.secop_adapter.time.sleep"),
+        ):
             adapter = SecopSocrataAdapter()
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
+
+    def test_503_reintenta_y_luego_tiene_exito(self, empresa: Empresa):
+        """HTTP 503 (reintentable) seguido de un 200 debe recuperar los datos."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp_503 = _mock_get({}, status_code=503)
+        resp_ok = _mock_get([self._contrato(dias_atras=10)])
+        with (
+            patch("requests.get", side_effect=[resp_503, resp_ok]),
+            patch("src.adapters.triggers.secop_adapter.time.sleep"),
+        ):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
 
     def test_descripcion_incluye_entidad_y_valor(self, empresa: Empresa):
         from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
@@ -160,6 +231,292 @@ class TestSecopSocrataAdapter:
 
         assert len(triggers) == 1
         assert triggers[0].nivel_confianza == NivelConfianza.MEDIA
+
+    def test_app_token_explicito_se_envia_en_header(self, empresa: Empresa):
+        """Con app_token explícito, la request debe incluir X-App-Token."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter(app_token="test-token-123")
+            adapter.obtener_triggers(empresa)
+
+        call_kwargs = mock_get.call_args.kwargs
+        assert call_kwargs["headers"]["X-App-Token"] == "test-token-123"
+
+    def test_app_token_desde_env_se_envia_en_header(self, empresa: Empresa, monkeypatch):
+        """Sin app_token explícito, debe leer SECOP_APP_TOKEN del entorno."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        monkeypatch.setenv("SECOP_APP_TOKEN", "env-token-456")
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter()
+            adapter.obtener_triggers(empresa)
+
+        call_kwargs = mock_get.call_args.kwargs
+        assert call_kwargs["headers"]["X-App-Token"] == "env-token-456"
+
+    def test_sin_app_token_no_incluye_header(self, empresa: Empresa, monkeypatch):
+        """Sin token disponible (ni explícito ni en entorno), el header no se envía."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        monkeypatch.delenv("SECOP_APP_TOKEN", raising=False)
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter(app_token=None)
+            adapter.obtener_triggers(empresa)
+
+        call_kwargs = mock_get.call_args.kwargs
+        assert "X-App-Token" not in call_kwargs["headers"]
+
+    def test_order_usa_fecha_de_firma_no_fecha_adjudicacion(self, empresa: Empresa):
+        """
+        Regresión de la causa raíz del HTTP 400: 'fecha_adjudicacion' no
+        existe en el esquema real de jbjy-vk9h. El $order debe usar
+        'fecha_de_firma', la columna que sí existe.
+        """
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter()
+            adapter.obtener_triggers(empresa)
+
+        call_kwargs = mock_get.call_args.kwargs
+        assert call_kwargs["params"]["$order"] == "fecha_de_firma DESC"
+        assert "fecha_adjudicacion" not in call_kwargs["params"]["$order"]
+
+    def test_consulta_usa_q_no_where_like(self, empresa: Empresa):
+        """
+        Fix de rendimiento (causa raíz del timeout, confirmado en vivo:
+        ~10.5s con `$where LIKE '%...%'` vs ~0.5-1s con `$q`). La consulta
+        primaria debe usar `$q` (full-text indexado), no `$where` con
+        wildcard inicial (full scan).
+        """
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter()
+            adapter.obtener_triggers(empresa)
+
+        call_kwargs = mock_get.call_args.kwargs
+        assert call_kwargs["params"]["$q"] == empresa.nombre
+        assert "$where" not in call_kwargs["params"]
+
+    def test_filtro_verificacion_descarta_falsos_positivos_de_q(self, empresa: Empresa):
+        """
+        `$q` es full-text fuzzy y puede traer candidatos que NO son un match
+        real del nombre buscado (ej. "$q=Acme Tech SAS" trae también
+        "PAVIMENTOS ACM SAS"). El filtro de verificación en Python debe
+        descartar esos falsos positivos antes de convertirlos en Trigger.
+        """
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        contrato_real = self._contrato(dias_atras=10)
+        contrato_falso_positivo = self._contrato(dias_atras=5)
+        contrato_falso_positivo["proveedor_adjudicado"] = "PAVIMENTOS ACM SAS"
+
+        resp = _mock_get([contrato_falso_positivo, contrato_real])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert "CON-2026-001" in triggers[0].descripcion
+
+    def test_todos_falsos_positivos_retorna_vacio(self, empresa: Empresa):
+        """Si ningún candidato de `$q` supera el filtro de verificación, retorna []."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        contrato_falso_positivo = self._contrato(dias_atras=5)
+        contrato_falso_positivo["proveedor_adjudicado"] = "PAVIMENTOS ACM SAS"
+
+        resp = _mock_get([contrato_falso_positivo])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+
+    def test_descripcion_incluye_url_proceso_y_unspsc(self, empresa: Empresa):
+        """Los campos nuevos (urlproceso, UNSPSC, dirección) deben aparecer en la descripción."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([self._contrato(dias_atras=10)])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        descripcion = triggers[0].descripcion
+        assert "community.secop.gov.co" in descripcion
+        assert "V1.81112006" in descripcion
+        assert "Bogotá" in descripcion
+
+    def test_estimar_tamano_es_pyme_si_retorna_sme(self, empresa: Empresa):
+        """Implementa PuertoEstimadorTamano: es_pyme='Sí' → TamanoEmpresa.SME."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        from src.core.domain.models import OrigenTrigger, TamanoEmpresa
+
+        contrato = self._contrato(dias_atras=10)
+        contrato["es_pyme"] = "Sí"
+        resp = _mock_get([contrato])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            estimacion = adapter.estimar_tamano(empresa)
+
+        assert estimacion is not None
+        assert estimacion.tamano_estimado == TamanoEmpresa.SME
+        assert estimacion.origen == OrigenTrigger.SECOP_SOCRATA
+
+    def test_estimar_tamano_es_pyme_no_retorna_mid_market(self, empresa: Empresa):
+        """es_pyme='No' → TamanoEmpresa.MID_MARKET."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        from src.core.domain.models import TamanoEmpresa
+
+        contrato = self._contrato(dias_atras=10)
+        contrato["es_pyme"] = "No"
+        resp = _mock_get([contrato])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            estimacion = adapter.estimar_tamano(empresa)
+
+        assert estimacion is not None
+        assert estimacion.tamano_estimado == TamanoEmpresa.MID_MARKET
+
+    def test_estimar_tamano_sin_contratos_retorna_none(self, empresa: Empresa):
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            estimacion = adapter.estimar_tamano(empresa)
+
+        assert estimacion is None
+
+    def test_estimar_tamano_sin_es_pyme_retorna_none(self, empresa: Empresa):
+        """Silencio válido: si el contrato no reporta es_pyme, no forzar opinión."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        contrato = self._contrato(dias_atras=10)
+        contrato.pop("es_pyme", None)
+        resp = _mock_get([contrato])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            estimacion = adapter.estimar_tamano(empresa)
+
+        assert estimacion is None
+
+    def test_obtener_triggers_y_estimar_tamano_usan_cache_una_sola_llamada_http(
+        self, empresa: Empresa
+    ):
+        """
+        Cache por instancia: llamar obtener_triggers() y luego estimar_tamano()
+        sobre la MISMA empresa no debe duplicar la llamada HTTP.
+        """
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get([self._contrato(dias_atras=10)])
+        with patch("requests.get", return_value=resp) as mock_get:
+            adapter = SecopSocrataAdapter()
+            adapter.obtener_triggers(empresa)
+            adapter.estimar_tamano(empresa)
+
+        assert mock_get.call_count == 1
+
+    def test_fallback_fecha_de_inicio_del_contrato_cuando_no_hay_fecha_de_firma(
+        self, empresa: Empresa
+    ):
+        """Sin fecha_de_firma, debe usar fecha_de_inicio_del_contrato como fallback."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        fecha = (datetime.now(timezone.utc) - timedelta(days=20)).strftime(
+            "%Y-%m-%dT%H:%M:%S.000"
+        )
+        contrato = {
+            "id_contrato": "CON-2026-002",
+            "proveedor_adjudicado": "ACME TECH SAS",
+            "objeto_del_contrato": "Consultoría",
+            "nombre_entidad": "Alcaldía de Bogotá",
+            "valor_del_contrato": "80000000",
+            "fecha_de_inicio_del_contrato": fecha,
+        }
+        resp = _mock_get([contrato])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].fecha_evento is not None
+        assert triggers[0].nivel_confianza == NivelConfianza.ALTA
+
+    def test_fallback_descripcion_del_proceso_cuando_no_hay_objeto_del_contrato(
+        self, empresa: Empresa
+    ):
+        """Sin objeto_del_contrato, debe usar descripcion_del_proceso como fallback."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        fecha = (datetime.now(timezone.utc) - timedelta(days=5)).strftime(
+            "%Y-%m-%dT%H:%M:%S.000"
+        )
+        contrato = {
+            "id_contrato": "CON-2026-003",
+            "proveedor_adjudicado": "ACME TECH SAS",
+            "descripcion_del_proceso": "Suministro de equipos de cómputo",
+            "nombre_entidad": "Ministerio de TIC",
+            "valor_del_contrato": "30000000",
+            "fecha_de_firma": fecha,
+        }
+        resp = _mock_get([contrato])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert "Suministro de equipos de cómputo" in triggers[0].descripcion
+
+    def test_403_con_token_emite_warning_autoexplicativo(
+        self, empresa: Empresa, caplog
+    ):
+        """
+        Hallazgo 1: un token 403 (Socrata rechaza "Clave API" en vez de
+        "Token de la aplicación") debe producir un warning claro para el
+        operador, no solo un log genérico de HTTP error.
+        """
+        import logging
+
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get({}, status_code=403)
+        with (
+            caplog.at_level(logging.WARNING),
+            patch("requests.get", return_value=resp),
+        ):
+            adapter = SecopSocrataAdapter(app_token="token-de-escritura-invalido")
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+        mensajes = " ".join(r.message for r in caplog.records)
+        assert "Token de la aplicación" in mensajes
+        assert "Clave API" in mensajes
+
+    def test_403_sin_token_no_emite_mensaje_de_token(self, empresa: Empresa, caplog):
+        """Un 403 sin token configurado no es un problema de tipo de token."""
+        import logging
+
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+
+        resp = _mock_get({}, status_code=403)
+        with (
+            caplog.at_level(logging.WARNING),
+            patch("requests.get", return_value=resp),
+        ):
+            adapter = SecopSocrataAdapter(app_token=None)
+            adapter.obtener_triggers(empresa)
+
+        mensajes = " ".join(r.message for r in caplog.records)
+        assert "Token de la aplicación" not in mensajes
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -218,6 +575,33 @@ class TestGitHubAdapter:
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers == []
+
+    def test_javascript_no_colisiona_con_icp_java(self, empresa: Empresa):
+        """
+        Regresión bug de raíz: "java" es subcadena de "javascript". Antes del
+        fix por palabra completa, un repo en JavaScript matcheaba
+        falsamente la tecnología ICP "Java" (lenguaje distinto).
+        """
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("frontend-app", lang="JavaScript")]
+        with patch("requests.get", return_value=_mock_get(repos)):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Java"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+
+    def test_java_real_sigue_generando_match(self, empresa: Empresa):
+        """El fix no debe romper la detección legítima de 'Java' como lenguaje."""
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("backend-service", lang="Java")]
+        with patch("requests.get", return_value=_mock_get(repos)):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Java"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].nivel_confianza == NivelConfianza.MEDIA
 
     def test_org_no_encontrada_retorna_vacio(self, empresa: Empresa):
         from src.adapters.triggers.github_adapter import GitHubAdapter
