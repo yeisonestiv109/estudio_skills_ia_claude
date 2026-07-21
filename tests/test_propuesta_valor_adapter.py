@@ -140,10 +140,23 @@ class TestPropuestaValorAdapterClasificar:
     def test_error_de_red_leyendo_homepage_retorna_none_sin_llamar_llm(
         self, empresa: Empresa
     ):
+        """
+        Regresión (auditoría 22-Jul-2026): con la cascada de reintentos
+        técnicos (rutas alternas + fallback Playwright), un Timeout en TODAS
+        las rutas HTTP debe seguir cayendo al fallback de Playwright antes
+        de rendirse — se mockea explícitamente para que ese fallback también
+        falle, preservando la intención original del test (nunca llamar al
+        LLM sin texto disponible), sin depender de que Playwright/Chromium
+        estén o no instalados en el entorno de CI.
+        """
         mock_client = MagicMock()
         with (
             patch("requests.get", side_effect=requests.exceptions.Timeout),
             patch("groq.Groq", return_value=mock_client),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value=None,
+            ),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
             resultado = adapter.clasificar(empresa)
@@ -210,6 +223,12 @@ class TestPropuestaValorAdapterClasificar:
     def test_homepage_sin_texto_visible_retorna_none_sin_llamar_llm(
         self, empresa: Empresa
     ):
+        """
+        Regresión (auditoría 22-Jul-2026): ver nota en
+        test_error_de_red_leyendo_homepage_retorna_none_sin_llamar_llm — se
+        mockea el fallback de Playwright para que también falle, aislando
+        el test del estado real de Chromium en el entorno de ejecución.
+        """
         mock_html = MagicMock()
         mock_html.status_code = 200
         mock_html.text = "<html><body><script>solo_js();</script></body></html>"
@@ -219,6 +238,10 @@ class TestPropuestaValorAdapterClasificar:
         with (
             patch("requests.get", return_value=mock_html),
             patch("groq.Groq", return_value=mock_client),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value=None,
+            ),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
             resultado = adapter.clasificar(empresa)
@@ -420,7 +443,11 @@ class TestPropuestaValorAdapterFallbackMetaTags:
     def test_sin_title_ni_meta_y_body_vacio_sigue_retornando_none(
         self, empresa: Empresa
     ):
-        """Si NI el fallback tiene contenido, el comportamiento previo se preserva."""
+        """
+        Si NI el fallback de meta tags NI el fallback de Playwright tienen
+        contenido, el comportamiento previo se preserva (regresión, auditoría
+        22-Jul-2026 — ver nota en test_error_de_red_leyendo_homepage_...).
+        """
         html_mock = _mock_html_response_spa(
             title="", meta_description="", body_visible=""
         )
@@ -429,6 +456,10 @@ class TestPropuestaValorAdapterFallbackMetaTags:
         with (
             patch("requests.get", return_value=html_mock),
             patch("groq.Groq", return_value=mock_client),
+            patch(
+                "src.adapters.triggers.propuesta_valor_adapter._renderizar_con_playwright",
+                return_value=None,
+            ),
         ):
             adapter = PropuestaValorAdapter(api_key="test-key")
             resultado = adapter.clasificar(empresa)

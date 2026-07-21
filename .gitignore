@@ -39,9 +39,15 @@ dist/
 
 # ---------------------------------------------------------------------------
 # Secretos y configuración local (NUNCA versionar)
+# Excepción: .env.example es la PLANTILLA PÚBLICA (sin secretos reales, solo
+# nombres de variable + comentarios) — SÍ debe versionarse para que
+# cualquier colaborador sepa qué variables configurar. Bug encontrado en la
+# auditoría 22-Jul-2026: el patrón .env.* la ignoraba silenciosamente, así
+# que el archivo nunca llegó al repo remoto pese a existir en disco.
 # ---------------------------------------------------------------------------
 .env
 .env.*
+!.env.example
 *.local
 secrets.json
 credentials.json

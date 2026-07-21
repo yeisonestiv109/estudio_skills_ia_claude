@@ -77,6 +77,7 @@ from src.adapters.revision_manual.paquete_revision_adapter import (
     PaqueteRevisionAdapter,
 )
 from src.adapters.triggers.propuesta_valor_adapter import PropuestaValorAdapter
+from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
 from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 from src.core.domain.text_matching import cualquiera_como_palabra_completa
 from src.core.domain.models import (
@@ -345,12 +346,21 @@ def evaluar_consenso_tamano(
     empresa: Empresa,
     adapter_ts: TheirStackAdapter,
     adapter_pv: PropuestaValorAdapter,
+    adapter_secop: SecopSocrataAdapter,
 ) -> tuple[EstadoConsensoTamano, TamanoEmpresa | None]:
     """
-    Recolecta EstimacionTamano de los dos orígenes disponibles (TheirStack —
+    Recolecta EstimacionTamano de los TRES orígenes disponibles (TheirStack —
     dato firmográfico real vía employee_count; PropuestaValorAdapter — señal
     semántica del lenguaje corporativo, ya cacheada si Capa 2 corrió antes
-    para esta misma empresa) y las pasa por el waterfall de corroboración.
+    para esta misma empresa; SecopSocrataAdapter — dato `es_pyme` verificado
+    por la entidad contratante, solo aporta si la empresa tiene contratos
+    SECOP) y las pasa por el waterfall de corroboración.
+
+    Auditoría 22-Jul-2026: SecopSocrataAdapter implementa PuertoEstimadorTamano
+    desde el frente "SECOP $q" de la sesión anterior, pero nunca se conectó
+    aquí — la documentación (estado_actual.md, flujos_motor_1_y_2.md) ya
+    afirmaba que era un "tercer origen para el waterfall", así que se corrige
+    el código para que la afirmación sea cierta.
     """
     politica = PoliticaCorroboracionTamano()
     estimaciones: list[EstimacionTamano] = []
@@ -366,6 +376,13 @@ def evaluar_consenso_tamano(
         est_pv = adapter_pv.estimar_tamano(empresa)
         if est_pv is not None:
             estimaciones.append(est_pv)
+    except Exception:
+        pass
+
+    try:
+        est_secop = adapter_secop.estimar_tamano(empresa)
+        if est_secop is not None:
+            estimaciones.append(est_secop)
     except Exception:
         pass
 
@@ -533,6 +550,9 @@ def main() -> None:
     # GROQ_API_KEY_1..N del entorno (o GROQ_API_KEY como fallback de una
     # sola clave) ante rate limits — ver src/adapters/llm/groq_key_pool.py.
     adapter_pv = PropuestaValorAdapter()
+    # Tercer origen del waterfall de tamaño (es_pyme verificado por la
+    # entidad contratante) — solo aporta si la empresa tiene contratos SECOP.
+    adapter_secop = SecopSocrataAdapter()
     # Paquete de Revisión Manual (persistente): registra evidencia
     # accionable para cada empresa PENDIENTE_REVISION_MANUAL/INDETERMINADO
     # y respeta decisiones humanas ya tomadas en corridas anteriores.
@@ -623,7 +643,7 @@ def main() -> None:
 
         # Paso 3: Waterfall de tamaño — descarta ENTERPRISE cuando el ICP pide SME.
         estado_tamano, tamano_consensuado = evaluar_consenso_tamano(
-            empresa, adapter_ts, adapter_pv
+            empresa, adapter_ts, adapter_pv, adapter_secop
         )
         if (
             estado_tamano == EstadoConsensoTamano.CONSENSO

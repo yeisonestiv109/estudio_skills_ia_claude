@@ -8,16 +8,99 @@
 
 | Motor | Descripción | Estado |
 |-------|-------------|--------|
-| **Motor 1** | Analizador ICP + Enrutador Dinámico (Groq / llama-3.3-70b) | ✅ COMPLETADO — probado E2E |
-| **Motor 2** | Cascada de 5 Triggers + dual-mode Discovery/Scoring + **Blindaje Parcero/UK** | ✅ COMPLETADO Y BLINDADO — 275 tests verdes |
+| **Motor 1** | Descubrimiento Firmográfico de TAM (Exclusivo Apollo) | ✅ COMPLETADO — Refactorizado para firmografía pura |
+| **Motor 2** | Triangulación de Señales (TheirStack, SECOP, Google, GitHub) + Waterfall Tamaño | ✅ COMPLETADO Y OPTIMIZADO — SECOP Full-Text ($q), RUES descartado |
 | **Motor 3** | Pre-CRM + Enriquecimiento (Apollo → Hunter en cascada) | ✅ COMPLETADO — probado E2E (piloto LATAM) |
 | **Motor 4** | Outbound RAG (Tavily + Groq redactor + Resend) | ✅ COMPLETADO — probado E2E (envío real a bandeja) |
 
-**Suite de tests:** 275 tests en verde (verificado 17-Jul-2026). `ruff 0.15.21` instalado y pineado.
+**Suite de tests:** 460 tests en verde (verificado 22-Jul-2026 tras auditoría). `ruff` instalado y limpio.
 
 ---
 
-## ✅ Qué se hizo en esta sesión (17-Jul-2026)
+## ✅ Auditoría Holística código↔documentación (22-Jul-2026)
+
+Revisión cruzada exhaustiva entre `estado_actual.md` + `flujos_motor_1_y_2.md`
+(y adaptadores relevantes en `tecnico/`) contra la implementación real de
+`apollo_discovery_adapter.py`, `theirstack_adapter.py`, `secop_adapter.py`,
+`PropuestaValorAdapter` y `sandbox_tbbc_real.py`. Se pidió explícitamente
+"ningún cabo suelto ni suposiciones en el aire" antes del push a la rama
+principal.
+
+**Discrepancias encontradas y corregidas:**
+
+1. **Bug real (código, no solo documentación):** `SecopSocrataAdapter`
+   implementaba `PuertoEstimadorTamano` (campo `es_pyme`) desde la sesión
+   anterior, documentado como "tercer origen del waterfall de tamaño", pero
+   `evaluar_consenso_tamano()` en `sandbox_tbbc_real.py` nunca lo invocaba —
+   solo usaba TheirStack + PropuestaValorAdapter. **Corregido:** se agregó
+   el parámetro `adapter_secop` a la función y se instanció en `main()`.
+2. **`.env.example` incompleto:** `GITHUB_TOKEN` (usado en `github_adapter.py`)
+   y `SECOP_APP_TOKEN` (usado en `secop_adapter.py`) se leían del entorno en
+   código real pero no estaban documentados en la plantilla pública.
+   **Corregido:** ambos agregados con comentarios explicativos.
+3. **`ScoringPolicy` fantasma:** `flujos_motor_1_y_2.md` describía una clase
+   `ScoringPolicy` con pesos ponderados (30% dolor, 25% tecnología, etc.)
+   como si fuera parte del flujo real del Motor 1. Nunca se materializó en
+   código — los únicos gates reales son validadores Pydantic de
+   `ManifiestoICP`. **Corregido:** diagrama Mermaid y tabla de pesos
+   actualizados, marcados explícitamente como diseño histórico no
+   implementado.
+4. **Tabla de adaptadores del Motor 2 incompleta:** no incluía `GitHubAdapter`,
+   que sí existe en código, está en `OrigenTrigger.GITHUB` y en
+   `AdapterRoutingPolicy.CATEGORIAS_CON_GITHUB`. **Corregido:** fila y
+   sección de documentación agregadas.
+5. **Wappalyzer mal documentado:** la tabla decía `wappalyzer-next (Python +
+   Playwright)`. El código real (`wappalyzer_adapter.py`) usa únicamente
+   `requests` + `BeautifulSoup`, sin Playwright — Playwright es el fallback
+   técnico de `PropuestaValorAdapter` (Capa 2 del Negative ICP), no de
+   Wappalyzer. **Corregido.**
+6. **Umbrales de SECOP inventados:** la documentación decía "ALTA: Contrato
+   > COP 500M en últimos 45 días" — el código real (`_nivel_por_fecha()`)
+   NO filtra por valor monetario, solo por antigüedad (≤180d = ALTA, 180-365d
+   = MEDIA, >365d = BAJA). **Corregido** con los umbrales reales del código.
+7. **Diagramas Mermaid desactualizados:** el flujo del Motor 2 decía "Empresa
+   descubierta por TheirStack" (obsoleto desde que Apollo es el único
+   discoverer); el mapa de dependencias de puertos seguía en v3.0 sin
+   `ApolloDiscoveryAdapter`, `GitHubAdapter`, `PropuestaValorAdapter`, ni los
+   puertos `PuertoDescubridorEmpresas`/`PuertoEstimadorTamano`/
+   `PuertoClasificadorPropuestaValor`. **Corregido**, ambos diagramas
+   actualizados a v6.0.
+8. **Secciones existentes en código sin documentación formal:** el Paquete
+   de Revisión Persistente (`PaqueteRevisionAdapter`) y los Reintentos
+   Técnicos de Capa 2 (rutas alternas + fallback Playwright) solo se
+   mencionaban de paso en este archivo. **Corregido:** se agregaron
+   secciones dedicadas en `flujos_motor_1_y_2.md` con el comportamiento real
+   del código.
+
+**Verificación post-corrección:** batería completa de pytest ejecutada tras
+el fix de código (conexión de SECOP al waterfall) — 460 tests verdes,
+0 regresiones. `ruff` limpio en los archivos tocados.
+
+**Nota sobre control de versiones:** este repositorio no tiene una rama
+`main`. La rama principal real es `setup/base-conocimiento` (`origin/HEAD`
+apunta a ella). El cierre de esta auditoría se hizo con push a esa rama.
+
+---
+
+## ✅ Qué se hizo en esta sesión (21-Jul-2026)
+
+### Refactorización de Arquitectura de Descubrimiento (Motores 1 y 2)
+
+**1. Separación Real de Discovery vs Señales:**
+- **Problema:** TheirStack traía empresas por vacantes y Apollo por tamaño al mismo tiempo, ensuciando el TAM inicial.
+- **Solución:** Motor 1 (Descubrimiento) ahora usa **exclusivamente Apollo** para armar el TAM basado 100% en firmografía. TheirStack pasó a ser exclusivamente una fuente de evaluación de señales del Motor 2.
+
+**2. Optimización SECOP (Socrata) y Rechazo RUES:**
+- **Problema:** SECOP fallaba por timeouts (10s+) al usar `LIKE '%nombre%'`. RUES era un candidato para extraer NIT.
+- **Solución SECOP:** Migrado a búsqueda Full-Text (`$q`) bajando el tiempo a ~1s. Se inyectó extracción profunda: `urlproceso.url` (link directo), `es_pyme` (para waterfall de tamaño), y UNSPSC (filtro de TI).
+- **Decisión RUES:** Rechazado como fuente automatizada debido a falta de APIs estables (payloads cifrados, scraping frágil). Se usará solo como link de consulta humana.
+
+**3. Paquete de Revisión Persistente ("Human in the Loop"):**
+- Se implementó `PaqueteRevisionAdapter` persistiendo datos en `pendientes.json`. En lugar de que el orquestador olvide las empresas dudosas, guarda la evidencia (HTML del homepage) y provee links de 1-clic para que el humano evalúe en segundos y persista su veredicto (`CONFIRMADO_PERMITIDO/EXCLUIDO`). Se agregaron reintentos técnicos con `/nosotros` y fallback a Playwright.
+
+**Archivos modificados:**
+- `src/adapters/discovery/apollo_discovery_adapter.py`, `src/adapters/triggers/secop_adapter.py`, `sandbox_tbbc_real.py`.
+- **Tests: 460 tests en verde, 0 regresiones.**
 
 ### Motor 2 — Blindaje post-piloto TBBC (3 fallos corregidos)
 
@@ -52,6 +135,19 @@
 - `sandbox_tbbc_real.py` — orquestador con fail-closed completo y 5 banners de estado
 - Tests: +28 nuevos en `test_domain_models.py`, `test_propuesta_valor_adapter.py`, `test_triggers_adapters.py`
 - **275 tests verdes, 0 regresiones, ruff limpio.**
+
+---
+## 🔄 En Evolución (18/19-Jul-2026): Pivote hacia "Signal-Based Selling"
+
+**Qué teníamos:** El Motor 1 y 2 dependían fuertemente de una sola señal ("Vacantes publicadas") extraída mediante TheirStack para descubrir y calificar prospectos.
+**Cómo buscamos:** Realizamos una investigación web profunda cruzando metodologías de ventas B2B, libros referentes (Predictable Revenue, SHiFT!, Spear Selling) y tácticas de Account-Based Sales Development (ABSD).
+**Qué encontramos:** Depender exclusivamente de vacantes crea ceguera (single-signal dependency). Las vacantes son útiles, pero carecen del vector "Urgencia" si no se evalúa su *aging* (días abierta). Existen señales más fuertes (Tier 0 y Tier 1) como victorias de contratos en SECOP o cambios de liderazgo.
+**A qué hemos llegado (Temporal):** Se está reestructurando la estrategia hacia una **Orquestación Multi-Señal**. 
+- **Tier 0 (Sangrado Activo):** Contratos ganados sin equipo (SECOP) o vacantes antiguas (>45 días).
+- **Tier 1 (Reorganización):** Nuevo CTO/Líder técnico (<90 días).
+- **Tier 2/3 (Contexto):** M&A, adopción cloud, tamaño de empresa (TAM Base usando Apollo/InfobelPRO).
+
+**Siguiente acción táctica:** Ingestar literatura especializada (SHiFT!, Predictable Revenue, Spear Selling, Fanatical Prospecting) usando un modelo de largo contexto (NotebookLM) para extraer las lógicas matemáticas de Scoring y plasmarlas en el Motor 2.
 
 ---
 
@@ -134,4 +230,6 @@
 | 2026-07-12 | 5 adaptadores Motor 2 completos. Pruebas E2E exitosas. | v3.2 |
 | 2026-07-12 | Fix Habeas Data. Memoria consolidada. Graphify activo. 7 hooks. Entorno supercargado. | v3.3 |
 | 2026-07-15 | **Motor 3 completado: spec, Core, adaptadores Apollo→Hunter (fix flujo 2 pasos), piloto LATAM ($0.17/decisor). Motor 4 completado: spec, Core, adaptadores Tavily/Groq/Resend, `PoliticaSeleccionMejorDecisor` (fix caso Rappi). Piloto E2E con envío real a bandeja de control exitoso. 208 tests verdes.** | v4.0 |
-| 2026-07-17 | **Blindaje Motor 2 (3 fallos del caso Parcero/UK corregidos): fail-closed PropuestaValorAdapter, `PAIS_DESCONOCIDO`, `PoliticaValidacionGeografica`, co-ocurrencia semántica Google Alerts, `pais_hq` en LLM, fallback de meta tags para SPAs. Sandbox TBBC batch=15: 2 leads calificados (Cielito, Colsubsidio), 15.4% tasa bruta. 275 tests verdes (+28 nuevos, 0 regresiones).** | v4.1 |
+| 2026-07-17 | **Blindaje Motor 2 (3 fallos del caso Parcero/UK corregidos). Sandbox TBBC batch=15: 2 leads calificados (Cielito, Colsubsidio). 275 tests verdes (+28 nuevos, 0 regresiones).** | v4.1 |
+| 2026-07-21 | **Refactor Discovery (M1 = Apollo puro). Optimización SECOP ($q full-text, `es_pyme`, URL). RUES rechazado. Paquete de revisión persistente `pendientes.json` + Fallback Playwright. 460 tests verdes.** | v4.2 |
+| 2026-07-22 | **Auditoría Holística código↔documentación. Fix real: `SecopSocrataAdapter.estimar_tamano()` estaba implementado pero desconectado del waterfall de tamaño — conectado en `sandbox_tbbc_real.py` (ahora 3 orígenes: TheirStack, PropuestaValorAdapter, SECOP). `.env.example` actualizado con `GITHUB_TOKEN`/`SECOP_APP_TOKEN` (existían en código, faltaban en la plantilla). `flujos_motor_1_y_2.md` corregido: `ScoringPolicy` marcado como diseño histórico nunca implementado, tabla de adaptadores completada con `GitHubAdapter`, Wappalyzer corregido (no usa Playwright — eso es `PropuestaValorAdapter`), umbrales SECOP corregidos a solo antigüedad (sin montos COP inventados), diagramas Mermaid actualizados (Apollo como discoverer, 3er origen SECOP en waterfall, mapa de puertos v6.0 con Apollo/GitHub/PropuestaValorAdapter). 460 tests verdes tras la corrección, 0 regresiones.** | v4.3 |
