@@ -13,7 +13,58 @@
 | **Motor 3** | Pre-CRM + Enriquecimiento (Apollo → Hunter en cascada) | ✅ COMPLETADO — probado E2E (piloto LATAM) |
 | **Motor 4** | Outbound RAG (Tavily + Groq redactor + Resend) | ✅ COMPLETADO — probado E2E (envío real a bandeja) |
 
-**Suite de tests:** 460 tests en verde (verificado 22-Jul-2026 tras auditoría). `ruff` instalado y limpio.
+**Suite de tests:** 331 tests en verde (verificado 22-Jul-2026 tras reconstrucción v5.0). `ruff` instalado y limpio.
+
+---
+
+## ✅ Reconstrucción v5.0 Signal-Based Selling + fix de push parcial (22-Jul-2026)
+
+**Diagnóstico:** el push del 22-Jul fue **PARCIAL**. Se subieron la memoria (`.md`)
+y los adaptadores v5.0 (`secop_adapter`, `propuesta_valor_adapter`,
+`sandbox_tbbc_real`) junto con sus tests, pero **NO** se subieron el Core v5.0 ni
+tres módulos nuevos de los que esos adaptadores dependen. Resultado: el repo
+clonado en el PC nuevo **NO importaba** (pytest fallaba en la fase de
+recolección). Además, `estado_actual.md` quedó en v4.3 sin documentar que v5.0
+ya estaba implementado.
+
+**Piezas reconstruidas** (contra los contratos ya fijados por los tests y los
+adaptadores existentes):
+
+1. **`src/core/domain/models.py`** — enums `TipoTrigger` (CAUSA/EFECTO) y
+   `TierUrgencia` (TIER_0..TIER_3); + campos opcionales `Trigger.tipo_trigger`
+   (default `EFECTO`) y `Trigger.tier_urgencia` (default `TIER_2`),
+   retrocompatibles con los adaptadores que crean `Trigger` sin ellos.
+2. **`src/core/domain/policies.py`** — `ScoreTriggerPolicy` (Signal-Based
+   Selling v5.0): puntos por tier TIER_0=240 / TIER_1=90 / TIER_2=40 /
+   TIER_3=15; `UMBRAL_CALIFICACION=150`; decay lineal diferenciado CAUSA=90d /
+   EFECTO=45d; `evaluar(triggers, adaptadores_activos) -> (score, tier_final, califica)`.
+3. **`src/core/domain/text_matching.py`** (Core puro) —
+   `contiene_palabra_completa` y `cualquiera_como_palabra_completa` (match por
+   palabra completa, case-insensitive, con tildes).
+4. **`src/adapters/llm/groq_key_pool.py`** — `GroqKeyPool`: rotación reactiva
+   con cooldown (parsea `"try again in Ns"`), descubre `GROQ_API_KEY_1..N` o
+   `GROQ_API_KEY`, clientes cacheados por clave, nunca lanza.
+5. **`src/adapters/discovery/apollo_discovery_adapter.py`** —
+   `ApolloDiscoveryAdapter` (único descubridor del Motor 1, firmografía pura;
+   implementa `PuertoDescubridorEmpresas`).
+
+**Fix adicional (bug preexistente que v5.0 pretendía cerrar):**
+`github_adapter._match_tecnologias` usaba substring ingenuo (`"java"` ⊂
+`"javascript"` → falso positivo). Ahora enruta por
+`text_matching.contiene_palabra_completa`. Se limpió también un F841
+(`pushed_at` muerto) en ese archivo.
+
+**Advertencia vigente:** `ApolloDiscoveryAdapter` es la **ÚNICA** pieza sin test
+que fije el esquema real de la API de Apollo. Implementado defensivo (degrada a
+`[]`); endpoint/params/campos **DEBEN** validarse con un smoke test real usando
+`APOLLO_API_KEY` antes de darse por definitivos.
+
+**Verificación:** suite completa en verde — **331 tests passed, 0 failed** (el
+"~460" citado antes estaba desactualizado). `ruff check src` limpio.
+
+**Nota de entorno:** el PC nuevo no tenía Python; se instaló Python 3.12 y el
+`.venv` quedó en la carpeta **PADRE** (`Proyecto Catalina Prospect\.venv`),
+fuera del repo.
 
 ---
 
@@ -233,3 +284,4 @@ apunta a ella). El cierre de esta auditoría se hizo con push a esa rama.
 | 2026-07-17 | **Blindaje Motor 2 (3 fallos del caso Parcero/UK corregidos). Sandbox TBBC batch=15: 2 leads calificados (Cielito, Colsubsidio). 275 tests verdes (+28 nuevos, 0 regresiones).** | v4.1 |
 | 2026-07-21 | **Refactor Discovery (M1 = Apollo puro). Optimización SECOP ($q full-text, `es_pyme`, URL). RUES rechazado. Paquete de revisión persistente `pendientes.json` + Fallback Playwright. 460 tests verdes.** | v4.2 |
 | 2026-07-22 | **Auditoría Holística código↔documentación. Fix real: `SecopSocrataAdapter.estimar_tamano()` estaba implementado pero desconectado del waterfall de tamaño — conectado en `sandbox_tbbc_real.py` (ahora 3 orígenes: TheirStack, PropuestaValorAdapter, SECOP). `.env.example` actualizado con `GITHUB_TOKEN`/`SECOP_APP_TOKEN` (existían en código, faltaban en la plantilla). `flujos_motor_1_y_2.md` corregido: `ScoringPolicy` marcado como diseño histórico nunca implementado, tabla de adaptadores completada con `GitHubAdapter`, Wappalyzer corregido (no usa Playwright — eso es `PropuestaValorAdapter`), umbrales SECOP corregidos a solo antigüedad (sin montos COP inventados), diagramas Mermaid actualizados (Apollo como discoverer, 3er origen SECOP en waterfall, mapa de puertos v6.0 con Apollo/GitHub/PropuestaValorAdapter). 460 tests verdes tras la corrección, 0 regresiones.** | v4.3 |
+| 2026-07-22 | **Reconstrucción v5.0 Signal-Based Selling tras push parcial: Core (TipoTrigger, TierUrgencia, campos de Trigger, ScoreTriggerPolicy), text_matching, GroqKeyPool, ApolloDiscoveryAdapter; fix de matching por palabra completa en github_adapter. 331 tests verdes, ruff limpio. Pendiente: smoke test real de ApolloDiscoveryAdapter.** | v5.0 |

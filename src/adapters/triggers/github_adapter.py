@@ -36,6 +36,7 @@ from src.core.domain.models import (
     OrigenTrigger,
     Trigger,
 )
+from src.core.domain.text_matching import contiene_palabra_completa
 from src.core.ports.interfaces import PuertoFuenteTriggers
 
 logger = logging.getLogger(__name__)
@@ -104,19 +105,20 @@ def _match_tecnologias(
     lenguaje_repo: str | None, tecnologias_objetivo: list[str]
 ) -> bool:
     """
-    Verifica si el lenguaje principal del repo hace match con el ICP.
+    Verifica si el lenguaje principal del repo hace match con el ICP, usando
+    matching por PALABRA COMPLETA (evita el falso positivo "java" ⊂ "javascript").
     """
     if not lenguaje_repo:
         return False
-    lenguaje_lower = lenguaje_repo.lower()
+    aliases = _LANGUAGE_MAP.get(lenguaje_repo, [])
     for tech in tecnologias_objetivo:
-        tech_lower = tech.lower()
-        # Match directo
-        if tech_lower in lenguaje_lower or lenguaje_lower in tech_lower:
+        # Match directo por palabra completa (ambas direcciones).
+        if contiene_palabra_completa(lenguaje_repo, tech) or contiene_palabra_completa(
+            tech, lenguaje_repo
+        ):
             return True
-        # Match vía mapa de lenguajes
-        aliases = _LANGUAGE_MAP.get(lenguaje_repo, [])
-        if any(tech_lower in alias for alias in aliases):
+        # Match vía mapa de aliases del lenguaje (alias como texto, tech como needle).
+        if any(contiene_palabra_completa(alias, tech) for alias in aliases):
             return True
     return False
 
@@ -262,7 +264,6 @@ class GitHubAdapter(PuertoFuenteTriggers):
                 continue
 
             lenguaje = repo.get("language")
-            pushed_at = repo.get("pushed_at")
             tiene_match = _match_tecnologias(lenguaje, self._tecnologias)
 
             if tiene_match:

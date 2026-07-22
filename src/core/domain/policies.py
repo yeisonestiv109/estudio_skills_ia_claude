@@ -32,6 +32,8 @@ from src.core.domain.models import (
     ResultadoExclusionCompetidor,
     Seniority,
     TamanoEmpresa,
+    TierUrgencia,
+    TipoTrigger,
     Trigger,
 )
 
@@ -559,3 +561,120 @@ class PoliticaValidacionGeografica:
             return EstadoValidacionGeografica.PERMITIDO
 
         return EstadoValidacionGeografica.EXCLUIDO
+
+
+# ===========================================================================
+# MOTOR 2 (Scoring de Urgencia) — Signal-Based Selling v5.0
+# Reemplaza el bool de TriggerAggregationPolicy por un score numérico de
+# urgencia con decay diferencial por naturaleza de la señal (CAUSA 90d,
+# EFECTO 45d). Diseño: sesión "Signal-Based Selling" post-piloto TBBC.
+# ===========================================================================
+class ScoreTriggerPolicy:
+    """
+    Scoring de urgencia de un prospecto (Signal-Based Selling v5.0).
+
+    En vez de un booleano "¿cruza el mínimo de vectores?" (TriggerAggregation
+    Policy), esta política acumula un SCORE numérico de urgencia ponderando
+    cada trigger por su TierUrgencia y aplicando un decay lineal por el tiempo
+    transcurrido desde el evento — decay diferenciado según la naturaleza de
+    la señal: una CAUSA raíz ("capacity shock", ej. un contrato SECOP ganado)
+    envejece más lento (90 días) que un EFECTO observable (ej. una vacante
+    abierta, 45 días).
+
+    Diseño (regla del 74% de SHiFT!): el presupuesto caro de Motor 3
+    (Apollo/Hunter) debe gastarse primero en los leads de mayor urgencia. El
+    score permite ordenar; el tier_final permite explicar.
+
+    Ejemplos (con señales frescas, factor de decay ≈ 1.0):
+        - Un TIER_0/CAUSA fresco (240 pts) CALIFICA solo (240 ≥ 150).
+        - Dos TIER_0 frescos ≈ 480 pts (sangrado activo doble).
+        - Un solo TIER_1 (90 pts) NO cruza el umbral (90 < 150): necesita
+          corroboración de otra señal para calificar.
+
+    Pura: no importa adaptadores ni hace red. Determinista salvo por el paso
+    del tiempo (datetime.now), inherente al concepto de data decay.
+    """
+
+    UMBRAL_CALIFICACION: int = 150
+
+    PUNTOS_POR_TIER: dict[TierUrgencia, int] = {
+        TierUrgencia.TIER_0: 240,
+        TierUrgencia.TIER_1: 90,
+        TierUrgencia.TIER_2: 40,
+        TierUrgencia.TIER_3: 15,
+    }
+
+    VENTANA_DECAY_DIAS: dict[TipoTrigger, int] = {
+        TipoTrigger.CAUSA: 90,
+        TipoTrigger.EFECTO: 45,
+    }
+
+    # Rango ordinal de urgencia: TIER_0 es el MÁS urgente (rango más bajo).
+    _RANGO_URGENCIA: dict[TierUrgencia, int] = {
+        TierUrgencia.TIER_0: 0,
+        TierUrgencia.TIER_1: 1,
+        TierUrgencia.TIER_2: 2,
+        TierUrgencia.TIER_3: 3,
+    }
+
+    def _factor_decay(self, trigger: Trigger) -> float:
+        """
+        Factor de decay lineal en [0.0, 1.0] para un trigger.
+
+        - Sin fecha_evento → 1.0 (no penalizar lo que no se puede fechar).
+        - fecha_evento en el futuro (dias < 0) → 1.0 (no premiar ni penalizar).
+        - En otro caso → max(0.0, 1.0 - dias/ventana), con ventana según
+          tipo_trigger (CAUSA 90d, EFECTO 45d).
+        """
+        if trigger.fecha_evento is None:
+            return 1.0
+        dias = (datetime.now(timezone.utc) - trigger.fecha_evento).days
+        if dias < 0:
+            return 1.0
+        ventana = self.VENTANA_DECAY_DIAS[trigger.tipo_trigger]
+        return max(0.0, 1.0 - dias / ventana)
+
+    def evaluar(
+        self,
+        triggers: list[Trigger],
+        adaptadores_activos: list[OrigenTrigger] | None = None,
+    ) -> tuple[int, TierUrgencia, bool]:
+        """
+        Retorna (score, tier_final, califica).
+
+        - score        → round(Σ PUNTOS_POR_TIER[t.tier_urgencia] *
+                          factor_decay(t)) sobre todos los triggers. Lista
+                          vacía → 0.
+        - tier_final   → el tier MÁS urgente (TIER_0 es el más urgente) entre
+                          los triggers que aún contribuyen (factor de decay
+                          > 0). Si ninguno contribuye (o lista vacía) →
+                          TierUrgencia.TIER_3.
+        - califica     → score >= UMBRAL_CALIFICACION.
+
+        El parámetro `adaptadores_activos` se acepta por compatibilidad de
+        firma con el sandbox y otras políticas del Motor 2; queda RESERVADO y
+        no gatea el resultado: el umbral de score es la única compuerta de
+        calificación en esta versión. No lanza excepción.
+        """
+        if not triggers:
+            return 0, TierUrgencia.TIER_3, False
+
+        score_acumulado = 0.0
+        tiers_contribuyentes: list[TierUrgencia] = []
+        for trigger in triggers:
+            factor = self._factor_decay(trigger)
+            score_acumulado += self.PUNTOS_POR_TIER[trigger.tier_urgencia] * factor
+            if factor > 0:
+                tiers_contribuyentes.append(trigger.tier_urgencia)
+
+        score = round(score_acumulado)
+
+        if tiers_contribuyentes:
+            tier_final = min(
+                tiers_contribuyentes, key=lambda tu: self._RANGO_URGENCIA[tu]
+            )
+        else:
+            tier_final = TierUrgencia.TIER_3
+
+        califica = score >= self.UMBRAL_CALIFICACION
+        return score, tier_final, califica

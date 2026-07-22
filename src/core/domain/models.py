@@ -63,6 +63,43 @@ class NivelConfianza(str, Enum):
     BAJA = "BAJA"
 
 
+class TipoTrigger(str, Enum):
+    """
+    Naturaleza causal de una señal (Signal-Based Selling v5.0).
+
+    CAUSA  → causa raíz / "capacity shock": el evento que crea la necesidad
+             estructural (ej. un contrato SECOP ganado sin equipo suficiente
+             para ejecutarlo). Su relevancia decae lento: ventana de decay de
+             90 días (la aplica ScoreTriggerPolicy).
+    EFECTO → síntoma observable derivado de esa causa (ej. vacantes técnicas
+             abiertas). Señal de segundo orden, más volátil: ventana de decay
+             de 45 días.
+
+    Las ventanas de decay diferenciadas (CAUSA 90d, EFECTO 45d) las aplica
+    ScoreTriggerPolicy, no este enum.
+    """
+
+    CAUSA = "CAUSA"
+    EFECTO = "EFECTO"
+
+
+class TierUrgencia(str, Enum):
+    """
+    Tier de urgencia de una señal (Signal-Based Selling v5.0), del más al
+    menos urgente.
+
+    TIER_0 → Sangrado Activo: dolor agudo en curso, máxima prioridad.
+    TIER_1 → Reorganización: cambio estructural reciente que abre ventana.
+    TIER_2 → Dolor latente / contexto: señal de fondo, no urgente por sí sola.
+    TIER_3 → Contexto débil: señal marginal, casi ruido.
+    """
+
+    TIER_0 = "TIER_0"
+    TIER_1 = "TIER_1"
+    TIER_2 = "TIER_2"
+    TIER_3 = "TIER_3"
+
+
 class OrigenTrigger(str, Enum):
     WAPPALYZER = "WAPPALYZER"
     THEIRSTACK = "THEIRSTACK"
@@ -350,6 +387,26 @@ class Trigger(BaseModel):
     fecha_evento: Optional[datetime] = Field(
         default=None,
         description="Fecha del evento original (ej. fecha del contrato SECOP). Obligatorio para calcular data decay.",
+    )
+    tipo_trigger: TipoTrigger = Field(
+        default=TipoTrigger.EFECTO,
+        description=(
+            "Naturaleza causal de la señal (Signal-Based Selling v5.0). Por "
+            "defecto EFECTO (síntoma observable) para no romper adaptadores "
+            "que crean Trigger sin especificarlo. Los adaptadores que detectan "
+            "una causa raíz (ej. SECOP: contrato ganado) lo fijan a CAUSA. "
+            "Determina la ventana de decay que aplica ScoreTriggerPolicy "
+            "(CAUSA 90d, EFECTO 45d)."
+        ),
+    )
+    tier_urgencia: TierUrgencia = Field(
+        default=TierUrgencia.TIER_2,
+        description=(
+            "Tier de urgencia de la señal (Signal-Based Selling v5.0). Por "
+            "defecto TIER_2 (dolor latente/contexto) para no romper adaptadores "
+            "que crean Trigger sin especificarlo. ScoreTriggerPolicy lo traduce "
+            "a puntos de score y lo usa para elegir el tier final del prospecto."
+        ),
     )
 
 
