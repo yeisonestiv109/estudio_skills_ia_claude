@@ -8,9 +8,10 @@ API gratuita, sin autenticación, sin límite de uso:
     Endpoint: https://www.datos.gov.co/resource/jbjy-vk9h.json
     Protocolo: Socrata Open Data API (SODA) — SoQL queries via GET params
 
-Política de NivelConfianza (modelos_dominio_core.md):
-    ALTA  → Contrato adjudicado en los últimos 180 días (liquidez inmediata)
-    MEDIA → Contrato adjudicado entre 180 y 365 días
+Política de NivelConfianza (alineada con el decay de CAUSA de ScoreTriggerPolicy):
+    ALTA  → Contrato adjudicado en los últimos 90 días (dentro de la ventana
+            de scoring de CAUSA: un contrato ALTA=TIER_0 puntúa de verdad).
+    MEDIA → Contrato adjudicado entre 90 y 365 días
     BAJA  → Contrato encontrado pero fuera de ventana de relevancia (>1 año)
 
 Contrato de error: NUNCA propaga excepciones al Core. Errores → [].
@@ -88,8 +89,14 @@ _LIMITE_CANDIDATOS_Q = 40
 # definitiva por sí sola.
 _CONFIANZA_ESTIMACION_ES_PYME = 0.55
 
-# Ventanas de tiempo para clasificar la urgencia del contrato
-_DIAS_ALTA = 180
+# Ventanas de tiempo para clasificar la urgencia del contrato.
+# _DIAS_ALTA se ALINEA con el decay de CAUSA de ScoreTriggerPolicy (90 días):
+# antes era 180, lo que etiquetaba TIER_0 a contratos de 91-180 días que luego
+# puntuaban 0 en el scoring (factor de decay CAUSA = 0 a los 90 días) — una
+# inconsistencia silenciosa. Ahora ALTA (TIER_0) significa exactamente "dentro
+# de la ventana de scoring de CAUSA". Los contratos de 90-365 días pasan a
+# MEDIA (TIER_2).
+_DIAS_ALTA = 90
 _DIAS_MEDIA = 365
 
 
@@ -106,6 +113,13 @@ def _parsear_fecha(valor: str | None) -> datetime | None:
 
 
 def _nivel_por_fecha(fecha_contrato: datetime | None) -> NivelConfianza:
+    """
+    Clasifica el contrato por antigüedad, alineado con el decay de CAUSA:
+      - <= _DIAS_ALTA (90d)  → ALTA  (dentro de la ventana de scoring CAUSA).
+      - <= _DIAS_MEDIA (365d) → MEDIA (fuera de la ventana de scoring, contexto).
+      - > _DIAS_MEDIA         → BAJA.
+      - sin fecha             → MEDIA (default conservador).
+    """
     if fecha_contrato is None:
         return NivelConfianza.MEDIA  # Sin fecha → confianza media por defecto
     hoy = datetime.now(timezone.utc)
@@ -123,11 +137,11 @@ def _tier_por_nivel(nivel: NivelConfianza) -> TierUrgencia:
     de Signal-Based Selling. Un contrato SECOP ganado es SIEMPRE una CAUSA
     (genera el "capacity shock": tienen presupuesto pero no equipo).
 
-    ALTA (≤180d) → TIER_0 (sangrado activo). Nota: ScoreTriggerPolicy aplica
-                   un decay de 90d para CAUSA, más estricto que la ventana de
-                   180d de este adaptador; la política es la autoridad final
-                   sobre caducidad — los contratos entre 90-180d se filtran
-                   allí, no aquí.
+    ALTA (≤90d)  → TIER_0 (sangrado activo). La ventana de este adaptador
+                   (_DIAS_ALTA=90) queda ALINEADA con el decay de CAUSA de
+                   ScoreTriggerPolicy (90d): un contrato ALTA=TIER_0 siempre
+                   cae dentro de la ventana de scoring y puntúa de verdad (ya
+                   no hay contratos etiquetados TIER_0 que luego puntúen 0).
     MEDIA/BAJA   → TIER_2 (dolor latente). No califican solos; y de hecho
                    serán filtrados por el decay de 90d de la política.
     """

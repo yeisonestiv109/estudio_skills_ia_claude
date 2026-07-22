@@ -232,6 +232,38 @@ class TestSecopSocrataAdapter:
         assert len(triggers) == 1
         assert triggers[0].nivel_confianza == NivelConfianza.MEDIA
 
+    def test_contrato_de_120_dias_es_media_no_alta(self, empresa: Empresa):
+        """
+        Alineación con el decay de CAUSA (_DIAS_ALTA=90, antes 180): un
+        contrato de 120 días ya NO es ALTA/TIER_0 (habría puntuado 0 en el
+        scoring), sino MEDIA/TIER_2. Fija la nueva frontera de 90 días.
+        """
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        from src.core.domain.models import TierUrgencia
+
+        resp = _mock_get([self._contrato(dias_atras=120)])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].nivel_confianza == NivelConfianza.MEDIA
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_2
+
+    def test_contrato_de_80_dias_sigue_siendo_alta_tier0(self, empresa: Empresa):
+        """Dentro de la ventana de 90 días → ALTA/TIER_0 (sangrado activo)."""
+        from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
+        from src.core.domain.models import TierUrgencia
+
+        resp = _mock_get([self._contrato(dias_atras=80)])
+        with patch("requests.get", return_value=resp):
+            adapter = SecopSocrataAdapter()
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].nivel_confianza == NivelConfianza.ALTA
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_0
+
     def test_app_token_explicito_se_envia_en_header(self, empresa: Empresa):
         """Con app_token explícito, la request debe incluir X-App-Token."""
         from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
@@ -548,6 +580,15 @@ class TestGitHubAdapter:
         """Primer GET (org/repos) exitoso, segundo GET no llamado."""
         return _mock_get(repos)
 
+    def _mock_perfil(self, blog: str = "https://acme.com") -> MagicMock:
+        """
+        Perfil de org/usuario de GitHub para la verificación de propiedad
+        (FIX #4 — anti-colisión de nombre). El `blog` es el sitio web que la
+        org declara; por defecto coincide con el dominio de la empresa fixture
+        (acme.com) para que la verificación pase.
+        """
+        return _mock_get({"blog": blog, "login": "acme"})
+
     def test_repos_con_match_icp_generan_trigger_media(self, empresa: Empresa):
         from src.adapters.triggers.github_adapter import GitHubAdapter
 
@@ -555,7 +596,10 @@ class TestGitHubAdapter:
             self._repo("backend-api", lang="Python"),
             self._repo("infra-aws", lang="Go"),
         ]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Python", "AWS"])
             triggers = adapter.obtener_triggers(empresa)
 
@@ -570,7 +614,10 @@ class TestGitHubAdapter:
         from src.adapters.triggers.github_adapter import GitHubAdapter
 
         repos = [self._repo("website", lang="PHP")]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Python", "AWS"])
             triggers = adapter.obtener_triggers(empresa)
 
@@ -585,7 +632,10 @@ class TestGitHubAdapter:
         from src.adapters.triggers.github_adapter import GitHubAdapter
 
         repos = [self._repo("frontend-app", lang="JavaScript")]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Java"])
             triggers = adapter.obtener_triggers(empresa)
 
@@ -596,7 +646,10 @@ class TestGitHubAdapter:
         from src.adapters.triggers.github_adapter import GitHubAdapter
 
         repos = [self._repo("backend-service", lang="Java")]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Java"])
             triggers = adapter.obtener_triggers(empresa)
 
@@ -643,7 +696,10 @@ class TestGitHubAdapter:
             self._repo("old-repo", lang="Python", archived=True),
             self._repo("forked-repo", lang="Python", fork=True),
         ]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
             triggers = adapter.obtener_triggers(empresa)
 
@@ -653,12 +709,108 @@ class TestGitHubAdapter:
         from src.adapters.triggers.github_adapter import GitHubAdapter
 
         repos = [self._repo("api", lang="Python", dias_atras=7)]
-        with patch("requests.get", return_value=_mock_get(repos)):
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil()],
+        ):
             adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
             triggers = adapter.obtener_triggers(empresa)
 
         assert triggers[0].fecha_evento is not None
         assert isinstance(triggers[0].fecha_evento, datetime)
+
+    # ── FIX #4: verificación de propiedad de la org (anti-colisión de nombre) ──
+    def test_org_cuyo_blog_coincide_con_dominio_genera_trigger(self, empresa: Empresa):
+        """
+        (a) La org de GitHub declara un sitio web (blog) cuyo dominio
+        registrable coincide con el de la empresa → la org SÍ le pertenece,
+        se aceptan sus repos y se genera trigger.
+        """
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("backend-api", lang="Python")]
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil("https://www.acme.com/")],
+        ):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].origen == OrigenTrigger.GITHUB
+
+    def test_org_homonima_con_blog_de_otro_dominio_no_genera_trigger(self):
+        """
+        (b) Caso real de la colisión: empresa forbes.co (Forbes Colombia) vs.
+        org GitHub `forbes` cuyo sitio web declarado es forbes.com (Forbes
+        EE.UU.). Los dominios registrables NO coinciden → NO se confía en esa
+        org → sin trigger.
+        """
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        empresa_forbes_co = Empresa(
+            nombre="Forbes Colombia",
+            dominio="forbes.co",
+            tamano=TamanoEmpresa.SME,
+            vertical="Medios",
+        )
+        repos = [self._repo("data-platform", lang="Python")]
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), self._mock_perfil("https://www.forbes.com")],
+        ):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
+            triggers = adapter.obtener_triggers(empresa_forbes_co)
+
+        assert triggers == []
+
+    def test_org_sin_blog_declarado_no_genera_trigger(self, empresa: Empresa):
+        """
+        (c) La org no declara sitio web (blog vacío/ausente): no es verificable
+        → fail-closed, sin trigger.
+        """
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("backend-api", lang="Python")]
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), _mock_get({"blog": "", "login": "acme"})],
+        ):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+
+    def test_perfil_404_no_verificable_no_genera_trigger(self, empresa: Empresa):
+        """(d) Si el perfil de la org no se puede leer (404) → sin trigger."""
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("backend-api", lang="Python")]
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), _mock_get({}, status_code=404)],
+        ):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
+
+    def test_perfil_403_rate_limit_no_genera_trigger(self, empresa: Empresa):
+        """(d bis) Un 403 (rate limit / prohibido) al leer el perfil → sin trigger."""
+        from src.adapters.triggers.github_adapter import GitHubAdapter
+
+        repos = [self._repo("backend-api", lang="Python")]
+        perfil_403 = MagicMock()
+        perfil_403.status_code = 403
+        perfil_403.headers = {"X-RateLimit-Remaining": "0"}
+        with patch(
+            "requests.get",
+            side_effect=[_mock_get(repos), perfil_403],
+        ):
+            adapter = GitHubAdapter(tecnologias_objetivo=["Python"])
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers == []
 
     def test_extraccion_org_desde_dominio(self):
         from src.adapters.triggers.github_adapter import _extraer_org_name

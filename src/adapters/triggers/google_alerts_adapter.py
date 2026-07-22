@@ -1,20 +1,51 @@
 """
 GoogleAlertsRSSAdapter — implementación del PuertoFuenteTriggers.
 
-Parsea feeds RSS de Google Alerts para detectar eventos de negocio y liderazgo
-en la empresa objetivo: M&A, rondas de inversión, llegada de nuevos C-Levels.
+Parsea feeds RSS de Google Alerts / Google News para detectar eventos de
+negocio y liderazgo en la empresa objetivo: rondas de inversión, llegada de
+nuevos C-Levels técnicos, fusiones/adquisiciones.
 
-Configuración previa: el usuario debe crear las alertas en Google Alerts
-(https://www.google.com/alerts) con salida en formato RSS y proporcionar
-las URLs al construir este adaptador.
+VERIFICACIÓN SEMÁNTICA POR LLM (fix de raíz, hallazgo de corrida real):
+    El query RSS busca el NOMBRE de la empresa en Google News. Para empresas
+    que además son MEDIOS (Portafolio, Forbes, Revista Dinero) el feed
+    devuelve sus PROPIOS artículos, y la clasificación por substring
+    ("director", "nombrado", "nuevo") etiquetaba cualquier titular como
+    "nuevo C-Level" — una fábrica de falsos positivos. El substring no
+    distingue "nombraron nuevo CTO en <empresa>" de "el director técnico de
+    la selección...".
 
-Política de NivelConfianza (definida en modelos_dominio_core.md):
-    ALTA  → Nuevo CTO/CIO/CDO confirmado en medios < 6 meses
-    MEDIA → Ronda de inversión anunciada
-    BAJA  → Mención en medios sin evento concreto identificable
+    Por eso la clasificación por keywords se reemplazó por VERIFICACIÓN
+    SEMÁNTICA con un LLM (Groq), reutilizando la misma infraestructura de
+    failover con cooldown (`GroqKeyPool`) y el mismo patrón de
+    PropuestaValorAdapter (una llamada con failover, JSON estructurado,
+    response_format json_object, model llama-3.3-70b-versatile). Los sets de
+    keywords se conservan ÚNICAMENTE como pre-filtro barato de co-ocurrencia
+    de negocio, no como clasificador final.
 
-Contrato de error: NUNCA propaga excepciones al Core.
-    Cualquier error de red o parseo se captura, se registra y retorna [].
+Mapeo de eventos verificados a la jerarquía Signal-Based Selling (SHiFT!):
+    ronda_inversion_o_capital → TIER_0 / CAUSA  (capacity shock), nivel ALTA
+    nuevo_liderazgo_tecnico   → TIER_1 / CAUSA  (reorganización),  nivel ALTA
+    fusion_o_adquisicion      → TIER_2 / CAUSA  (contexto/fit),    nivel MEDIA
+
+Modo contexto-débil (degradación con gracia — CRÍTICO):
+    Si NO hay claves Groq, o el LLM falla / da 429 sin failover / devuelve
+    JSON inválido, el adaptador NO clasifica por substring. Retorna a lo sumo
+    UN trigger TIER_3 / EFECTO / BAJA de "mención en medios" (aporta 0 al
+    score de ScoreTriggerPolicy, pero deja trazabilidad y cuenta para el
+    bonus multi-origen SOLO si existe además otra señal real de otro origen).
+    Sin LLM el adaptador queda en modo contexto-débil: JAMÁS infla a
+    TIER_0/TIER_1.
+
+    Idéntico tratamiento cuando el LLM corre pero NO verifica ningún evento
+    pese a que hubo menciones: a lo sumo el trigger TIER_3/BAJA de mención.
+
+Cap por nombre corto/genérico (≤8 chars — riesgo de homónimo): aunque el LLM
+    detecte un evento, un nombre de empresa muy corto NUNCA supera TIER_2
+    (mismo espíritu que `_es_nombre_generico`), porque el riesgo de que el
+    titular sea sobre un homónimo es alto.
+
+Contrato de error: NUNCA propaga excepciones al Core. Cualquier error de red,
+parseo o LLM se captura, se registra y se degrada (nunca lanza).
 """
 
 from __future__ import annotations
@@ -27,85 +58,34 @@ from typing import NamedTuple
 import requests
 
 import feedparser
+import groq as groq_sdk
+from pydantic import BaseModel, Field, ValidationError
 
+from src.adapters.llm.groq_key_pool import GroqKeyPool
 from src.core.domain.models import (
     Empresa,
     NivelConfianza,
     OrigenTrigger,
+    TierUrgencia,
+    TipoTrigger,
     Trigger,
 )
 from src.core.ports.interfaces import PuertoFuenteTriggers
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Palabras clave que determinan el NivelConfianza del trigger de noticias
-# ---------------------------------------------------------------------------
-_KEYWORDS_C_LEVEL = frozenset(
-    {
-        "cto",
-        "cio",
-        "cdo",
-        "chief technology",
-        "chief information",
-        "chief digital",
-        "nuevo director",
-        "new cto",
-        "nombrado",
-        "appointed",
-        "joins as",
-        "se une como",
-        "director tecnología",
-        "director tecnologia",
-    }
-)
+_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
-_KEYWORDS_INVERSION = frozenset(
-    {
-        "ronda",
-        "round",
-        "series a",
-        "series b",
-        "series c",
-        "inversión",
-        "inversion",
-        "funding",
-        "raised",
-        "levantó",
-        "levanto",
-        "millones",
-        "million",
-        "capital",
-        "financiamiento",
-        "vc",
-        "venture",
-    }
-)
-
-_KEYWORDS_MA = frozenset(
-    {
-        "adquisición",
-        "adquisicion",
-        "acquisition",
-        "merger",
-        "fusión",
-        "fusion",
-        "compra",
-        "acquired",
-        "acquired by",
-        "adquirida",
-        "se une a",
-        "joins",
-    }
-)
+# Cuántas entradas RSS candidatas (título+resumen) se envían al LLM en UNA
+# sola llamada por empresa (no una llamada por entrada).
+_MAX_ENTRADAS_CANDIDATAS = 5
 
 # ---------------------------------------------------------------------------
-# Falla 3 (caso "Parcero"): comillas exactas en el query RSS de Google Alerts
-# reducen pero NO eliminan el ruido de palabras coloquiales/genéricas que
-# también son nombres de empresa ("parcero" = amigo en colombiano). El
-# problema es de SIGNIFICADO, no de tokenización, así que la solución también
-# debe ser semántica: exigir co-ocurrencia con vocabulario de negocio antes
-# de aceptar la mención como un trigger de negocio real.
+# Glosario de co-ocurrencia de negocio — PRE-FILTRO barato (Falla 3, caso
+# "Parcero"). NO es un clasificador de tier: solo abarata la decisión de qué
+# entradas vale la pena mandar al LLM. Un match de nombre por sí solo no basta
+# como evidencia de que la mención es sobre LA empresa candidata (problema de
+# significado, no de tokenización).
 # ---------------------------------------------------------------------------
 _GLOSARIO_COOCURRENCIA_NEGOCIO = frozenset(
     {
@@ -146,11 +126,10 @@ _GLOSARIO_COOCURRENCIA_NEGOCIO = frozenset(
     }
 )
 
-# Nombres de empresa de longitud <= este umbral (en caracteres) se consideran
-# "genéricos/cortos": palabras comunes del lenguaje cotidiano son más
-# propensas a colisionar con nombres de empresa cortos (ej. "parcero",
-# "casa", "sol"). Sin evidencia adicional, su techo de confianza es BAJA
-# incluso si el texto menciona keywords de C-Level o inversión.
+# Nombres de empresa de longitud <= este umbral se consideran "genéricos/
+# cortos": palabras comunes del lenguaje cotidiano colisionan con nombres de
+# empresa cortos (ej. "parcero", "casa", "sol"). Aunque el LLM verifique un
+# evento, un nombre corto NUNCA supera TIER_2 por el riesgo de homónimo.
 _LONGITUD_MAXIMA_NOMBRE_GENERICO = 8
 
 
@@ -159,6 +138,59 @@ class _EntradaRSS(NamedTuple):
     resumen: str
     enlace: str
     fecha: datetime | None
+
+
+# ---------------------------------------------------------------------------
+# Esquema de la respuesta estructurada del LLM (verificación semántica)
+# ---------------------------------------------------------------------------
+class _EventoLiderazgo(BaseModel):
+    detectado: bool = False
+    cargo: str | None = None
+    titular_evidencia: str | None = None
+
+
+class _EventoSimple(BaseModel):
+    detectado: bool = False
+    titular_evidencia: str | None = None
+
+
+class _RespuestaVerificacion(BaseModel):
+    nuevo_liderazgo_tecnico: _EventoLiderazgo = Field(default_factory=_EventoLiderazgo)
+    ronda_inversion_o_capital: _EventoSimple = Field(default_factory=_EventoSimple)
+    fusion_o_adquisicion: _EventoSimple = Field(default_factory=_EventoSimple)
+
+
+_SYSTEM_PROMPT = """Eres un analista de señales de mercado B2B para un sistema de prospección.
+
+Recibirás el nombre y dominio de una EMPRESA OBJETIVO y una lista de titulares/resúmenes de
+noticias que la mencionan. Tu tarea es verificar, SOLO con base en esos titulares, si ocurrió
+alguno de estos tres eventos GENUINAMENTE sobre la EMPRESA OBJETIVO:
+
+1. nuevo_liderazgo_tecnico: nombramiento reciente de un cargo técnico de alto nivel
+   (CTO, VP Engineering, CIO, CDO, Head of Engineering, etc.) DENTRO de la empresa objetivo.
+2. ronda_inversion_o_capital: la empresa objetivo levantó una ronda de inversión, recibió
+   capital, financiamiento o una valoración relevante.
+3. fusion_o_adquisicion: la empresa objetivo fue adquirida, se fusionó, o adquirió a otra.
+
+FORMATO DE RESPUESTA OBLIGATORIO (responde ÚNICAMENTE con este JSON, sin markdown, sin explicaciones):
+{
+  "nuevo_liderazgo_tecnico": {"detectado": <bool>, "cargo": "<CTO|VP Engineering|CIO|...|null>", "titular_evidencia": "<titular exacto|null>"},
+  "ronda_inversion_o_capital": {"detectado": <bool>, "titular_evidencia": "<titular exacto|null>"},
+  "fusion_o_adquisicion": {"detectado": <bool>, "titular_evidencia": "<titular exacto|null>"}
+}
+
+REGLAS CRÍTICAS (fail-closed):
+1. El evento debe ser sobre LA EMPRESA OBJETIVO, no sobre un homónimo, ni sobre otra empresa
+   que solo se menciona de pasada, ni sobre el MEDIO que publica la noticia (si la empresa
+   objetivo es un medio de comunicación como un periódico o revista, sus propios artículos NO
+   son eventos sobre ella misma).
+2. El evento debe ser REAL y reciente, no una mención genérica, una opinión, ni un artículo de
+   tendencias que solo cite a la empresa.
+3. Ante CUALQUIER duda de que el evento sea genuinamente sobre la empresa objetivo, responde
+   detectado=false. Es MUCHO peor un falso positivo que un falso negativo.
+4. titular_evidencia debe ser el titular exacto (o casi exacto) de la entrada que respalda el
+   evento; usa null si detectado=false.
+5. Responde SOLO con el JSON. Sin explicaciones. Sin bloques de código markdown."""
 
 
 def _convertir_fecha_rss(entry) -> datetime | None:
@@ -170,22 +202,6 @@ def _convertir_fecha_rss(entry) -> datetime | None:
         except (ValueError, OverflowError, OSError):
             pass
     return None
-
-
-def _clasificar_nivel(titulo: str, resumen: str) -> NivelConfianza:
-    """
-    Determina el NivelConfianza basándose en las palabras clave del contenido.
-    Orden de prioridad: C-Level > Inversión/M&A > Mención genérica.
-    """
-    texto = (titulo + " " + resumen).lower()
-
-    if any(kw in texto for kw in _KEYWORDS_C_LEVEL):
-        return NivelConfianza.ALTA
-
-    if any(kw in texto for kw in _KEYWORDS_INVERSION | _KEYWORDS_MA):
-        return NivelConfianza.MEDIA
-
-    return NivelConfianza.BAJA
 
 
 def _empresa_mencionada(empresa: Empresa, texto: str) -> bool:
@@ -202,15 +218,9 @@ def _empresa_mencionada(empresa: Empresa, texto: str) -> bool:
 
 def _tiene_coocurrencia_negocio(texto: str) -> bool:
     """
-    Verifica si el texto contiene al menos una palabra del glosario de
-    co-ocurrencia de negocio (Falla 3 — caso Parcero).
-
-    El match de nombre por sí solo no basta como evidencia de que la mención
-    es sobre LA EMPRESA candidata (problema de significado, no de
-    tokenización: comillas exactas no distinguen "Parcero, la agencia" de
-    "Parcero, la palabra coloquial de fútbol"). Exigir co-ocurrencia con
-    vocabulario de negocio filtra el ruido semántico sin descartar de plano
-    el nombre exacto.
+    Pre-filtro barato (Falla 3 — caso Parcero): exige co-ocurrencia con
+    vocabulario de negocio antes de aceptar una entrada que solo matchea por
+    nombre. Filtra el ruido semántico sin descartar de plano el nombre exacto.
     """
     texto_lower = texto.lower()
     return any(palabra in texto_lower for palabra in _GLOSARIO_COOCURRENCIA_NEGOCIO)
@@ -219,29 +229,37 @@ def _tiene_coocurrencia_negocio(texto: str) -> bool:
 def _es_nombre_generico(nombre_empresa: str) -> bool:
     """
     Heurística de longitud: nombres de empresa cortos son más propensos a
-    colisionar con palabras coloquiales/genéricas del lenguaje cotidiano
-    (ej. "Parcero" = amigo en colombiano). Sin evidencia adicional robusta,
-    su techo de confianza máximo se limita a BAJA (ver _clasificar_nivel en
-    obtener_triggers), incluso si el texto contiene keywords de C-Level o
-    inversión — esas keywords podrían pertenecer al ruido, no a la empresa.
+    colisionar con palabras coloquiales/genéricas (ej. "Parcero" = amigo en
+    colombiano). Aunque el LLM verifique un evento, un nombre corto/genérico
+    NUNCA supera TIER_2 por el alto riesgo de homónimo.
     """
     return len(nombre_empresa.strip()) <= _LONGITUD_MAXIMA_NOMBRE_GENERICO
 
 
 class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
     """
-    Adaptador Motor 2 — señales de noticias y eventos de liderazgo (Google Alerts RSS).
-
-    Las URLs de los feeds RSS se configuran externamente (por el usuario o el
-    orquestador) al construir el adaptador. Cada URL corresponde a una alerta
-    de Google configurada para la empresa o el sector objetivo.
+    Adaptador Motor 2 — señales de noticias y eventos de liderazgo (Google
+    Alerts / Google News RSS) verificadas semánticamente por LLM.
 
     Args:
-        rss_urls: Lista de URLs de feeds RSS de Google Alerts.
-        palabras_clave_extra: Keywords adicionales para filtrar entradas relevantes
-                              (ej. términos del dolor_operativo del ManifiestoICP).
-        max_triggers_por_empresa: Límite de Triggers a generar por empresa
-                                  para evitar spam de señales del mismo origen.
+        rss_urls: Lista de URLs de feeds RSS de Google Alerts / Google News.
+        palabras_clave_extra: Keywords adicionales para capturar entradas
+            relevantes por dolor/anclaje del ManifiestoICP (ej. "talento
+            backend"), sin exigir que mencionen el nombre de la empresa.
+        max_triggers_por_empresa: Límite de Triggers a generar por empresa.
+        api_key: Clave de API de Groq única. Si se provee, tiene prioridad
+            sobre `key_pool` (construye un pool de una sola clave). Mismo
+            contrato que PropuestaValorAdapter.
+        key_pool: GroqKeyPool ya construido, inyectable para tests o para
+            COMPARTIR el mismo pool entre varios adaptadores del Motor 2 en
+            un mismo proceso (evita pools duplicados y comparte el estado de
+            cooldown de failover). Si None y no se pasa `api_key`, se
+            construye un GroqKeyPool() que descubre GROQ_API_KEY_1..N del
+            entorno.
+
+    Sin claves Groq (pool vacío) el adaptador queda en modo contexto-débil:
+    a lo sumo genera el trigger TIER_3/BAJA de mención en medios, nunca un
+    falso-alto TIER_0/TIER_1.
     """
 
     def __init__(
@@ -249,6 +267,8 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
         rss_urls: list[str],
         palabras_clave_extra: list[str] | None = None,
         max_triggers_por_empresa: int = 3,
+        api_key: str | None = None,
+        key_pool: GroqKeyPool | None = None,
     ) -> None:
         self._rss_urls = rss_urls
         self._keywords_extra: frozenset[str] = frozenset(
@@ -256,30 +276,47 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
         )
         self._max_triggers = max_triggers_por_empresa
 
+        if api_key is not None:
+            self._pool = GroqKeyPool(api_keys=[api_key])
+        elif key_pool is not None:
+            self._pool = key_pool
+        else:
+            self._pool = GroqKeyPool()
+
+        if not self._pool.tiene_claves:
+            logger.warning(
+                "GoogleAlerts: sin claves Groq (GROQ_API_KEY(_1..N)). El "
+                "adaptador queda en modo contexto-débil: a lo sumo triggers "
+                "TIER_3/BAJA de mención en medios, nunca TIER_0/TIER_1."
+            )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Puerto
+    # ──────────────────────────────────────────────────────────────────────
     def obtener_triggers(self, empresa: Empresa) -> list[Trigger]:
         """
         Implementa PuertoFuenteTriggers.obtener_triggers().
 
-        Parsea todos los feeds RSS configurados y filtra entradas que mencionen
-        a la empresa objetivo. Retorna Triggers ordenados por NivelConfianza
-        (ALTA primero).
+        1. Parsea los feeds RSS y pre-filtra las entradas que mencionan a la
+           empresa (con co-ocurrencia de negocio) o que matchean keywords del
+           ICP.
+        2. Si no hay entradas relevantes → [].
+        3. UNA llamada LLM por empresa verifica semánticamente los eventos.
+        4. Genera Triggers SOLO para eventos verificados, mapeados a la
+           jerarquía Signal-Based Selling; sin evento verificado (o sin LLM)
+           degrada a lo sumo a un TIER_3/BAJA de "mención en medios".
 
-        Returns:
-            list[Trigger] — triggers detectados; [] si no hay entradas relevantes
-            o si ocurre cualquier error de parseo/red.
+        Nunca propaga excepciones al Core.
         """
         if not self._rss_urls:
             logger.debug("GoogleAlerts: sin URLs RSS configuradas. Retornando [].")
             return []
 
         entradas_relevantes: list[_EntradaRSS] = []
-
         for url in self._rss_urls:
             try:
-                entradas = self._parsear_feed(url, empresa)
-                entradas_relevantes.extend(entradas)
-            except Exception as exc:
-                # Contrato: nunca propagar al Core
+                entradas_relevantes.extend(self._parsear_feed(url, empresa))
+            except Exception as exc:  # noqa: BLE001 — contrato: nunca propagar al Core
                 logger.error(
                     "GoogleAlerts: error procesando feed '%s' para '%s': %s",
                     url,
@@ -293,49 +330,37 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             )
             return []
 
-        # Techo de confianza para nombres genéricos/cortos (Falla 3): se
-        # calcula una sola vez por empresa, no por entrada.
+        candidatas = entradas_relevantes[:_MAX_ENTRADAS_CANDIDATAS]
         nombre_generico = _es_nombre_generico(empresa.nombre)
 
-        # Construir Triggers ordenando por relevancia (ALTA primero)
-        triggers: list[Trigger] = []
-        for entrada in entradas_relevantes[: self._max_triggers]:
-            nivel = _clasificar_nivel(entrada.titulo, entrada.resumen)
-            if nombre_generico:
-                # Un nombre genérico/corto nunca sostiene ALTA/MEDIA sin
-                # evidencia más fuerte que keyword-matching sobre texto libre.
-                nivel = NivelConfianza.BAJA
-            descripcion = self._formatear_descripcion(entrada, nivel)
+        # Verificación semántica (una sola llamada LLM por empresa). Si el
+        # pool no tiene cliente disponible o el LLM falla, `verificacion` es
+        # None → degradación a contexto-débil.
+        verificacion = self._verificar_eventos(empresa, candidatas)
 
-            trigger = Trigger(
-                empresa_id=empresa.id,
-                origen=OrigenTrigger.GOOGLE_ALERTS,
-                nivel_confianza=nivel,
-                descripcion=descripcion,
-                fecha_evento=entrada.fecha,
-            )
-            triggers.append(trigger)
+        if verificacion is None:
+            # Modo contexto-débil: nunca clasificar por substring; a lo sumo
+            # un trigger TIER_3/BAJA de mención en medios.
+            return self._degradar_a_mencion(empresa, candidatas)
 
-        # Ordenar ALTA > MEDIA > BAJA para que el orquestador reciba los mejores primero
-        _orden = {
-            NivelConfianza.ALTA: 0,
-            NivelConfianza.MEDIA: 1,
-            NivelConfianza.BAJA: 2,
-        }
-        triggers.sort(key=lambda t: _orden[t.nivel_confianza])
-
-        logger.info(
-            "GoogleAlerts: %d trigger(s) generados para '%s'.",
-            len(triggers),
-            empresa.nombre,
+        triggers = self._construir_triggers_de_eventos(
+            empresa, verificacion, candidatas, nombre_generico
         )
+        if not triggers:
+            # El LLM corrió pero no verificó ningún evento pese a las
+            # menciones → mismo trato contexto-débil.
+            return self._degradar_a_mencion(empresa, candidatas)
 
-        return triggers
+        return triggers[: self._max_triggers]
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Parseo RSS + pre-filtro
+    # ──────────────────────────────────────────────────────────────────────
     def _parsear_feed(self, url: str, empresa: Empresa) -> list[_EntradaRSS]:
         """
-        Descarga y parsea un feed RSS usando headers de navegador para evadir WAF.
-        Filtra entradas que mencionan a la empresa.
+        Descarga y parsea un feed RSS usando headers de navegador para evadir
+        WAF. Filtra entradas que mencionan a la empresa (con co-ocurrencia de
+        negocio) o que matchean keywords del ICP.
         """
         _BROWSER_HEADERS = {
             "User-Agent": (
@@ -361,14 +386,12 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             return []
 
         relevantes: list[_EntradaRSS] = []
-
         for entry in feed.get("entries", []):
             titulo = getattr(entry, "title", "") or ""
             resumen = getattr(entry, "summary", "") or ""
             enlace = getattr(entry, "link", "") or ""
             texto_completo = titulo + " " + resumen
 
-            # Filtrar por empresa y/o por keywords del ICP.
             menciona_empresa = _empresa_mencionada(empresa, texto_completo)
             menciona_keyword = any(
                 kw in texto_completo.lower() for kw in self._keywords_extra
@@ -377,13 +400,9 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
             if not (menciona_empresa or menciona_keyword):
                 continue
 
-            # Falla 3 (caso Parcero): un match de NOMBRE por sí solo no basta
-            # como evidencia — el nombre puede ser una palabra coloquial. Se
-            # exige co-ocurrencia con el glosario de negocio antes de aceptar
-            # la entrada como relevante. Los matches por keyword extra del
-            # ICP (dolor_operativo/anclaje_tecnologico) no pasan por este
-            # filtro: ya son términos específicos de negocio, no palabras
-            # genéricas del lenguaje cotidiano.
+            # Match por NOMBRE solo → exigir co-ocurrencia de negocio (Falla 3).
+            # Los matches por keyword del ICP ya son términos específicos de
+            # negocio, no pasan por este filtro.
             if menciona_empresa and not menciona_keyword:
                 if not _tiene_coocurrencia_negocio(texto_completo):
                     continue
@@ -399,18 +418,309 @@ class GoogleAlertsRSSAdapter(PuertoFuenteTriggers):
 
         return relevantes
 
-    @staticmethod
-    def _formatear_descripcion(entrada: _EntradaRSS, nivel: NivelConfianza) -> str:
-        """Genera la descripción legible del Trigger según el nivel detectado."""
-        titulo_truncado = (
-            (entrada.titulo[:120] + "...")
-            if len(entrada.titulo) > 120
-            else entrada.titulo
-        )
-        nivel_label = {
-            NivelConfianza.ALTA: "Cambio de liderazgo C-Level",
-            NivelConfianza.MEDIA: "Evento de inversión o M&A",
-            NivelConfianza.BAJA: "Mención en medios",
-        }[nivel]
+    # ──────────────────────────────────────────────────────────────────────
+    # Verificación semántica por LLM (con failover)
+    # ──────────────────────────────────────────────────────────────────────
+    def _verificar_eventos(
+        self, empresa: Empresa, entradas: list[_EntradaRSS]
+    ) -> _RespuestaVerificacion | None:
+        """
+        UNA llamada LLM por empresa. Retorna la verificación estructurada, o
+        None ante cualquier fallo (sin claves/cooldown, error de red, JSON
+        inválido) — el llamador lo trata como degradación a contexto-débil.
+        """
+        cliente = self._pool.cliente_activo()
+        if cliente is None:
+            logger.warning(
+                "GoogleAlerts: sin clientes Groq disponibles (sin claves o "
+                "todas en enfriamiento) para '%s'. Modo contexto-débil.",
+                empresa.nombre,
+            )
+            return None
 
-        return f"{nivel_label}: '{titulo_truncado}' — Fuente: {entrada.enlace or 'RSS'}"
+        contenido = self._construir_prompt_usuario(empresa, entradas)
+        crudo = self._llamar_llm_con_failover(cliente, contenido, empresa)
+        if not crudo:
+            return None
+
+        try:
+            return _RespuestaVerificacion.model_validate_json(crudo)
+        except ValidationError as exc:
+            logger.warning(
+                "GoogleAlerts: respuesta LLM con formato inválido para '%s': %s. "
+                "Degradando a contexto-débil.",
+                empresa.nombre,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _construir_prompt_usuario(empresa: Empresa, entradas: list[_EntradaRSS]) -> str:
+        lineas = [
+            f"EMPRESA OBJETIVO: {empresa.nombre}",
+            f"DOMINIO: {empresa.dominio}",
+            "",
+            "TITULARES / RESÚMENES A VERIFICAR:",
+        ]
+        for i, e in enumerate(entradas, start=1):
+            resumen = e.resumen.strip()
+            if len(resumen) > 300:
+                resumen = resumen[:300] + "..."
+            lineas.append(f"{i}. Título: {e.titulo}")
+            if resumen:
+                lineas.append(f"   Resumen: {resumen}")
+        return "\n".join(lineas)
+
+    def _llamar_llm_con_failover(
+        self, cliente: groq_sdk.Groq, contenido: str, empresa: Empresa
+    ) -> str | None:
+        """
+        Invoca al LLM con el cliente activo. Ante 429 (RateLimitError),
+        registra la clave agotada en el pool (cooldown) y reintenta UNA vez
+        con la siguiente clave disponible. Si el pool queda agotado, o ante
+        cualquier otro error, retorna None (degradación, nunca propaga).
+        Mismo patrón que PropuestaValorAdapter.
+        """
+        try:
+            return self._invocar_llm(cliente, contenido)
+        except groq_sdk.RateLimitError as exc:
+            logger.warning(
+                "GoogleAlerts: rate limit para '%s': %s", empresa.nombre, exc
+            )
+            cliente_failover = self._pool.registrar_rate_limit(exc)
+            if cliente_failover is None:
+                logger.error(
+                    "GoogleAlerts: pool de claves Groq agotado (todas en "
+                    "enfriamiento). Sin reintento para '%s'.",
+                    empresa.nombre,
+                )
+                return None
+            try:
+                return self._invocar_llm(cliente_failover, contenido)
+            except groq_sdk.RateLimitError as exc2:
+                logger.warning(
+                    "GoogleAlerts: rate limit también en la clave de failover "
+                    "para '%s': %s. Sin más reintentos.",
+                    empresa.nombre,
+                    exc2,
+                )
+                self._pool.registrar_rate_limit(exc2)
+                return None
+            except Exception as exc2:  # noqa: BLE001 — nunca propagar al Core
+                logger.error(
+                    "GoogleAlerts: error inesperado con LLM (failover) para "
+                    "'%s': %s",
+                    empresa.nombre,
+                    exc2,
+                )
+                return None
+        except groq_sdk.APIError as exc:
+            logger.error(
+                "GoogleAlerts: error de API para '%s': %s", empresa.nombre, exc
+            )
+            return None
+        except Exception as exc:  # noqa: BLE001 — nunca propagar al Core
+            logger.error(
+                "GoogleAlerts: error inesperado con LLM para '%s': %s",
+                empresa.nombre,
+                exc,
+            )
+            return None
+
+    def _invocar_llm(self, cliente: groq_sdk.Groq, contenido: str) -> str | None:
+        """Llamada directa al SDK. Sin manejo de errores — eso lo hace el llamador."""
+        completion = cliente.chat.completions.create(
+            model=_DEFAULT_MODEL,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": contenido},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=400,
+        )
+        return completion.choices[0].message.content
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Construcción de Triggers a partir de la verificación
+    # ──────────────────────────────────────────────────────────────────────
+    def _construir_triggers_de_eventos(
+        self,
+        empresa: Empresa,
+        verificacion: _RespuestaVerificacion,
+        entradas: list[_EntradaRSS],
+        nombre_generico: bool,
+    ) -> list[Trigger]:
+        """
+        Mapea los eventos verificados (detectado=True) a Triggers de la
+        jerarquía Signal-Based Selling. Solo eventos verificados generan
+        trigger. Orden de prioridad: ronda (TIER_0) → liderazgo (TIER_1) →
+        M&A (TIER_2).
+        """
+        triggers: list[Trigger] = []
+
+        ronda = verificacion.ronda_inversion_o_capital
+        if ronda.detectado:
+            tier, nivel = self._cap_generico(
+                TierUrgencia.TIER_0, NivelConfianza.ALTA, nombre_generico
+            )
+            triggers.append(
+                self._crear_trigger(
+                    empresa,
+                    tier,
+                    nivel,
+                    ronda.titular_evidencia,
+                    entradas,
+                    "Ronda de inversión / capital",
+                )
+            )
+
+        liderazgo = verificacion.nuevo_liderazgo_tecnico
+        if liderazgo.detectado:
+            tier, nivel = self._cap_generico(
+                TierUrgencia.TIER_1, NivelConfianza.ALTA, nombre_generico
+            )
+            cargo = liderazgo.cargo or "cargo técnico C-Level"
+            triggers.append(
+                self._crear_trigger(
+                    empresa,
+                    tier,
+                    nivel,
+                    liderazgo.titular_evidencia,
+                    entradas,
+                    f"Nuevo liderazgo técnico ({cargo})",
+                )
+            )
+
+        ma = verificacion.fusion_o_adquisicion
+        if ma.detectado:
+            tier, nivel = self._cap_generico(
+                TierUrgencia.TIER_2, NivelConfianza.MEDIA, nombre_generico
+            )
+            triggers.append(
+                self._crear_trigger(
+                    empresa,
+                    tier,
+                    nivel,
+                    ma.titular_evidencia,
+                    entradas,
+                    "Fusión o adquisición",
+                )
+            )
+
+        return triggers
+
+    @staticmethod
+    def _cap_generico(
+        tier: TierUrgencia, nivel: NivelConfianza, nombre_generico: bool
+    ) -> tuple[TierUrgencia, NivelConfianza]:
+        """
+        Cap por nombre corto/genérico (≤8 chars): aunque el LLM detecte el
+        evento, un nombre corto NUNCA supera TIER_2 (riesgo de homónimo). Se
+        rebaja también el nivel de confianza ALTA→MEDIA en ese caso.
+        """
+        if not nombre_generico:
+            return tier, nivel
+        if tier in (TierUrgencia.TIER_0, TierUrgencia.TIER_1):
+            tier = TierUrgencia.TIER_2
+        if nivel == NivelConfianza.ALTA:
+            nivel = NivelConfianza.MEDIA
+        return tier, nivel
+
+    def _crear_trigger(
+        self,
+        empresa: Empresa,
+        tier: TierUrgencia,
+        nivel: NivelConfianza,
+        titular_evidencia: str | None,
+        entradas: list[_EntradaRSS],
+        etiqueta: str,
+    ) -> Trigger:
+        titular = (titular_evidencia or "").strip()
+        fecha = self._fecha_para_evidencia(titular, entradas)
+        titular_mostrar = titular or (entradas[0].titulo if entradas else etiqueta)
+        if len(titular_mostrar) > 120:
+            titular_mostrar = titular_mostrar[:120] + "..."
+        enlace = self._enlace_para_evidencia(titular, entradas)
+        descripcion = (
+            f"[GA] {etiqueta} (verificado por análisis semántico): "
+            f"'{titular_mostrar}' — Fuente: {enlace or 'RSS'}"
+        )
+        return Trigger(
+            empresa_id=empresa.id,
+            origen=OrigenTrigger.GOOGLE_ALERTS,
+            nivel_confianza=nivel,
+            descripcion=descripcion,
+            fecha_evento=fecha,
+            tipo_trigger=TipoTrigger.CAUSA,
+            tier_urgencia=tier,
+        )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Degradación con gracia (modo contexto-débil)
+    # ──────────────────────────────────────────────────────────────────────
+    def _degradar_a_mencion(
+        self, empresa: Empresa, entradas: list[_EntradaRSS]
+    ) -> list[Trigger]:
+        """
+        Genera a lo sumo UN trigger TIER_3 / EFECTO / BAJA de "mención en
+        medios". Aporta 0 al score de ScoreTriggerPolicy (TIER_3 = 0 puntos),
+        pero deja trazabilidad y cuenta para el bonus multi-origen SOLO si
+        existe además otra señal real de otro origen. NUNCA infla a TIER_0/1.
+        """
+        if not entradas:
+            return []
+        entrada = entradas[0]
+        titulo = entrada.titulo
+        if len(titulo) > 120:
+            titulo = titulo[:120] + "..."
+        descripcion = (
+            f"[GA] Mención en medios (contexto débil, sin evento verificado): "
+            f"'{titulo}' — Fuente: {entrada.enlace or 'RSS'}"
+        )
+        trigger = Trigger(
+            empresa_id=empresa.id,
+            origen=OrigenTrigger.GOOGLE_ALERTS,
+            nivel_confianza=NivelConfianza.BAJA,
+            descripcion=descripcion,
+            fecha_evento=entrada.fecha,
+            tipo_trigger=TipoTrigger.EFECTO,
+            tier_urgencia=TierUrgencia.TIER_3,
+        )
+        return [trigger]
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Emparejar la evidencia del LLM con la entrada RSS (para fecha/enlace)
+    # ──────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _entrada_para_evidencia(
+        titular: str, entradas: list[_EntradaRSS]
+    ) -> _EntradaRSS | None:
+        """
+        Encuentra la entrada RSS cuyo título mejor coincide con el titular de
+        evidencia devuelto por el LLM (co-ocurrencia por subcadena en
+        cualquier dirección). Si no hay match, retorna None.
+        """
+        if not titular:
+            return None
+        titular_lower = titular.lower()
+        for e in entradas:
+            titulo_lower = e.titulo.lower()
+            if titulo_lower and (
+                titulo_lower in titular_lower or titular_lower in titulo_lower
+            ):
+                return e
+        return None
+
+    @classmethod
+    def _fecha_para_evidencia(
+        cls, titular: str, entradas: list[_EntradaRSS]
+    ) -> datetime | None:
+        """fecha_evento = fecha de la entrada RSS de evidencia si existe; si no, None."""
+        entrada = cls._entrada_para_evidencia(titular, entradas)
+        return entrada.fecha if entrada is not None else None
+
+    @classmethod
+    def _enlace_para_evidencia(cls, titular: str, entradas: list[_EntradaRSS]) -> str:
+        entrada = cls._entrada_para_evidencia(titular, entradas)
+        return entrada.enlace if entrada is not None else ""

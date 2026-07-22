@@ -56,6 +56,7 @@ load_dotenv()
 
 # ── Imports del proyecto ──────────────────────────────────────────────────
 from src.adapters.llm.groq_adapter import GroqICPAdapter
+from src.adapters.llm.groq_key_pool import GroqKeyPool
 from src.adapters.triggers.github_adapter import GitHubAdapter
 from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
@@ -132,8 +133,16 @@ def recolectar_triggers(
     adapter_ts: TheirStackAdapter,
     manifiesto: ManifiestoICP,
     adaptadores_activos: list,
+    key_pool_groq: GroqKeyPool | None = None,
 ) -> list[Trigger]:
-    """Ejecuta los 5 adaptadores del Motor 2 según lo habilitado por el Enrutador."""
+    """
+    Ejecuta los 5 adaptadores del Motor 2 según lo habilitado por el Enrutador.
+
+    key_pool_groq: GroqKeyPool COMPARTIDO para la verificación semántica del
+    GoogleAlertsRSSAdapter (mismo pool que PropuestaValorAdapter, para no
+    duplicar pools ni el estado de cooldown de failover). Si es None, el
+    adaptador construye su propio GroqKeyPool() por defecto.
+    """
     todos_triggers: list[Trigger] = []
 
     # TheirStack — scoring
@@ -150,6 +159,7 @@ def recolectar_triggers(
             adapter_ga = GoogleAlertsRSSAdapter(
                 rss_urls=[rss_url],
                 palabras_clave_extra=manifiesto.anclaje_tecnologico,
+                key_pool=key_pool_groq,
             )
             todos_triggers.extend(adapter_ga.obtener_triggers(empresa))
         except Exception:
@@ -292,8 +302,15 @@ def main() -> None:
 
     empresas_calificadas = 0
 
+    # Pool de claves Groq COMPARTIDO por todas las empresas para la
+    # verificación semántica de Google Alerts (evita construir un pool por
+    # empresa y comparte el estado de cooldown de failover entre llamadas).
+    key_pool_groq = GroqKeyPool()
+
     for idx, empresa in enumerate(empresas, start=1):
-        triggers = recolectar_triggers(empresa, adapter_ts, manifiesto, adaptadores_activos)
+        triggers = recolectar_triggers(
+            empresa, adapter_ts, manifiesto, adaptadores_activos, key_pool_groq
+        )
         califica = policy.evaluar(triggers, adaptadores_activos)
         if califica:
             empresas_calificadas += 1

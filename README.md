@@ -46,7 +46,8 @@ Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, 
 │       ├── 01-playbook-m4-entrevista.md · 02-playbook-m5-relacion.md
 │
 ├── 20-Bitacora_Decisiones/           ← HIPOCAMPO (registro del porqué de las decisiones)
-│   └── 2026-07-12-blindaje-motor-2.md
+│   ├── 2026-07-12-blindaje-motor-2.md
+│   └── 2026-07-22-descubrimiento-y-scoring-motores-1-2.md  ← investigación (decisión pendiente)
 │
 ├── 99-Archivo_Muerto/                ← EL OLVIDO (no leer; borradores viejos)
 │
@@ -74,8 +75,12 @@ Usar la IA como **vehículo** para resolver problemas de alto valor a empresas, 
 
 ## Estado
 
+- ✅ **Motores 1-4 implementados** (Descubrimiento firmográfico, Triangulación de señales, Pre-CRM + enriquecimiento, Outbound RAG).
+- ✅ **444 tests en verde**, `ruff` limpio en `src`.
+- ✅ **Motor 2 blindado** (precisión + Signal-Based Selling v5.0): `ScoreTriggerPolicy` mejor-por-origen, exclusión de competidores en cascada, validación geográfica, verificación semántica por LLM.
+- 🔬 **Estrategia de descubrimiento en revisión empírica** — el run #2 (TBBC real) dio 0 calificadas por cuello de botella en el descubrimiento, no en el scoring. Decisión de arquitectura (Híbrido Apollo ∪ TheirStack) y reforma del Negative ICP **pendientes**. Ver [bitácora 2026-07-22](20-Bitacora_Decisiones/2026-07-22-descubrimiento-y-scoring-motores-1-2.md).
 - ✅ Base de conocimiento consolidada y validada (jun-2026, re-verificada 4-jul-2026): 4 pilares + técnico + validación + estrategia.
 - ✅ 5 Módulos del Vendedor Híbrido, facturación (Colombia) y hacks de IA incorporados.
 - 🧹 **Purga greenfield (7-jul-2026):** el repo se enfocó exclusivamente en el **Prospector Vía B**. Se removieron los canales Vía A (Workana, Etsy, guía freelance) y el doc `prospector.md` (IP de la contratante). Recuperable vía historial de git.
 - ✅ Cabina de Mando documentada: entorno, Skills y Hooks nativos + MCP (ver `.kiro/settings/environment_setup.md`).
-- ⏳ Tareas abiertas centralizadas en el [Checklist de Pendientes](estrategia/pendientes-checklist.md). Prioridad: avanzar **Catalina/Prospector** y el build del producto.
+- ⏳ Tareas abiertas centralizadas en el [Checklist de Pendientes](01-Fundamentos_Estrategia/pendientes-checklist.md). Prioridad: avanzar **Catalina/Prospector** y el build del producto.
