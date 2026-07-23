@@ -57,6 +57,7 @@ from src.core.domain.models import (
     EstimacionTamano,
     OrigenTrigger,
     TamanoEmpresa,
+    TipoOrganizacion,
 )
 from src.core.ports.interfaces import (
     PuertoClasificadorPropuestaValor,
@@ -160,7 +161,7 @@ def _renderizar_con_playwright(url: str) -> str | None:
 _SYSTEM_PROMPT = """Eres un analista de clasificación de empresas B2B para un sistema de prospección.
 
 Recibirás el texto público de la homepage de una empresa. Tu única tarea es responder
-TRES preguntas sobre esa empresa, en base ÚNICAMENTE al texto proporcionado.
+CUATRO preguntas sobre esa empresa, en base ÚNICAMENTE al texto proporcionado.
 
 FORMATO DE RESPUESTA OBLIGATORIO (responde ÚNICAMENTE con este JSON, sin markdown, sin explicaciones):
 {
@@ -178,14 +179,24 @@ FORMATO DE RESPUESTA OBLIGATORIO (responde ÚNICAMENTE con este JSON, sin markdo
               la empresa, inferido de direcciones físicas, menciones de ciudad/país, dominio, o cualquier
               otra pista textual (ej. 'London' o 'UK' -> 'GB'; 'Bogotá' o 'Colombia' -> 'CO'; 'Ciudad de
               México' -> 'MX'). Usa null si el texto no da NINGUNA pista verificable del país de HQ. No
-              adivines a partir del idioma del texto solamente: el idioma español no implica LATAM.>"
+              adivines a partir del idioma del texto solamente: el idioma español no implica LATAM.>",
+  "tipo_organizacion": "<uno de: EMPRESA_PRIVADA | GOBIERNO | ONG_FUNDACION | MEDIOS | EDUCACION |
+                        GREMIO_ASOCIACION | OTRO. Clasifica la NATURALEZA de la organización:
+                        EMPRESA_PRIVADA = empresa privada con ánimo de lucro (el caso típico);
+                        GOBIERNO = entidad pública, ministerio, alcaldía, ente regulador o estatal;
+                        ONG_FUNDACION = organización sin ánimo de lucro, fundación, cooperación
+                        internacional; MEDIOS = medio de comunicación, revista, periódico, portal de
+                        noticias; EDUCACION = universidad, colegio, instituto educativo; GREMIO_ASOCIACION
+                        = gremio, cámara de comercio, asociación sectorial; OTRO = si no encaja en ninguna
+                        de las anteriores. Usa null solo si el texto no da NINGUNA pista del tipo.>"
 }
 
 REGLAS CRÍTICAS:
 1. Responde SOLO con el JSON. Sin explicaciones. Sin bloques de código markdown.
 2. Si el texto es insuficiente para juzgar es_vendor_it con razonable confianza, aun así responde tu
    mejor estimación — el llamador ya sabe que esto es una inferencia, no un hecho verificado.
-3. tamano_estimado y pais_hq pueden ser null; es_vendor_it NUNCA puede ser null (siempre true o false)."""
+3. tamano_estimado, pais_hq y tipo_organizacion pueden ser null; es_vendor_it NUNCA puede ser null
+   (siempre true o false)."""
 
 
 def _construir_url(dominio: str) -> str:
@@ -214,21 +225,48 @@ def _normalizar_pais_hq(valor: str | None) -> str | None:
     return None
 
 
+def _normalizar_tipo_organizacion(valor: str | None) -> TipoOrganizacion | None:
+    """
+    Normaliza el campo tipo_organizacion crudo del LLM a un miembro válido de
+    TipoOrganizacion, o None si no es utilizable.
+
+    Contrato defensivo (mismo patrón que _normalizar_pais_hq): el LLM puede
+    responder null, un valor fuera del vocabulario, o con espacios/minúsculas.
+    Cualquier valor no reconocido se descarta como None en vez de tumbar toda
+    la respuesta (que también contiene es_vendor_it, tamano y país). Un
+    tipo_organizacion=None NO excluye la empresa: PoliticaTipoOrganizacion es
+    fail-open en este eje (ver su docstring).
+    """
+    if not valor:
+        return None
+    candidato = valor.strip().upper()
+    try:
+        return TipoOrganizacion(candidato)
+    except ValueError:
+        return None
+
+
 class _RespuestaClasificacion(BaseModel):
     """Esquema de validación de la respuesta cruda del LLM."""
 
     es_vendor_it: bool
     tamano_estimado: TamanoEmpresa | None = None
     pais_hq: str | None = None
+    # Crudo (str) en vez de TipoOrganizacion directo: un valor fuera del
+    # vocabulario NO debe invalidar toda la respuesta — se normaliza aparte
+    # (ver _normalizar_tipo_organizacion) para caer a None sin perder las
+    # otras tres señales de la misma llamada.
+    tipo_organizacion: str | None = None
 
 
 @dataclass(frozen=True)
 class _AnalisisPropuestaValor:
-    """Resultado interno combinado: las tres señales de una sola llamada al LLM."""
+    """Resultado interno combinado: las cuatro señales de una sola llamada al LLM."""
 
     es_vendor_it: bool
     tamano_estimado: TamanoEmpresa | None
     pais_hq: str | None
+    tipo_organizacion: TipoOrganizacion | None
 
 
 class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTamano):
@@ -372,6 +410,25 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
         analisis = self._analizar(empresa)
         return analisis.pais_hq if analisis is not None else None
 
+    def tipo_organizacion(self, empresa: Empresa) -> TipoOrganizacion | None:
+        """
+        Expone el TIPO de organización inferido semánticamente (empresa
+        privada, gobierno, ONG, medios, educación, gremio, otro), para que el
+        composition root aplique PoliticaTipoOrganizacion (Motor 2 — gate de
+        tipo de organización, afinamiento post-piloto TBBC).
+
+        Reutiliza la MISMA llamada cacheada que clasificar()/estimar_tamano()/
+        pais_hq(): no gasta una segunda lectura web ni una segunda llamada al
+        LLM para la misma empresa.
+
+        Retorna None si el análisis no pudo completarse (scraping/LLM sin
+        señal) o si el LLM no pudo determinar el tipo. None es "sin señal", no
+        "empresa sospechosa": PoliticaTipoOrganizacion trata None como apta
+        (fail-open en este eje; los demás gates siguen aplicando).
+        """
+        analisis = self._analizar(empresa)
+        return analisis.tipo_organizacion if analisis is not None else None
+
     # ──────────────────────────────────────────────────────────────────────
     # Lógica interna compartida — una lectura web + una llamada LLM
     # ──────────────────────────────────────────────────────────────────────
@@ -414,18 +471,23 @@ class PropuestaValorAdapter(PuertoClasificadorPropuestaValor, PuertoEstimadorTam
             return None
 
         pais_hq_normalizado = _normalizar_pais_hq(respuesta.pais_hq)
+        tipo_org_normalizado = _normalizar_tipo_organizacion(
+            respuesta.tipo_organizacion
+        )
         logger.info(
             "PropuestaValorAdapter: '%s' → es_vendor_it=%s, tamano_estimado=%s, "
-            "pais_hq=%s",
+            "pais_hq=%s, tipo_organizacion=%s",
             empresa.nombre,
             respuesta.es_vendor_it,
             respuesta.tamano_estimado,
             pais_hq_normalizado,
+            tipo_org_normalizado,
         )
         return _AnalisisPropuestaValor(
             es_vendor_it=respuesta.es_vendor_it,
             tamano_estimado=respuesta.tamano_estimado,
             pais_hq=pais_hq_normalizado,
+            tipo_organizacion=tipo_org_normalizado,
         )
 
     def _llamar_llm_con_failover(

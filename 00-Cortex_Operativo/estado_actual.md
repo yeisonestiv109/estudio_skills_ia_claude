@@ -13,7 +13,53 @@
 | **Motor 3** | Pre-CRM + Enriquecimiento (Apollo → Hunter en cascada) | ✅ COMPLETADO — probado E2E (piloto LATAM) |
 | **Motor 4** | Outbound RAG (Tavily + Groq redactor + Resend) | ✅ COMPLETADO — probado E2E (envío real a bandeja) |
 
-**Suite de tests:** 331 tests en verde (verificado 22-Jul-2026 tras reconstrucción v5.0). `ruff` instalado y limpio.
+**Suite de tests:** **444 tests en verde** (verificado 22-Jul-2026 tras el blindaje de precisión/scoring — v6.2). El conteo bajó respecto al "460" histórico porque se consolidaron/reemplazaron tests obsoletos; ahora incluye cobertura nueva de `ScoreTriggerPolicy` (mejor-por-origen), `ApolloDiscoveryAdapter`, verificación de dominio en GitHub, gate de tipo de organización y heurística de país por ccTLD. `ruff check src` limpio.
+
+---
+
+## 🔬 Blindaje de precisión/scoring Motor 2 + investigación de descubrimiento (22-Jul-2026, v6.2)
+
+**Contexto:** tras la reconstrucción v5.0, se blindó el Motor 2 con 6 fixes de
+raíz de precisión y scoring, se corrió el sandbox real de TBBC (run #2) y se
+hizo una investigación empírica del descubrimiento contra APIs reales. Los
+fixes de código YA están en el working tree; la investigación queda
+consolidada como **decisiones aún NO tomadas**.
+
+**1. Seis fixes de raíz (precisión + scoring), 444 tests verdes:**
+- `ScoreTriggerPolicy` reconciliada a spec canónica v5.0 (200/100/50/0 +
+  bonus +30 multi-origen / +50 cruce TIER_0, decay CAUSA 90d / EFECTO 45d,
+  umbral 150) **y** corregida con **agregación mejor-por-origen** (un origen
+  ruidoso ya no puede calificar un lead solo — hallazgo estructural).
+- TheirStack: "dos ejes de tiempo" (aging ≥45d ⇒ TIER_0; `fecha_evento=now`
+  para que el decay no mate la vacante aún abierta).
+- SECOP: ventana ALTA alineada al decay de CAUSA (90d).
+- Google Alerts: verificación semántica por LLM (fin de la fábrica de falsos
+  "C-level"), con degradación con gracia (sin LLM ⇒ TIER_3, nunca falso-alto).
+- GitHub: verificación de que la org pertenece al dominio (anti-colisión
+  `forbes.com` vs Forbes Colombia).
+- Gate de tipo de organización (gobierno/ONG/medios/educación/gremio) vía la
+  Capa 2 LLM ya existente. Heurística de país por ccTLD (IANA) antes del
+  scraping caro.
+
+**2. Resultado del run #2 (TBBC real):** 50 descubiertas → 17 excluidas por
+"competencia" (muchas MAL: Tecnoaguas, mayoristas, colegios, defensa — por el
+heurístico de nombre `"tecnolog"`), 8 descartadas por tipo (correcto: Blu
+Radio, Agencia Nacional Digital, 6 colegios), 5 a revisión manual (fallos de
+scraping), 20 analizadas, **0 calificadas**. Diagnóstico: los filtros de
+precisión funcionan; el **cuello de botella es el DESCUBRIMIENTO** — Apollo
+trae población equivocada, sin señales, sin un solo trigger de TheirStack.
+
+**3. Investigación empírica consolidada** en la nueva entrada de bitácora →
+[`20-Bitacora_Decisiones/2026-07-22-descubrimiento-y-scoring-motores-1-2.md`](../20-Bitacora_Decisiones/2026-07-22-descubrimiento-y-scoring-motores-1-2.md).
+Incluye el probe de Apollo (NAICS post-filtro), TheirStack (filtros
+tamaño+cargo), SECOP (no sirve como descubridor), y el cruce con el reporte
+consolidado externo.
+
+**4. Decisiones PENDIENTES (del fundador, NO tomadas):**
+- **Descubrimiento Híbrido Multi-Fuente (Opción C)** — Apollo (NAICS
+  post-filtro) ∪ TheirStack (filtros tamaño+cargo), dedup por dominio.
+- **Reforma del Negative ICP** — eliminar el heurístico de nombre `"tecnolog"`,
+  hard-exclude solo con confirmación LLM, ante duda marcar/nurturing.
 
 ---
 
@@ -204,6 +250,15 @@ apunta a ella). El cierre de esta auditoría se hizo con push a esa rama.
 
 ## 🔜 PRÓXIMO PASO / SIGUIENTE SESIÓN
 
+0. **DECIDIR LA ARQUITECTURA DE DESCUBRIMIENTO con base en el probe (PRIORIDAD).**
+   El run #2 dio 0 calificadas por descubrimiento (no por scoring). Con la
+   investigación empírica ya consolidada en la bitácora del 22-Jul, el
+   fundador debe decidir: (a) ¿implementar el Híbrido C (Apollo NAICS
+   post-filtro ∪ TheirStack tamaño+cargo, dedup por dominio)?; (b) ¿aprobar la
+   reforma del Negative ICP (eliminar heurístico `"tecnolog"`)?; (c) confirmar
+   los NAICS de software (5415, 5112/5132, 5182) y el aging Tier-0 (45 vs
+   45-60d). Ver [`20-Bitacora_Decisiones/2026-07-22-descubrimiento-y-scoring-motores-1-2.md`](../20-Bitacora_Decisiones/2026-07-22-descubrimiento-y-scoring-motores-1-2.md).
+
 1. **Validación manual de los 2 leads calificados (BLOQUEANTE antes de Motor 3):**
    - **Colsubsidio:** verificar qué división exactamente está buscando desarrolladores. ¿Construcción de plataforma interna o modernización de legacy? Si es válido → enriquecer con Motor 3.
    - **Cielito (cielito.co):** verificar que es empresa tech (startup o empresa armando equipo in-house), no la marca de alimentos "Cielito Lindo". Si es válido → enriquecer con Motor 3.
@@ -285,3 +340,4 @@ apunta a ella). El cierre de esta auditoría se hizo con push a esa rama.
 | 2026-07-21 | **Refactor Discovery (M1 = Apollo puro). Optimización SECOP ($q full-text, `es_pyme`, URL). RUES rechazado. Paquete de revisión persistente `pendientes.json` + Fallback Playwright. 460 tests verdes.** | v4.2 |
 | 2026-07-22 | **Auditoría Holística código↔documentación. Fix real: `SecopSocrataAdapter.estimar_tamano()` estaba implementado pero desconectado del waterfall de tamaño — conectado en `sandbox_tbbc_real.py` (ahora 3 orígenes: TheirStack, PropuestaValorAdapter, SECOP). `.env.example` actualizado con `GITHUB_TOKEN`/`SECOP_APP_TOKEN` (existían en código, faltaban en la plantilla). `flujos_motor_1_y_2.md` corregido: `ScoringPolicy` marcado como diseño histórico nunca implementado, tabla de adaptadores completada con `GitHubAdapter`, Wappalyzer corregido (no usa Playwright — eso es `PropuestaValorAdapter`), umbrales SECOP corregidos a solo antigüedad (sin montos COP inventados), diagramas Mermaid actualizados (Apollo como discoverer, 3er origen SECOP en waterfall, mapa de puertos v6.0 con Apollo/GitHub/PropuestaValorAdapter). 460 tests verdes tras la corrección, 0 regresiones.** | v4.3 |
 | 2026-07-22 | **Reconstrucción v5.0 Signal-Based Selling tras push parcial: Core (TipoTrigger, TierUrgencia, campos de Trigger, ScoreTriggerPolicy), text_matching, GroqKeyPool, ApolloDiscoveryAdapter; fix de matching por palabra completa en github_adapter. 331 tests verdes, ruff limpio. Pendiente: smoke test real de ApolloDiscoveryAdapter.** | v5.0 |
+| 2026-07-22 | **Blindaje de precisión/scoring Motor 2 (6 fixes de raíz: ScoreTriggerPolicy mejor-por-origen + spec v5.0, TheirStack dos ejes de tiempo, SECOP ventana ALTA 90d, Google Alerts verificación LLM, GitHub verificación de dominio, gate de tipo de organización + país por ccTLD). Run #2 TBBC real: 0 calificadas → cuello de botella = descubrimiento. Investigación empírica (probe Apollo/TheirStack/SECOP) consolidada en bitácora 2026-07-22. Decisiones de discovery (Híbrido C) y reforma del Negative ICP PENDIENTES del fundador. 444 tests verdes, ruff limpio en src.** | v6.2 |

@@ -23,6 +23,7 @@ from src.core.domain.models import (
     EstimacionTamano,
     OrigenTrigger,
     TamanoEmpresa,
+    TipoOrganizacion,
 )
 
 
@@ -680,6 +681,122 @@ class TestPropuestaValorAdapterReintentosTecnicos:
 
         assert resultado == "Texto renderizado con JavaScript"
         mock_browser.close.assert_called_once()
+
+
+class TestPropuestaValorAdapterTipoOrganizacion:
+    """
+    FIX #5: el LLM clasifica también el TIPO de organización en la MISMA
+    llamada cacheada. Alimenta PoliticaTipoOrganizacion (gate de tipo).
+    """
+
+    def test_tipo_gobierno_extraido_correctamente(self, empresa: Empresa):
+        json_llm = (
+            '{"es_vendor_it": false, "tamano_estimado": "ENTERPRISE", '
+            '"pais_hq": "CO", "tipo_organizacion": "GOBIERNO"}'
+        )
+        with (
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una entidad del Estado"),
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.tipo_organizacion(empresa)
+
+        assert resultado == TipoOrganizacion.GOBIERNO
+
+    def test_tipo_empresa_privada_extraido_correctamente(self, empresa: Empresa):
+        json_llm = (
+            '{"es_vendor_it": false, "tamano_estimado": "SME", '
+            '"tipo_organizacion": "EMPRESA_PRIVADA"}'
+        )
+        with (
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una empresa privada"),
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.tipo_organizacion(empresa)
+
+        assert resultado == TipoOrganizacion.EMPRESA_PRIVADA
+
+    def test_tipo_ausente_o_null_retorna_none(self, empresa: Empresa):
+        json_llm = '{"es_vendor_it": false, "tamano_estimado": "SME", "tipo_organizacion": null}'
+        with (
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto ambiguo")
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            resultado = adapter.tipo_organizacion(empresa)
+
+        assert resultado is None
+
+    def test_tipo_valor_no_reconocido_se_descarta_sin_romper_otras_senales(
+        self, empresa: Empresa
+    ):
+        """
+        Un tipo fuera del vocabulario NO debe invalidar toda la respuesta: se
+        cae a None (tipo) pero es_vendor_it/tamaño/país siguen disponibles.
+        """
+        json_llm = (
+            '{"es_vendor_it": true, "tamano_estimado": "SME", '
+            '"tipo_organizacion": "COOPERATIVA_RARA"}'
+        )
+        with (
+            patch(
+                "requests.get",
+                return_value=_mock_html_response("Somos una fábrica de software"),
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            assert adapter.tipo_organizacion(empresa) is None
+            # El resto de señales de la MISMA llamada sigue intacto.
+            assert adapter.clasificar(empresa) == CategoriaEmpresa.AGENCIA_IT
+
+    def test_tipo_normaliza_minusculas(self, empresa: Empresa):
+        json_llm = (
+            '{"es_vendor_it": false, "tamano_estimado": null, '
+            '"tipo_organizacion": "medios"}'
+        )
+        with (
+            patch(
+                "requests.get", return_value=_mock_html_response("Portal de noticias")
+            ),
+            patch("groq.Groq", return_value=_mock_groq_client(json_llm)),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            assert adapter.tipo_organizacion(empresa) == TipoOrganizacion.MEDIOS
+
+    def test_tipo_comparte_cache_con_clasificar_y_estimar_tamano(self, empresa: Empresa):
+        """(d) Una sola llamada LLM alimenta clasificar + estimar_tamano + tipo_organizacion."""
+        json_llm = (
+            '{"es_vendor_it": true, "tamano_estimado": "SME", '
+            '"tipo_organizacion": "EMPRESA_PRIVADA"}'
+        )
+        mock_groq = _mock_groq_client(json_llm)
+        with (
+            patch(
+                "requests.get", return_value=_mock_html_response("Texto de la empresa")
+            ) as mock_get,
+            patch("groq.Groq", return_value=mock_groq),
+        ):
+            adapter = PropuestaValorAdapter(api_key="test-key")
+            adapter.clasificar(empresa)
+            adapter.estimar_tamano(empresa)
+            adapter.tipo_organizacion(empresa)
+
+        mock_get.assert_called_once()
+        mock_groq.chat.completions.create.assert_called_once()
+
+    def test_tipo_sin_api_key_retorna_none(self, empresa: Empresa):
+        adapter = PropuestaValorAdapter(api_key=None)
+        assert adapter.tipo_organizacion(empresa) is None
 
 
 class TestPropuestaValorAdapterSnippetHomepage:

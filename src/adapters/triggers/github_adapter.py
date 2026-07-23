@@ -9,9 +9,26 @@ API de búsqueda: 10 req/min sin token, 30 req/min con token.
 
 Estrategia de búsqueda:
     1. Extraer el nombre de la organización del dominio (acme.com → acme).
-    2. GET /orgs/{org}/repos para verificar si existe en GitHub.
-    3. Si existe: analizar repos activos, filtrar por tecnologías del ICP.
-    4. Generar Trigger según relevancia (repos activos con match → MEDIA).
+    2. GET /orgs/{org}/repos (fallback /users/{user}/repos) para ver si existe.
+    3. VERIFICAR PROPIEDAD (anti-colisión de nombre): antes de aceptar los
+       repos como señal de LA empresa, GET /orgs/{org} (fallback /users/{user})
+       para leer el sitio web declarado por la org (campo `blog`) y comparar
+       su dominio registrable contra empresa.dominio. Si no coinciden (o la
+       org no declara sitio web), NO se confía en esos repos → [].
+    4. Si la org pertenece a la empresa: analizar repos activos, filtrar por
+       tecnologías del ICP.
+    5. Generar Trigger según relevancia (repos activos con match → MEDIA).
+
+Anti-colisión de nombre (bug de raíz corregido): _extraer_org_name toma el
+nombre raíz del dominio y busca en GitHub por ese nombre. Colisiona con orgs
+globales homónimas: "Forbes Colombia" (forbes.co) matcheaba la org GitHub
+`forbes` (de forbes.com de EE.UU.); igual "portafolio", "bia". La verificación
+de propiedad (paso 3) cierra ese hueco comparando el dominio del sitio web que
+la PROPIA org de GitHub declara contra el dominio de la empresa buscada.
+
+Costo de rate limit: la verificación agrega 1 request por empresa con org
+candidata. Es aceptable — GitHub es un adaptador condicional (AdapterRouting
+Policy solo lo activa para ciertas categorías) y de volumen bajo.
 
 Manejo de rate limits:
     - HTTP 403 con X-RateLimit-Remaining: 0 → rate limit → retornar []
@@ -30,6 +47,7 @@ from datetime import datetime
 
 import requests
 
+from src.core.domain.dominio import mismo_dominio_base
 from src.core.domain.models import (
     Empresa,
     NivelConfianza,
@@ -171,11 +189,26 @@ class GitHubAdapter(PuertoFuenteTriggers):
         if not org:
             return []
 
-        # Intentar como organización primero, luego como usuario
+        # Intentar como organización primero, luego como usuario. Se recuerda
+        # cuál de los dos respondió para consultar el perfil correcto en la
+        # verificación de propiedad (paso 3).
         repos = self._obtener_repos_org(org)
+        es_org = repos is not None
         if repos is None:
             repos = self._obtener_repos_user(org)
         if not repos:
+            return []
+
+        # Verificación de propiedad (anti-colisión de nombre): solo se confía
+        # en estos repos si la org/usuario declara un sitio web cuyo dominio
+        # registrable coincide con el de la empresa buscada.
+        if not self._org_pertenece_a_empresa(org, empresa.dominio, es_org):
+            logger.info(
+                "GitHub: org '%s' NO verificada como propiedad de '%s' "
+                "(colisión de nombre no confirmada). Sin trigger.",
+                org,
+                empresa.dominio,
+            )
             return []
 
         return self._analizar_repos(repos, empresa, org)
@@ -249,6 +282,102 @@ class GitHubAdapter(PuertoFuenteTriggers):
                 return None
 
         return None
+
+    def _org_pertenece_a_empresa(
+        self, org: str, dominio_empresa: str, es_org: bool
+    ) -> bool:
+        """
+        Verifica que la org/usuario de GitHub `org` realmente pertenezca a la
+        empresa cuyo dominio es `dominio_empresa`, comparando el sitio web que
+        la PROPIA org declara en su perfil (campo `blog`) contra el dominio de
+        la empresa (por dominio registrable, vía mismo_dominio_base).
+
+        Retorna True solo si el perfil declara un `blog` cuyo dominio base
+        coincide con el de la empresa. Retorna False si:
+            - el perfil no se pudo leer (404/403/red/error),
+            - el perfil no declara `blog` (o está vacío),
+            - el dominio del `blog` NO coincide con el de la empresa (colisión
+              de nombre: ej. empresa forbes.co vs. org GitHub con blog
+              forbes.com).
+
+        Fail-closed: ante cualquier duda, NO se confía en la org (retorna
+        False) — es preferible perder una señal de una org legítima sin blog
+        declarado que atribuir a la empresa los repos de una org homónima
+        ajena.
+        """
+        endpoint = "orgs" if es_org else "users"
+        url = f"{_GITHUB_API}/{endpoint}/{org}"
+        perfil = self._get_perfil(url)
+        if not isinstance(perfil, dict):
+            return False
+
+        blog = perfil.get("blog")
+        if not blog or not str(blog).strip():
+            logger.debug(
+                "GitHub: perfil de '%s' sin sitio web declarado (blog). "
+                "No verificable.",
+                org,
+            )
+            return False
+
+        coincide = mismo_dominio_base(str(blog), dominio_empresa)
+        if not coincide:
+            logger.debug(
+                "GitHub: sitio web de la org '%s' (%s) no coincide con el "
+                "dominio de la empresa (%s). Posible colisión de nombre.",
+                org,
+                blog,
+                dominio_empresa,
+            )
+        return coincide
+
+    def _get_perfil(self, url: str) -> dict | None:
+        """
+        GET del perfil de una org/usuario de GitHub. Retorna el dict del
+        perfil, o None ante 404/403/red/no-200/JSON inválido.
+
+        Mismo contrato de error que _get_repos (nunca propaga; 403 rate-limit
+        → None), pero sin los params de listado de repos ni reintentos: es una
+        sola lectura de metadatos.
+        """
+        try:
+            response = requests.get(
+                url,
+                headers=self._headers,
+                timeout=_REQUEST_TIMEOUT_SECS,
+            )
+        except requests.exceptions.Timeout:
+            logger.warning("GitHub: timeout leyendo perfil '%s'. Retornando None.", url)
+            return None
+        except requests.exceptions.RequestException as exc:
+            logger.error("GitHub: error de red leyendo perfil '%s': %s", url, exc)
+            return None
+
+        if response.status_code == 404:
+            logger.debug("GitHub: perfil no encontrado en '%s'.", url)
+            return None
+
+        if response.status_code == 403:
+            remaining = response.headers.get("X-RateLimit-Remaining", "?")
+            if remaining == "0":
+                logger.warning("GitHub: rate limit alcanzado (perfil). Retornando None.")
+            else:
+                logger.warning("GitHub: acceso prohibido (403) en perfil '%s'.", url)
+            return None
+
+        if response.status_code != 200:
+            logger.warning(
+                "GitHub: HTTP %d leyendo perfil '%s'. Retornando None.",
+                response.status_code,
+                url,
+            )
+            return None
+
+        try:
+            data = response.json()
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
 
     def _analizar_repos(
         self, repos: list[dict], empresa: Empresa, org: str

@@ -36,6 +36,7 @@ from src.core.domain.models import (
     ResultadoExclusionCompetidor,
     Seniority,
     TamanoEmpresa,
+    TipoOrganizacion,
     Trigger,
 )
 from src.core.domain.policies import (
@@ -46,6 +47,7 @@ from src.core.domain.policies import (
     PoliticaFronterasEnvio,
     PoliticaRegistroRebote,
     PoliticaSeleccionMejorDecisor,
+    PoliticaTipoOrganizacion,
     PoliticaValidacionGeografica,
     TriggerAggregationPolicy,
     UmbralCalidadDecisor,
@@ -1042,3 +1044,48 @@ class TestResultadoExclusionCompetidorFailClosed:
             "REQUIERE_ANALISIS_SEMANTICO",
             "PENDIENTE_REVISION_MANUAL",
         }
+
+
+# ---------------------------------------------------------------------------
+# Bloque 22: PoliticaTipoOrganizacion — gate de tipo de organización (FIX #5)
+# excluir gobierno/ONG/medios/educación/gremio; fail-OPEN para None/OTRO.
+# ---------------------------------------------------------------------------
+class TestPoliticaTipoOrganizacion:
+    policy = PoliticaTipoOrganizacion()
+
+    def test_gobierno_no_es_apta(self):
+        """Caso CNSC/UPME: un ente público no encaja en el ICP de empresas privadas."""
+        assert self.policy.es_apta(TipoOrganizacion.GOBIERNO) is False
+
+    def test_empresa_privada_es_apta(self):
+        assert self.policy.es_apta(TipoOrganizacion.EMPRESA_PRIVADA) is True
+
+    def test_none_es_apta_fail_open(self):
+        """
+        Tipo indeterminado NO excluye (fail-open en este eje): otros gates
+        —Negative ICP, geografía, tamaño, score— siguen aplicando.
+        """
+        assert self.policy.es_apta(None) is True
+
+    def test_otro_es_apta(self):
+        """OTRO (no encasillable) tampoco excluye: solo un tipo no-empresa afirmado."""
+        assert self.policy.es_apta(TipoOrganizacion.OTRO) is True
+
+    @pytest.mark.parametrize(
+        "tipo",
+        [
+            TipoOrganizacion.GOBIERNO,
+            TipoOrganizacion.ONG_FUNDACION,
+            TipoOrganizacion.MEDIOS,
+            TipoOrganizacion.EDUCACION,
+            TipoOrganizacion.GREMIO_ASOCIACION,
+        ],
+    )
+    def test_todos_los_tipos_no_empresa_son_descartados(
+        self, tipo: TipoOrganizacion
+    ):
+        assert self.policy.es_apta(tipo) is False
+
+    def test_no_lanza_para_ningun_tipo(self):
+        for tipo in list(TipoOrganizacion) + [None]:
+            assert isinstance(self.policy.es_apta(tipo), bool)

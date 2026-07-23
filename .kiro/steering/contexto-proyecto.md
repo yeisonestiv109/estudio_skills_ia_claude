@@ -20,43 +20,43 @@ Usar la IA como **vehículo** (no producto) para resolver problemas de alto valo
 
 ## El fundador (resumen)
 
-Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Backend), Popayán, Colombia. Detalle → [`docs/fundamentos/perfil-fundador.md`](../../docs/fundamentos/perfil-fundador.md).
+Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Backend), Popayán, Colombia. Detalle → [`01-Fundamentos_Estrategia/perfil-fundador.md`](../../01-Fundamentos_Estrategia/perfil-fundador.md).
 
 ## Mapa de memoria (a dónde ir)
 
 ### Fundamentos (los 4 pilares)
-- Visión y enfoque → [`docs/fundamentos/00-vision-y-enfoque.md`](../../docs/fundamentos/00-vision-y-enfoque.md)
-- Pilar 1 · Mentalidad → [`docs/fundamentos/01-mentalidad-alto-rendimiento.md`](../../docs/fundamentos/01-mentalidad-alto-rendimiento.md)
-- Pilar 2 · Valor empresarial (3 reglas + 4 áreas + Arquitecto Digital) → [`docs/fundamentos/02-principios-valor-empresarial.md`](../../docs/fundamentos/02-principios-valor-empresarial.md)
-- Pilar 3 · Ventas y prospección (**5 Módulos del Vendedor Híbrido**) → [`docs/fundamentos/03-estrategia-ventas-prospeccion.md`](../../docs/fundamentos/03-estrategia-ventas-prospeccion.md)
-- Pilar 4 · IA y modelos de negocio → [`docs/fundamentos/04-ia-conceptos-y-modelos-negocio.md`](../../docs/fundamentos/04-ia-conceptos-y-modelos-negocio.md)
-- Presentación / casos de éxito → [`docs/fundamentos/presentacion-fundadores.md`](../../docs/fundamentos/presentacion-fundadores.md)
+- Visión y enfoque → [`01-Fundamentos_Estrategia/00-vision-y-enfoque.md`](../../01-Fundamentos_Estrategia/00-vision-y-enfoque.md)
+- Pilar 1 · Mentalidad → [`01-Fundamentos_Estrategia/01-mentalidad-alto-rendimiento.md`](../../01-Fundamentos_Estrategia/01-mentalidad-alto-rendimiento.md)
+- Pilar 2 · Valor empresarial (3 reglas + 4 áreas + Arquitecto Digital) → [`01-Fundamentos_Estrategia/02-principios-valor-empresarial.md`](../../01-Fundamentos_Estrategia/02-principios-valor-empresarial.md)
+- Pilar 3 · Ventas y prospección (**5 Módulos del Vendedor Híbrido**) → [`01-Fundamentos_Estrategia/03-estrategia-ventas-prospeccion.md`](../../01-Fundamentos_Estrategia/03-estrategia-ventas-prospeccion.md)
+- Pilar 4 · IA y modelos de negocio → [`01-Fundamentos_Estrategia/04-ia-conceptos-y-modelos-negocio.md`](../../01-Fundamentos_Estrategia/04-ia-conceptos-y-modelos-negocio.md)
+- Presentación / casos de éxito → [`01-Fundamentos_Estrategia/presentacion-fundadores.md`](../../01-Fundamentos_Estrategia/presentacion-fundadores.md)
 
 ### Estrategia y ejecución
-- Reglas del juego (no negociables) → [`estrategia/reglas-del-juego.md`](../../estrategia/reglas-del-juego.md)
-- Hoja de ruta (fases hacia el producto B2B) → [`estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../estrategia/hoja-de-ruta-freelance-a-b2b.md)
-- Facturación (Colombia) · Productividad/CRM · Propósitos y mentores · Modelo de agencia unipersonal → `estrategia/`
-- Situación contractual y sociedad (IP, 15%, clean-room) → [`estrategia/situacion-contractual-y-sociedad.md`](../../estrategia/situacion-contractual-y-sociedad.md)
+- Reglas del juego (no negociables) → [`01-Fundamentos_Estrategia/reglas-del-juego.md`](../../01-Fundamentos_Estrategia/reglas-del-juego.md)
+- Hoja de ruta (fases hacia el producto B2B) → [`01-Fundamentos_Estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../01-Fundamentos_Estrategia/hoja-de-ruta-freelance-a-b2b.md)
+- Facturación (Colombia) · Productividad/CRM · Propósitos y mentores · Modelo de agencia unipersonal → `01-Fundamentos_Estrategia/`
+- Situación contractual y sociedad (IP, 15%, clean-room) → [`01-Fundamentos_Estrategia/situacion-contractual-y-sociedad.md`](../../01-Fundamentos_Estrategia/situacion-contractual-y-sociedad.md)
 
 > 🧹 **Nota de purga (7-jul-2026):** el workspace se enfocó como lienzo greenfield del **Prospector Vía B**. Se removieron del repo los canales Vía A (Workana, Etsy, guía freelance 30 días) y el doc `prospector.md` (IP de la contratante). Todo es recuperable vía historial de git si se requiere reactivar un canal.
-- Naming de la marca (⏳ nombre por decidir) → [`estrategia/marca-naming.md`](../../estrategia/marca-naming.md)
-- Dashboard de pendientes → [`estrategia/pendientes-checklist.md`](../../estrategia/pendientes-checklist.md)
+- Naming de la marca (⏳ nombre por decidir) → [`01-Fundamentos_Estrategia/marca-naming.md`](../../01-Fundamentos_Estrategia/marca-naming.md)
+- Dashboard de pendientes → [`01-Fundamentos_Estrategia/pendientes-checklist.md`](../../01-Fundamentos_Estrategia/pendientes-checklist.md)
 
 ### Técnico y validación
-- **Arquitectura y paradigmas del build nuevo e independiente** → [`docs/tecnico/arquitectura-y-paradigmas.md`](../../docs/tecnico/arquitectura-y-paradigmas.md)
-- **Diseño del Prospector Vía B — M1 (ICP Parser) + M2 (Triggers)** → [`docs/tecnico/prospector-m1-m2-design.md`](../../docs/tecnico/prospector-m1-m2-design.md)
+- **Arquitectura y paradigmas del build nuevo e independiente** → [`10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md`](../../10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md)
+- **Diseño del Prospector Vía B — M1 (ICP Parser) + M2 (Triggers)** → [`10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md`](../../10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md)
 - **Configuración de la Cabina de Mando (entorno/skills/hooks/MCP)** → [`.kiro/settings/environment_setup.md`](../settings/environment_setup.md)
-- Costo por lead (datos reales) → [`docs/tecnico/costo-por-lead.md`](../../docs/tecnico/costo-por-lead.md)
-- Stack y orquestación (Antigravity/Kiro/Stitch + MCPs) → [`docs/tecnico/stack-y-orquestacion.md`](../../docs/tecnico/stack-y-orquestacion.md)
-- Guía práctica de Kiro (specs/steering/hooks/MCP/automatizaciones) → [`docs/tecnico/kiro-guia-practica.md`](../../docs/tecnico/kiro-guia-practica.md)
-- Evaluación de ECC (cherry-pick; **tiene adaptador Kiro**) → [`docs/tecnico/evaluacion-ecc.md`](../../docs/tecnico/evaluacion-ecc.md)
-- Modelo de agencia de IA unipersonal (go-to-market) → [`estrategia/modelo-agencia-ia-unipersonal.md`](../../estrategia/modelo-agencia-ia-unipersonal.md)
-- Stack SDLC con IA (Kiro/Claude/Antigravity) → [`docs/tecnico/stack-sdlc-ia.md`](../../docs/tecnico/stack-sdlc-ia.md)
-- Hacks de agentes de IA → [`docs/tecnico/hacks-agentes-ia.md`](../../docs/tecnico/hacks-agentes-ia.md)
-- Validación de fuentes (dato real vs hype) → [`docs/validacion/validacion-fuentes.md`](../../docs/validacion/validacion-fuentes.md)
+- Costo por lead (datos reales) → [`10-Memoria_Consolidada/tecnico/costo-por-lead.md`](../../10-Memoria_Consolidada/tecnico/costo-por-lead.md)
+- Stack y orquestación (Antigravity/Kiro/Stitch + MCPs) → [`10-Memoria_Consolidada/tecnico/stack-y-orquestacion.md`](../../10-Memoria_Consolidada/tecnico/stack-y-orquestacion.md)
+- Guía práctica de Kiro (specs/steering/hooks/MCP/automatizaciones) → [`10-Memoria_Consolidada/tecnico/kiro-guia-practica.md`](../../10-Memoria_Consolidada/tecnico/kiro-guia-practica.md)
+- Evaluación de ECC (cherry-pick; **tiene adaptador Kiro**) → [`10-Memoria_Consolidada/tecnico/evaluacion-ecc.md`](../../10-Memoria_Consolidada/tecnico/evaluacion-ecc.md)
+- Modelo de agencia de IA unipersonal (go-to-market) → [`01-Fundamentos_Estrategia/modelo-agencia-ia-unipersonal.md`](../../01-Fundamentos_Estrategia/modelo-agencia-ia-unipersonal.md)
+- Stack SDLC con IA (Kiro/Claude/Antigravity) → [`10-Memoria_Consolidada/tecnico/stack-sdlc-ia.md`](../../10-Memoria_Consolidada/tecnico/stack-sdlc-ia.md)
+- Hacks de agentes de IA → [`10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md`](../../10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md)
+- Validación de fuentes (dato real vs hype) → [`10-Memoria_Consolidada/validacion/validacion-fuentes.md`](../../10-Memoria_Consolidada/validacion/validacion-fuentes.md)
 
 ### Cliente / oportunidad B2B activa
-- `proyectos/catalina-prospector/` — **Catalina Rúa, clienta potencial del Prospector** para su propio emprendimiento. Playbooks de Módulo 4 y 5 afinados. Ver [`README`](../../proyectos/catalina-prospector/README.md).
+- `10-Memoria_Consolidada/proyecto-catalina/` — **Catalina Rúa, clienta potencial del Prospector** para su propio emprendimiento. Playbooks de Módulo 4 y 5 afinados. Ver [`README`](../../10-Memoria_Consolidada/proyecto-catalina/README.md).
 
 
 ## Los 5 Módulos del Vendedor Híbrido (marco oficial de ventas)
@@ -83,7 +83,7 @@ Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Back
 
 Reglas que Kiro sigue al construir software o gestionar este repo:
 
-1. **Memoria modular conectada:** prohibido hipertrofiar un solo archivo. La memoria se reparte: `.kiro/steering/contexto-proyecto.md` (filosofía y reglas) · `docs/tecnico/` (stack y producto) · `estrategia/pendientes-checklist.md` (dashboard).
+1. **Memoria modular conectada:** prohibido hipertrofiar un solo archivo. La memoria se reparte: `.kiro/steering/contexto-proyecto.md` (filosofía y reglas) · `10-Memoria_Consolidada/tecnico/` (stack y producto) · `01-Fundamentos_Estrategia/pendientes-checklist.md` (dashboard).
 2. **Diseño basado en evidencia visual:** ante capturas/maquetas, generar código front/back modular y listo para desplegar, adaptado a móvil.
 3. **Autonomía con control de errores (modo auto):** probar flujos e integraciones de forma iterativa, anticipar fallas y corregir dependencias antes de la entrega — solo en entornos reversibles.
 4. **Integración externa eficiente:** priorizar APIs limpias (webhooks, pasarelas de pago, CRMs, Doctoralia, Dentalink).
@@ -91,4 +91,4 @@ Reglas que Kiro sigue al construir software o gestionar este repo:
 
 ## Regla de mantenimiento de esta memoria
 
-Cuando este índice crezca demasiado o un tema gane profundidad, **muévelo a su subarchivo** en `docs/` o `estrategia/` y deja aquí solo el enlace. El objetivo es que este archivo quepa cómodamente en contexto sin saturarse.
+Cuando este índice crezca demasiado o un tema gane profundidad, **muévelo a su subarchivo** en `10-Memoria_Consolidada/` o `01-Fundamentos_Estrategia/` y deja aquí solo el enlace. El objetivo es que este archivo quepa cómodamente en contexto sin saturarse.

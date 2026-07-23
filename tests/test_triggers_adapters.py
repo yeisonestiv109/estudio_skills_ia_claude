@@ -1,23 +1,30 @@
 """
 Tests unitarios de los adaptadores del Motor 2 — sin llamadas reales a APIs.
 
-Mockea requests.get/post para TheirStack y feedparser.parse para Google Alerts.
-Verifica que ambos producen objetos Trigger válidos de Pydantic v2.
+Mockea requests.get/post para TheirStack y feedparser.parse + groq.Groq para
+Google Alerts (verificación semántica). Ningún test consume red ni créditos
+reales de Groq.
 """
 
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
+
+import groq as groq_sdk
 
 from src.core.domain.models import (
     Empresa,
     NivelConfianza,
     OrigenTrigger,
     TamanoEmpresa,
+    TierUrgencia,
+    TipoTrigger,
     Trigger,
 )
 
@@ -158,13 +165,81 @@ class TestTheirStackAdapter:
                     os.environ["THEIRSTACK_API_KEY"] = original
 
     def test_trigger_tiene_fecha_evento(self, empresa: Empresa):
-        """La fecha_evento es crítica para TriggerAggregationPolicy (45 días)."""
+        """
+        CONTRATO NUEVO (dos ejes de tiempo, Signal-Based Selling v5.0): una
+        vacante aún abierta es un estado CONTINUO, así que fecha_evento = now
+        (frescura de observación), NO date_posted. Antes se asumía que
+        fecha_evento era el date_posted de la primera vacante; ahora el
+        date_posted alimenta el AGING (→ tier), no la fecha_evento (→ decay).
+        """
         from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
 
+        fecha_10d = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
+            "%Y-%m-%d"
+        )
         vacantes = [
-            self._vacante("Senior Dev", fecha="2026-07-05"),
-            self._vacante("Backend Dev", fecha="2026-07-01"),
-            self._vacante("Cloud Architect", fecha="2026-06-15"),
+            self._vacante("Senior Dev", fecha=fecha_10d),
+            self._vacante("Backend Dev", fecha=fecha_10d),
+        ]
+        respuesta_mock = self._mock_response(vacantes)
+
+        antes = datetime.now(timezone.utc)
+        with patch("requests.post", return_value=respuesta_mock):
+            adapter = TheirStackAdapter(api_key="test-key")
+            triggers = adapter.obtener_triggers(empresa)
+        despues = datetime.now(timezone.utc)
+
+        fe = triggers[0].fecha_evento
+        assert fe is not None
+        assert isinstance(fe, datetime)
+        # fecha_evento debe ser "ahora" (observación), no el date_posted (hace 10d)
+        assert antes <= fe <= despues
+
+    def test_aging_alto_genera_tier0_efecto_con_fecha_evento_ahora(
+        self, empresa: Empresa
+    ):
+        """
+        Vacante abierta con date_posted de hace 60 días → aging >= 45 →
+        TIER_0/EFECTO, con fecha_evento ≈ now (estado continuo) para que el
+        decay de EFECTO (45d) de ScoreTriggerPolicy no la elimine.
+        """
+        from src.core.domain.models import TierUrgencia, TipoTrigger
+        from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
+
+        fecha_60d = (datetime.now(timezone.utc) - timedelta(days=60)).strftime(
+            "%Y-%m-%d"
+        )
+        vacantes = [
+            self._vacante("Senior Python Dev", fecha=fecha_60d),
+            self._vacante("AWS Architect", fecha=fecha_60d),
+            self._vacante("Django Engineer", fecha=fecha_60d),
+        ]
+        respuesta_mock = self._mock_response(vacantes)
+
+        antes = datetime.now(timezone.utc)
+        with patch("requests.post", return_value=respuesta_mock):
+            adapter = TheirStackAdapter(api_key="test-key")
+            triggers = adapter.obtener_triggers(empresa)
+        despues = datetime.now(timezone.utc)
+
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_0
+        assert t.tipo_trigger == TipoTrigger.EFECTO
+        assert antes <= t.fecha_evento <= despues
+        # El aging real (~60d) debe aparecer en la descripción para trazabilidad
+        assert "días abierta" in t.descripcion
+
+    def test_aging_bajo_genera_tier2(self, empresa: Empresa):
+        """Vacante abierta hace 10 días → aging < 45 → TIER_2 (demanda fresca)."""
+        from src.core.domain.models import TierUrgencia, TipoTrigger
+        from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
+
+        fecha_10d = (datetime.now(timezone.utc) - timedelta(days=10)).strftime(
+            "%Y-%m-%d"
+        )
+        vacantes = [
+            self._vacante("Backend Dev", fecha=fecha_10d),
+            self._vacante("Python Dev", fecha=fecha_10d),
         ]
         respuesta_mock = self._mock_response(vacantes)
 
@@ -172,8 +247,73 @@ class TestTheirStackAdapter:
             adapter = TheirStackAdapter(api_key="test-key")
             triggers = adapter.obtener_triggers(empresa)
 
-        assert triggers[0].fecha_evento is not None
-        assert isinstance(triggers[0].fecha_evento, datetime)
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_2
+        assert t.tipo_trigger == TipoTrigger.EFECTO
+
+    def test_aging_usa_vacante_mas_antigua_devuelta(self, empresa: Empresa):
+        """
+        El aging se estima con la vacante MÁS ANTIGUA devuelta (cota inferior).
+        Con una vacante de hace 70d y otras recientes, el aging es 70 → TIER_0.
+        """
+        from src.core.domain.models import TierUrgencia
+        from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
+
+        fecha_5d = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+        fecha_70d = (datetime.now(timezone.utc) - timedelta(days=70)).strftime(
+            "%Y-%m-%d"
+        )
+        vacantes = [
+            self._vacante("Reciente 1", fecha=fecha_5d),
+            self._vacante("Reciente 2", fecha=fecha_5d),
+            self._vacante("Antigua", fecha=fecha_70d),
+        ]
+        respuesta_mock = self._mock_response(vacantes)
+
+        with patch("requests.post", return_value=respuesta_mock):
+            adapter = TheirStackAdapter(api_key="test-key")
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_0
+
+    def test_payload_scoring_sube_limit_para_aging(self, empresa: Empresa):
+        """
+        El payload de scoring debe pedir más vacantes (25) que las que reporta,
+        para estimar el aging sin costo extra (TheirStack cobra por consulta).
+        """
+        from src.adapters.triggers.theirstack_adapter import (
+            TheirStackAdapter,
+            _LIMITE_VACANTES_AGING,
+        )
+
+        respuesta_mock = self._mock_response([self._vacante("Dev")])
+        with patch("requests.post", return_value=respuesta_mock) as mock_post:
+            adapter = TheirStackAdapter(api_key="test-key")
+            adapter.obtener_triggers(empresa)
+
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["limit"] == _LIMITE_VACANTES_AGING
+        assert _LIMITE_VACANTES_AGING >= 25
+        # Se conserva el orden por date_posted desc
+        assert payload["order_by"] == [{"desc": True, "field": "date_posted"}]
+
+    def test_aging_no_estimable_sin_fecha_es_conservador_tier2(self, empresa: Empresa):
+        """Sin date_posted parseable, aging=0 → TIER_2 (conservador, fail-closed)."""
+        from src.core.domain.models import TierUrgencia
+        from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
+
+        vacantes = [
+            {"id": "j1", "title": "Dev", "date_posted": None, "technologies": []},
+            {"id": "j2", "title": "Dev2", "date_posted": None, "technologies": []},
+        ]
+        respuesta_mock = self._mock_response(vacantes)
+
+        with patch("requests.post", return_value=respuesta_mock):
+            adapter = TheirStackAdapter(api_key="test-key")
+            triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_2
+        assert "no estimable" in triggers[0].descripcion
 
     def test_descripcion_marca_tope_de_paginacion(self, empresa: Empresa):
         """Cuando las vacantes alcanzan el limit (3 por defecto), la descripción debe indicar '+3'."""
@@ -313,7 +453,7 @@ class TestTheirStackAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Tests de GoogleAlertsRSSAdapter
+# Helpers de mock para Google Alerts (RSS + LLM Groq)
 # ---------------------------------------------------------------------------
 class _EntradaRSSMock:
     """Simula un objeto entry de feedparser."""
@@ -341,70 +481,89 @@ def _feed_mock(entries: list[_EntradaRSSMock], bozo: bool = False) -> MagicMock:
     return mock
 
 
+def _mock_groq_client(contenido_json: str | None) -> MagicMock:
+    """Cliente Groq mockeado que devuelve `contenido_json` como respuesta LLM."""
+    mock_client = MagicMock()
+    mock_completion = MagicMock()
+    mock_completion.choices = [MagicMock(message=MagicMock(content=contenido_json))]
+    mock_client.chat.completions.create.return_value = mock_completion
+    return mock_client
+
+
+def _rate_limit_error(mensaje: str) -> groq_sdk.RateLimitError:
+    return groq_sdk.RateLimitError(mensaje, response=MagicMock(), body=None)
+
+
+@contextmanager
+def _rss(entradas: list[_EntradaRSSMock], bozo: bool = False):
+    """
+    Contexto que simula la descarga RSS sin red: requests.get falla (para caer
+    al fallback de feedparser) y feedparser.parse devuelve el feed mockeado.
+    """
+    with (
+        patch("requests.get", side_effect=requests.exceptions.ConnectionError()),
+        patch("feedparser.parse", return_value=_feed_mock(entradas, bozo)),
+    ):
+        yield
+
+
+# JSON de verificación semántica (respuesta estructurada del LLM)
+_JSON_TODO_FALSE = (
+    '{"nuevo_liderazgo_tecnico": {"detectado": false, "cargo": null, '
+    '"titular_evidencia": null}, "ronda_inversion_o_capital": {"detectado": '
+    'false, "titular_evidencia": null}, "fusion_o_adquisicion": {"detectado": '
+    'false, "titular_evidencia": null}}'
+)
+
+
+def _json_liderazgo(cargo: str, titular: str) -> str:
+    return (
+        f'{{"nuevo_liderazgo_tecnico": {{"detectado": true, "cargo": "{cargo}", '
+        f'"titular_evidencia": "{titular}"}}, "ronda_inversion_o_capital": '
+        f'{{"detectado": false, "titular_evidencia": null}}, '
+        f'"fusion_o_adquisicion": {{"detectado": false, "titular_evidencia": null}}}}'
+    )
+
+
+def _json_ronda(titular: str) -> str:
+    return (
+        f'{{"nuevo_liderazgo_tecnico": {{"detectado": false, "cargo": null, '
+        f'"titular_evidencia": null}}, "ronda_inversion_o_capital": '
+        f'{{"detectado": true, "titular_evidencia": "{titular}"}}, '
+        f'"fusion_o_adquisicion": {{"detectado": false, "titular_evidencia": null}}}}'
+    )
+
+
+_JSON_TODOS_TRUE = (
+    '{"nuevo_liderazgo_tecnico": {"detectado": true, "cargo": "CTO", '
+    '"titular_evidencia": "nuevo CTO"}, "ronda_inversion_o_capital": '
+    '{"detectado": true, "titular_evidencia": "ronda"}, "fusion_o_adquisicion": '
+    '{"detectado": true, "titular_evidencia": "adquisición"}}'
+)
+
+
+# ---------------------------------------------------------------------------
+# Tests de GoogleAlertsRSSAdapter (verificación semántica por LLM)
+# ---------------------------------------------------------------------------
 class TestGoogleAlertsRSSAdapter:
-    def test_entrada_c_level_genera_trigger_alta(self, empresa: Empresa):
+    # -- Casos estructurales (sin necesidad de LLM) ────────────────────────
+    def test_sin_urls_retorna_lista_vacia(self, empresa: Empresa):
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
-        entradas = [
-            _EntradaRSSMock(
-                title="Acme SaaS nombra nuevo CTO para liderar transformación digital",
-                summary="Juan Torres se une como Chief Technology Officer.",
-            )
-        ]
+        adapter = GoogleAlertsRSSAdapter(rss_urls=[], api_key="test-key")
+        assert adapter.obtener_triggers(empresa) == []
 
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/123"]
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) == 1
-        t = triggers[0]
-        assert isinstance(t, Trigger)
-        assert t.origen == OrigenTrigger.GOOGLE_ALERTS
-        assert t.nivel_confianza == NivelConfianza.ALTA
-        assert t.empresa_id == empresa.id
-
-    def test_entrada_ronda_inversion_genera_trigger_media(self, empresa: Empresa):
+    def test_feed_vacio_retorna_lista_vacia(self, empresa: Empresa):
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
-        entradas = [
-            _EntradaRSSMock(
-                title="Acme SaaS levanta ronda Serie A de USD 5 millones",
-                summary="La startup colombiana cierra su primera ronda de inversión.",
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
+        with _rss([]):
             adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/456"]
+                rss_urls=["https://alerts.google.com/rss/empty"], api_key="test-key"
             )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) == 1
-        assert triggers[0].nivel_confianza == NivelConfianza.MEDIA
-
-    def test_mencion_generica_genera_trigger_baja(self, empresa: Empresa):
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        entradas = [
-            _EntradaRSSMock(
-                title="Acme SaaS participa en foro de tecnología en Bogotá",
-                summary="La empresa estuvo presente en el evento.",
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/789"]
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) == 1
-        assert triggers[0].nivel_confianza == NivelConfianza.BAJA
+            assert adapter.obtener_triggers(empresa) == []
 
     def test_entrada_sin_mencion_empresa_filtrada(self, empresa: Empresa):
-        """Entradas que no mencionan a la empresa no deben generar Trigger."""
+        """Entradas que no mencionan a la empresa no llegan al LLM ni generan Trigger."""
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
         entradas = [
@@ -413,75 +572,279 @@ class TestGoogleAlertsRSSAdapter:
                 summary="Una empresa completamente diferente.",
             )
         ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
+        with _rss(entradas):
             adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/000"]
+                rss_urls=["https://alerts.google.com/rss/000"], api_key="test-key"
             )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert triggers == []
-
-    def test_feed_vacio_retorna_lista_vacia(self, empresa: Empresa):
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        with patch("feedparser.parse", return_value=_feed_mock([])):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/empty"]
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert triggers == []
-
-    def test_sin_urls_retorna_lista_vacia(self, empresa: Empresa):
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        adapter = GoogleAlertsRSSAdapter(rss_urls=[])
-        triggers = adapter.obtener_triggers(empresa)
-
-        assert triggers == []
+            assert adapter.obtener_triggers(empresa) == []
 
     def test_error_feedparser_no_propaga_al_core(self, empresa: Empresa):
         """Contrato: nunca levantar excepción hacia el Core."""
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
-        with patch("feedparser.parse", side_effect=Exception("error de red simulado")):
+        with (
+            patch("requests.get", side_effect=requests.exceptions.ConnectionError()),
+            patch("feedparser.parse", side_effect=Exception("error de red simulado")),
+        ):
             adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/fail"]
+                rss_urls=["https://alerts.google.com/rss/fail"], api_key="test-key"
             )
-            triggers = adapter.obtener_triggers(empresa)
+            assert adapter.obtener_triggers(empresa) == []
 
-        assert triggers == []
+    # -- (a) LLM confirma nuevo CTO → 1 trigger TIER_1/CAUSA ───────────────
+    def test_llm_confirma_liderazgo_genera_tier1_causa(self, empresa: Empresa):
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
-    def test_triggers_ordenados_alta_primero(self, empresa: Empresa):
-        """Los triggers ALTA deben aparecer antes que BAJA."""
+        titular = "Acme SaaS nombra nuevo CTO para liderar transformación digital"
+        entradas = [
+            _EntradaRSSMock(
+                title=titular,
+                summary="Juan Torres se une como Chief Technology Officer de la empresa.",
+            )
+        ]
+        with _rss(entradas):
+            with patch(
+                "groq.Groq",
+                return_value=_mock_groq_client(_json_liderazgo("CTO", titular)),
+            ):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/1"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.origen == OrigenTrigger.GOOGLE_ALERTS
+        assert t.tier_urgencia == TierUrgencia.TIER_1
+        assert t.tipo_trigger == TipoTrigger.CAUSA
+        assert t.nivel_confianza == NivelConfianza.ALTA
+        assert t.empresa_id == empresa.id
+
+    # -- (b) LLM confirma ronda → TIER_0/CAUSA ─────────────────────────────
+    def test_llm_confirma_ronda_genera_tier0_causa(self, empresa: Empresa):
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        titular = "Acme SaaS levanta ronda Serie A de USD 5 millones"
+        entradas = [
+            _EntradaRSSMock(
+                title=titular,
+                summary="La startup colombiana cierra su primera ronda de inversión.",
+            )
+        ]
+        with _rss(entradas):
+            with patch(
+                "groq.Groq", return_value=_mock_groq_client(_json_ronda(titular))
+            ):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/2"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_0
+        assert t.tipo_trigger == TipoTrigger.CAUSA
+        assert t.nivel_confianza == NivelConfianza.ALTA
+
+    # -- (c) LLM dice todo false pese a titulares con "director" ───────────
+    def test_llm_todo_false_no_genera_liderazgo_solo_mencion(self, empresa: Empresa):
+        """
+        El titular tiene "director/nuevo" (que el substring habría marcado como
+        C-Level), pero el LLM verifica que NO es un evento sobre la empresa.
+        No debe generar trigger de liderazgo; a lo sumo TIER_3/BAJA de mención.
+        """
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
         entradas = [
             _EntradaRSSMock(
-                title="Acme SaaS participa en evento de tecnología anual",
-                summary="Mención genérica de la empresa en medios.",
-            ),
-            _EntradaRSSMock(
-                title="Acme SaaS nombra nuevo Chief Technology Officer",
-                summary="Ana Gómez asumirá el cargo de CTO a partir de agosto.",
-            ),
+                title="Acme SaaS y el nuevo director técnico de la selección",
+                summary="La empresa patrocina el fútbol; nombran nuevo director del equipo.",
+            )
         ]
+        with _rss(entradas):
+            with patch("groq.Groq", return_value=_mock_groq_client(_JSON_TODO_FALSE)):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/3"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
 
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_3
+        assert t.nivel_confianza == NivelConfianza.BAJA
+        assert t.tipo_trigger == TipoTrigger.EFECTO
+        # Nunca infla a TIER_0/1 por substring.
+        assert t.tier_urgencia not in (TierUrgencia.TIER_0, TierUrgencia.TIER_1)
+
+    # -- (d) sin claves Groq → degradación TIER_3/BAJA, nunca TIER_0/1 ─────
+    def test_sin_claves_groq_degrada_a_mencion_tier3(
+        self, empresa: Empresa, monkeypatch
+    ):
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        for i in range(1, 21):
+            monkeypatch.delenv(f"GROQ_API_KEY_{i}", raising=False)
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+        entradas = [
+            _EntradaRSSMock(
+                title="Acme SaaS nombra nuevo CTO",
+                summary="La empresa de software confirma el nombramiento.",
+            )
+        ]
+        with _rss(entradas):
+            # Sin api_key ni pool y sin GROQ_* en el entorno → pool vacío.
             adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/mixed"],
-                max_triggers_por_empresa=3,
+                rss_urls=["https://alerts.google.com/rss/4"], api_key=None
             )
             triggers = adapter.obtener_triggers(empresa)
 
-        assert len(triggers) == 2
-        # ALTA (CTO) debe aparecer primero, BAJA (mención genérica) después
-        assert triggers[0].nivel_confianza == NivelConfianza.ALTA
-        assert triggers[1].nivel_confianza == NivelConfianza.BAJA
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_3
+        assert t.nivel_confianza == NivelConfianza.BAJA
+        assert t.tier_urgencia not in (TierUrgencia.TIER_0, TierUrgencia.TIER_1)
 
-    def test_keyword_extra_filtra_por_dolor_icp(self, empresa: Empresa):
-        """Keywords del ManifiestoICP deben capturar entradas sin nombre de empresa."""
+    # -- (e) nombre corto ≤8 → cap a TIER_2 ────────────────────────────────
+    def test_nombre_corto_capa_evento_a_tier2(self):
+        """
+        Aunque el LLM confirme una ronda (que sería TIER_0), un nombre de
+        empresa corto/genérico (≤8 chars, riesgo de homónimo) nunca supera
+        TIER_2. El nivel ALTA se rebaja a MEDIA.
+        """
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        empresa_corta = Empresa(
+            nombre="Parcero",  # 7 chars
+            dominio="parcero.digital",
+            tamano=TamanoEmpresa.SME,
+            vertical="Agencia digital",
+        )
+        titular = "Parcero, la agencia digital, levanta ronda de inversión Serie A"
+        entradas = [
+            _EntradaRSSMock(
+                title=titular,
+                summary="El CEO de la empresa confirmó la ronda de capital.",
+            )
+        ]
+        with _rss(entradas):
+            with patch(
+                "groq.Groq", return_value=_mock_groq_client(_json_ronda(titular))
+            ):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/5"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa_corta)
+
+        assert len(triggers) == 1
+        t = triggers[0]
+        assert t.tier_urgencia == TierUrgencia.TIER_2  # capado desde TIER_0
+        assert t.nivel_confianza == NivelConfianza.MEDIA  # rebajado desde ALTA
+
+    # -- (f) rate limit / JSON inválido → degradación sin lanzar ───────────
+    def test_rate_limit_sin_failover_degrada_a_mencion(self, empresa: Empresa):
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        entradas = [
+            _EntradaRSSMock(
+                title="Acme SaaS nombra nuevo CTO",
+                summary="La empresa de software confirma el nombramiento.",
+            )
+        ]
+        cliente = MagicMock()
+        cliente.chat.completions.create.side_effect = _rate_limit_error(
+            "Please try again in 5s"
+        )
+        with _rss(entradas):
+            with patch("groq.Groq", return_value=cliente):
+                # api_key única → pool de 1 clave: el 429 no tiene failover.
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/6"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_3
+        assert triggers[0].nivel_confianza == NivelConfianza.BAJA
+
+    def test_json_invalido_degrada_a_mencion(self, empresa: Empresa):
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        entradas = [
+            _EntradaRSSMock(
+                title="Acme SaaS nombra nuevo CTO",
+                summary="La empresa de software confirma el nombramiento.",
+            )
+        ]
+        with _rss(entradas):
+            with patch(
+                "groq.Groq", return_value=_mock_groq_client("no soy json {roto")
+            ):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/7"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) == 1
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_3
+        assert triggers[0].nivel_confianza == NivelConfianza.BAJA
+
+    # -- Otros contratos ──────────────────────────────────────────────────
+    def test_trigger_verificado_tiene_fecha_evento_de_la_evidencia(
+        self, empresa: Empresa
+    ):
+        """fecha_evento = fecha de la entrada RSS cuyo título coincide con la evidencia."""
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        titular = "Acme SaaS nombra nuevo CTO"
+        entradas = [
+            _EntradaRSSMock(
+                title=titular,
+                summary="La empresa de software confirma el nombramiento del CTO.",
+                published_parsed=time.gmtime(1720000000),
+            )
+        ]
+        with _rss(entradas):
+            with patch(
+                "groq.Groq",
+                return_value=_mock_groq_client(_json_liderazgo("CTO", titular)),
+            ):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/8"], api_key="test-key"
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert triggers[0].fecha_evento is not None
+        assert isinstance(triggers[0].fecha_evento, datetime)
+
+    def test_max_triggers_respetado_con_multiples_eventos(self, empresa: Empresa):
+        """El LLM confirma los 3 eventos, pero max_triggers_por_empresa=2 los limita."""
+        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
+
+        entradas = [
+            _EntradaRSSMock(
+                title="Acme SaaS: nuevo CTO, ronda Serie A y adquisición",
+                summary="La empresa de software anuncia varios hitos de negocio.",
+            )
+        ]
+        with _rss(entradas):
+            with patch("groq.Groq", return_value=_mock_groq_client(_JSON_TODOS_TRUE)):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/9"],
+                    max_triggers_por_empresa=2,
+                    api_key="test-key",
+                )
+                triggers = adapter.obtener_triggers(empresa)
+
+        assert len(triggers) <= 2
+
+    def test_keyword_extra_captura_entrada_sin_nombre_y_degrada_a_mencion(
+        self, empresa: Empresa
+    ):
+        """
+        Una keyword del ICP captura una entrada que no menciona el nombre de la
+        empresa; el LLM no verifica evento sobre la empresa → mención TIER_3.
+        """
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
         entradas = [
@@ -490,164 +853,39 @@ class TestGoogleAlertsRSSAdapter:
                 summary="Las empresas luchan por contratar arquitectos de software.",
             )
         ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/keyword"],
-                palabras_clave_extra=["talento backend", "arquitectos"],
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) == 1
-
-    def test_trigger_tiene_fecha_evento(self, empresa: Empresa):
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        entradas = [
-            _EntradaRSSMock(
-                title="Acme SaaS nuevo CTO",
-                summary="",
-                published_parsed=time.gmtime(1720000000),  # Unix timestamp
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/date"]
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert triggers[0].fecha_evento is not None
-        assert isinstance(triggers[0].fecha_evento, datetime)
-
-    def test_max_triggers_respetado(self, empresa: Empresa):
-        """No debe generar más triggers que max_triggers_por_empresa."""
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        entradas = [
-            _EntradaRSSMock(
-                title=f"Acme SaaS noticia {i}", summary="La empresa de software informa."
-            )
-            for i in range(10)
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/many"],
-                max_triggers_por_empresa=2,
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) <= 2
-
-    # -- Falla 3 (caso Parcero): co-ocurrencia semántica + techo de confianza --
-    def test_nombre_matchea_sin_coocurrencia_negocio_se_filtra(self, empresa: Empresa):
-        """
-        Caso Parcero: el nombre de la empresa matchea el texto, pero el
-        contenido es ruido sin relación de negocio (ej. fútbol/coloquial).
-        Sin ninguna palabra del glosario de negocio, la entrada se descarta.
-        """
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        empresa_parcero = Empresa(
-            nombre="Parcero",
-            dominio="parcero.digital",
-            tamano=TamanoEmpresa.SME,
-            vertical="Agencia digital",
-        )
-        entradas = [
-            _EntradaRSSMock(
-                title="El Parcero anota un golazo en la final del torneo",
-                summary="La hinchada celebró el triunfo en el estadio.",
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/parcero"]
-            )
-            triggers = adapter.obtener_triggers(empresa_parcero)
-
-        assert triggers == []
-
-    def test_nombre_matchea_con_coocurrencia_negocio_genera_trigger(
-        self, empresa: Empresa
-    ):
-        """
-        Mismo nombre genérico, pero esta vez el texto SÍ contiene vocabulario
-        de negocio (ej. 'agencia', 'CEO') — debe generar un Trigger, aunque
-        con confianza limitada a BAJA por ser un nombre corto/genérico.
-        """
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        empresa_parcero = Empresa(
-            nombre="Parcero",
-            dominio="parcero.digital",
-            tamano=TamanoEmpresa.SME,
-            vertical="Agencia digital",
-        )
-        entradas = [
-            _EntradaRSSMock(
-                title="Parcero, la agencia digital, nombra nuevo CTO",
-                summary="El CEO de la empresa confirmó el nombramiento.",
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/parcero-valido"]
-            )
-            triggers = adapter.obtener_triggers(empresa_parcero)
+        with _rss(entradas):
+            with patch("groq.Groq", return_value=_mock_groq_client(_JSON_TODO_FALSE)):
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/10"],
+                    palabras_clave_extra=["talento backend", "arquitectos"],
+                    api_key="test-key",
+                )
+                triggers = adapter.obtener_triggers(empresa)
 
         assert len(triggers) == 1
-        # Techo de confianza BAJA: nombre corto/genérico, aunque el texto
-        # tenga keywords de C-Level que normalmente producirían ALTA.
-        assert triggers[0].nivel_confianza == NivelConfianza.BAJA
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_3
 
-    def test_nombre_largo_no_generico_conserva_nivel_alta(self, empresa: Empresa):
-        """
-        Un nombre de empresa suficientemente largo/específico (no genérico)
-        no debe verse afectado por el techo de confianza — conserva el nivel
-        que le corresponda por contenido (ALTA si hay señal de C-Level).
-        """
+    def test_key_pool_compartido_se_reutiliza(self, empresa: Empresa):
+        """Se puede inyectar un GroqKeyPool compartido (mismo pool que PropuestaValor)."""
+        from src.adapters.llm.groq_key_pool import GroqKeyPool
         from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
 
+        titular = "Acme SaaS levanta ronda Serie A"
         entradas = [
             _EntradaRSSMock(
-                title="Acme SaaS nombra nuevo Chief Technology Officer",
-                summary="Ana Gómez asumirá el cargo de CTO a partir de agosto.",
+                title=titular, summary="La empresa de software cierra ronda de inversión."
             )
         ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/acme-alta"]
-            )
-            triggers = adapter.obtener_triggers(empresa)
-
-        assert len(triggers) == 1
-        assert triggers[0].nivel_confianza == NivelConfianza.ALTA
-
-    def test_keyword_extra_no_requiere_coocurrencia_negocio(self, empresa: Empresa):
-        """
-        Un match por palabra clave del ICP (dolor_operativo/anclaje_tecnologico)
-        ya es evidencia de negocio específica por sí sola; no debe exigirse
-        además el glosario genérico de co-ocurrencia.
-        """
-        from src.adapters.triggers.google_alerts_adapter import GoogleAlertsRSSAdapter
-
-        entradas = [
-            _EntradaRSSMock(
-                title="Crisis de talento backend en Colombia 2026",
-                summary="Difícil contratar arquitectos con experiencia.",
-            )
-        ]
-
-        with patch("feedparser.parse", return_value=_feed_mock(entradas)):
-            adapter = GoogleAlertsRSSAdapter(
-                rss_urls=["https://alerts.google.com/rss/keyword-sin-glosario"],
-                palabras_clave_extra=["talento backend", "arquitectos"],
-            )
-            triggers = adapter.obtener_triggers(empresa)
+        with _rss(entradas):
+            with patch(
+                "groq.Groq", return_value=_mock_groq_client(_json_ronda(titular))
+            ):
+                pool = GroqKeyPool(api_keys=["k1", "k2"])
+                adapter = GoogleAlertsRSSAdapter(
+                    rss_urls=["https://alerts.google.com/rss/11"], key_pool=pool
+                )
+                triggers = adapter.obtener_triggers(empresa)
 
         assert len(triggers) == 1
+        assert triggers[0].tier_urgencia == TierUrgencia.TIER_0
+        assert adapter._pool is pool

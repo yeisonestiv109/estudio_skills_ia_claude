@@ -68,6 +68,7 @@ from sandbox_motor_2_auto import (
     verde,
 )
 from src.adapters.llm.groq_adapter import GroqICPAdapter
+from src.adapters.llm.groq_key_pool import GroqKeyPool
 from src.adapters.discovery.apollo_discovery_adapter import ApolloDiscoveryAdapter
 from src.adapters.enrichment.apollo_hunter_cascada_adapter import (
     ApolloHunterCascadaAdapter,
@@ -79,6 +80,7 @@ from src.adapters.revision_manual.paquete_revision_adapter import (
 from src.adapters.triggers.propuesta_valor_adapter import PropuestaValorAdapter
 from src.adapters.triggers.secop_adapter import SecopSocrataAdapter
 from src.adapters.triggers.theirstack_adapter import TheirStackAdapter
+from src.core.domain.dominio import pais_por_tld
 from src.core.domain.text_matching import cualquiera_como_palabra_completa
 from src.core.domain.models import (
     CategoriaEmpresa,
@@ -91,11 +93,13 @@ from src.core.domain.models import (
     ResultadoExclusionCompetidor,
     TamanoEmpresa,
     TierUrgencia,
+    TipoOrganizacion,
 )
 from src.core.domain.policies import (
     AdapterRoutingPolicy,
     PoliticaCorroboracionTamano,
     PoliticaExclusionCompetidores,
+    PoliticaTipoOrganizacion,
     PoliticaValidacionGeografica,
     ScoreTriggerPolicy,
 )
@@ -314,10 +318,16 @@ def evaluar_validacion_geografica(
     1. Empresa.pais (ya viene de TheirStack/discovery). Si es un país
        conocido y distinto de PAIS_DESCONOCIDO, se usa directamente — no
        amerita gastar LLM para confirmar un dato firmográfico ya presente.
-    2. Si Empresa.pais es PAIS_DESCONOCIDO (TheirStack no lo reportó), se
-       recurre a PropuestaValorAdapter.pais_hq() (Capa 2, con costo — ya
-       cacheada si la Capa 2 corrió antes para esta misma empresa en
-       evaluar_exclusion_competidor()).
+    2. ccTLD del dominio (fix Falla ccTLD, caso Revista Dinero/dinero.com.ve):
+       si Empresa.pais es desconocido, se intenta derivar el país del SUFIJO
+       del dominio (estándar IANA) con pais_por_tld(). Es gratis (no red, no
+       LLM) y resuelve inequívocamente los .ve/.mx/.gov.co/.com.co/etc. antes
+       de gastar el scraping caro. Solo afirma país cuando el sufijo es
+       inequívoco; ante ambigüedad (.co simple, .com, .io) retorna None y el
+       waterfall sigue.
+    3. Si el ccTLD tampoco resolvió, se recurre a PropuestaValorAdapter.
+       pais_hq() (Capa 2, con costo — ya cacheada si la Capa 2 corrió antes
+       para esta misma empresa en evaluar_exclusion_competidor()).
 
     Retorna (estado, motivo_legible). INDETERMINADO es fail-closed: el
     llamador debe tratarlo como revisión manual, nunca como aprobación.
@@ -327,8 +337,13 @@ def evaluar_validacion_geografica(
     pais_candidato = empresa.pais
     origen_dato = "TheirStack (discovery)"
     if not pais_candidato or pais_candidato.strip().upper() == PAIS_DESCONOCIDO:
-        pais_candidato = adapter_pv.pais_hq(empresa)
-        origen_dato = "análisis semántico LLM (homepage)"
+        pais_tld = pais_por_tld(empresa.dominio)
+        if pais_tld:
+            pais_candidato = pais_tld
+            origen_dato = "ccTLD (sufijo de dominio, estándar IANA)"
+        else:
+            pais_candidato = adapter_pv.pais_hq(empresa)
+            origen_dato = "análisis semántico LLM (homepage)"
 
     estado = politica.evaluar(pais_candidato, manifiesto.geografia)
 
@@ -446,6 +461,14 @@ def _imprimir_banner_geografia_descartada(empresa: Empresa, motivo: str) -> None
     print(f"  {amarillo('▒' * 64)}\n")
 
 
+def _imprimir_banner_tipo_descartado(empresa: Empresa, tipo: TipoOrganizacion) -> None:
+    print(f"  {amarillo('▒' * 64)}")
+    print(f"  {amarillo('▒')}  {amarillo(negrita('DESCARTADA POR TIPO DE ORGANIZACIÓN'))} — {negrita(empresa.nombre)}")
+    print(f"  {amarillo('▒')}  {gris(f'Tipo detectado (LLM homepage): {tipo.value} — el ICP de TBBC busca EMPRESA_PRIVADA')}")
+    print(f"  {amarillo('▒')}  {gris('Costo evitado: 0 créditos de Motor 3 gastados en un ente no-empresa.')}")
+    print(f"  {amarillo('▒' * 64)}\n")
+
+
 def _color_por_tier(tier: TierUrgencia) -> str:
     """Colorea la etiqueta del tier según su urgencia (rojo=más urgente)."""
     etiqueta = tier.value
@@ -546,10 +569,14 @@ def main() -> None:
         api_key=apollo_key,
         max_empresas_discovery=TAMANO_BATCH_APOLLO_DISCOVERY,
     )
-    # Sin argumentos: construye un GroqKeyPool() que rota entre
-    # GROQ_API_KEY_1..N del entorno (o GROQ_API_KEY como fallback de una
-    # sola clave) ante rate limits — ver src/adapters/llm/groq_key_pool.py.
-    adapter_pv = PropuestaValorAdapter()
+    # GroqKeyPool COMPARTIDO: un solo pool que rota entre GROQ_API_KEY_1..N
+    # del entorno (o GROQ_API_KEY como fallback de una sola clave) ante rate
+    # limits — ver src/adapters/llm/groq_key_pool.py. Se comparte entre
+    # PropuestaValorAdapter (Capa 2 Negative ICP / tamaño / país) y la
+    # verificación semántica de GoogleAlertsRSSAdapter (dentro de
+    # recolectar_triggers) para NO duplicar pools ni el estado de cooldown.
+    groq_pool = GroqKeyPool()
+    adapter_pv = PropuestaValorAdapter(key_pool=groq_pool)
     # Tercer origen del waterfall de tamaño (es_pyme verificado por la
     # entidad contratante) — solo aporta si la empresa tiene contratos SECOP.
     adapter_secop = SecopSocrataAdapter()
@@ -585,7 +612,10 @@ def main() -> None:
     empresas_pendientes_revision_manual = 0
     empresas_descartadas_tamano = 0
     empresas_descartadas_geografia = 0
+    empresas_descartadas_tipo = 0
     idx_mostrado = 0
+
+    politica_tipo_org = PoliticaTipoOrganizacion()
 
     # Acumula las empresas que califican (score >= UMBRAL_CALIFICACION) junto
     # con su score, para ordenarlas por urgencia descendente ANTES de pasarlas
@@ -623,6 +653,17 @@ def main() -> None:
                 _imprimir_banner_revision_manual(empresa, motivo)
                 continue
 
+        # Paso 1.5: Gate de TIPO DE ORGANIZACIÓN (fix: excluir gobierno/ONG/
+        # medios/educación/gremio). Reutiliza la MISMA llamada LLM cacheada
+        # que ya corrió en el Negative ICP (Capa 2) — sin gasto adicional.
+        # Fail-OPEN en este eje: tipo indeterminado (None) NO excluye; solo un
+        # tipo no-empresa afirmado positivamente descarta la empresa.
+        tipo_org = adapter_pv.tipo_organizacion(empresa)
+        if not politica_tipo_org.es_apta(tipo_org):
+            empresas_descartadas_tipo += 1
+            _imprimir_banner_tipo_descartado(empresa, tipo_org)
+            continue
+
         # Paso 2: Waterfall geográfico (fix Falla 2, caso Parcero/UK).
         # Fail-closed: INDETERMINADO también va a revisión manual, no se
         # asume que "sin dato de país" signifique "país correcto".
@@ -657,7 +698,9 @@ def main() -> None:
         # Paso 4: recolección de triggers + scoring de urgencia (Signal-Based
         # Selling v5.0). El score numérico y el tier se muestran en el output.
         idx_mostrado += 1
-        triggers = recolectar_triggers(empresa, adapter_ts, manifiesto, adaptadores_activos)
+        triggers = recolectar_triggers(
+            empresa, adapter_ts, manifiesto, adaptadores_activos, groq_pool
+        )
         score, tier_final, califica = policy_score.evaluar(triggers, adaptadores_activos)
         if califica:
             empresas_calificadas += 1
@@ -704,6 +747,7 @@ def main() -> None:
     print(f"    {verde('✓')} Empresas descubiertas:        {negrita(str(len(empresas)))}")
     print(f"    {rojo('✗')} Excluidas por competencia:    {negrita(str(empresas_excluidas_competencia))}")
     print(f"    {cian('~')} Pendientes revisión manual:   {negrita(str(empresas_pendientes_revision_manual))}")
+    print(f"    {amarillo('✗')} Descartadas por tipo org.:    {negrita(str(empresas_descartadas_tipo))}")
     print(f"    {amarillo('✗')} Descartadas por geografía:    {negrita(str(empresas_descartadas_geografia))}")
     print(f"    {amarillo('✗')} Descartadas por tamaño:       {negrita(str(empresas_descartadas_tamano))}")
     print(f"    {verde('✓')} Analizadas en Motor 2:        {negrita(str(idx_mostrado))}")

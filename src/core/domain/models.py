@@ -48,6 +48,34 @@ class TamanoEmpresa(str, Enum):
     ENTERPRISE = "ENTERPRISE"  # > 1000 empleados
 
 
+class TipoOrganizacion(str, Enum):
+    """
+    Tipo de organización detectado por el LLM (Capa 2, PropuestaValorAdapter)
+    a partir del texto público de la homepage. Alimenta PoliticaTipoOrganizacion
+    (Motor 2 — gate de tipo de organización).
+
+    Motivación (afinamiento post-piloto TBBC): el ICP de TBBC busca EMPRESAS
+    PRIVADAS. El pipeline dejaba entrar entes públicos (CNSC, UPME, iNNpulsa),
+    ONGs/fundaciones (UNICEF, WWF, Fundación Corona), medios (Portafolio,
+    Forbes) y gremios (Asobancaria, Camacol). Este eje clasifica el TIPO de
+    organización SIN una lista negra de nombres — reutiliza la MISMA llamada
+    LLM que ya lee la homepage (costo cero adicional).
+
+    OTRO es el escape explícito para lo que el LLM no puede encasillar en
+    ninguna de las categorías; se trata igual que EMPRESA_PRIVADA en el gate
+    (no excluir por indeterminación — fail-open en este eje, ver
+    PoliticaTipoOrganizacion).
+    """
+
+    EMPRESA_PRIVADA = "EMPRESA_PRIVADA"  # Empresa privada con ánimo de lucro
+    GOBIERNO = "GOBIERNO"  # Ente público, estatal, regulador
+    ONG_FUNDACION = "ONG_FUNDACION"  # Sin ánimo de lucro, fundación, cooperación
+    MEDIOS = "MEDIOS"  # Medio de comunicación, revista, periódico
+    EDUCACION = "EDUCACION"  # Universidad, colegio, institución educativa
+    GREMIO_ASOCIACION = "GREMIO_ASOCIACION"  # Gremio, cámara, asociación sectorial
+    OTRO = "OTRO"  # No encasillable en las anteriores
+
+
 class BaseLegal(str, Enum):
     # Bases legales VÁLIDAS bajo la Ley 1581/2012 (Colombia).
     # NO existe "interés legítimo" (eso es GDPR europeo y NO aplica en Colombia):

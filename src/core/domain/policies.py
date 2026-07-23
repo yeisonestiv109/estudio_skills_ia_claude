@@ -33,6 +33,7 @@ from src.core.domain.models import (
     Seniority,
     TamanoEmpresa,
     TierUrgencia,
+    TipoOrganizacion,
     TipoTrigger,
     Trigger,
 )
@@ -563,6 +564,57 @@ class PoliticaValidacionGeografica:
         return EstadoValidacionGeografica.EXCLUIDO
 
 
+class PoliticaTipoOrganizacion:
+    """
+    Gate de TIPO DE ORGANIZACIÓN (Motor 2). El ICP de TBBC busca EMPRESAS
+    PRIVADAS; este gate descarta entes públicos (gobierno), ONGs/fundaciones,
+    medios, instituciones educativas y gremios/asociaciones ANTES de gastar
+    créditos de Motor 3 en ellos. NO usa lista negra de nombres: opera sobre
+    el TipoOrganizacion que el LLM ya infirió de la homepage (misma llamada
+    cacheada de PropuestaValorAdapter — costo cero adicional).
+
+    Pura y determinista: recibe un TipoOrganizacion (o None) y responde un
+    bool. No conoce adaptadores ni hace red.
+
+    FAIL-OPEN en este eje específico (a diferencia de la validación geográfica
+    y la exclusión de competidores, que son fail-closed): un tipo INDETERMINADO
+    (None) se considera APTO, NO se excluye. Razón documentada:
+
+        Excluir por "tipo desconocido" mataría leads privados reales cuyo
+        homepage no fue lo bastante claro para que el LLM clasificara el tipo
+        (SPA sin texto, copy minimalista, etc.). El costo de un falso negativo
+        aquí (descartar una empresa privada válida) es peor que el de un falso
+        positivo (dejar pasar una organización de tipo indeterminado), porque
+        los OTROS gates del pipeline —Negative ICP, geografía, tamaño, score
+        de urgencia— siguen aplicando sobre ella y la filtrarán si no encaja.
+        Este gate solo debe MORDER cuando el LLM afirmó POSITIVAMENTE un tipo
+        no-empresa (gobierno, ONG, medios, educación, gremio).
+    """
+
+    # Tipos que NO son el ICP (empresa privada): se excluyen si el LLM los
+    # afirma positivamente. OTRO y None NO están aquí (fail-open).
+    TIPOS_NO_APTOS: frozenset[TipoOrganizacion] = frozenset(
+        {
+            TipoOrganizacion.GOBIERNO,
+            TipoOrganizacion.ONG_FUNDACION,
+            TipoOrganizacion.MEDIOS,
+            TipoOrganizacion.EDUCACION,
+            TipoOrganizacion.GREMIO_ASOCIACION,
+        }
+    )
+
+    def es_apta(self, tipo: TipoOrganizacion | None) -> bool:
+        """
+        True si la organización es apta para el pipeline (empresa privada,
+        tipo OTRO, o tipo indeterminado None). False solo si el LLM afirmó
+        POSITIVAMENTE un tipo de TIPOS_NO_APTOS (gobierno/ONG/medios/educación/
+        gremio). No lanza excepción.
+        """
+        if tipo is None:
+            return True  # fail-open: indeterminado no excluye.
+        return tipo not in self.TIPOS_NO_APTOS
+
+
 # ===========================================================================
 # MOTOR 2 (Scoring de Urgencia) — Signal-Based Selling v5.0
 # Reemplaza el bool de TriggerAggregationPolicy por un score numérico de
@@ -581,15 +633,44 @@ class ScoreTriggerPolicy:
     envejece más lento (90 días) que un EFECTO observable (ej. una vacante
     abierta, 45 días).
 
+    Agregación MEJOR-POR-ORIGEN (fail-closed, hallazgo de corrida real):
+        El score NO suma todos los triggers. En datos reales un mismo origen
+        (ej. Google Alerts) devuelve varios titulares sobre la misma empresa;
+        sumarlos dejaría que UN solo origen ruidoso calificara un lead por sí
+        solo (ej. 3×TIER_1 del mismo feed = 300 ≥ 150), violando el principio
+        central de Signal-Based Selling: "una señal sola no basta salvo
+        TIER_0". Para blindar eso, se agrupan los triggers por `origen` y de
+        cada origen se toma SOLO su MEJOR contribución (el trigger con mayor
+        puntaje YA decayado, PUNTOS_BASE[tier]*factor). El score_base es la
+        suma de esas mejores-por-origen (una por origen distinto). Así, un
+        origen ruidoso aporta a lo sumo lo que aportaría su mejor titular
+        individual, y calificar sigue exigiendo un TIER_0 real o el cruce de
+        >=2 orígenes distintos.
+
     Diseño (regla del 74% de SHiFT!): el presupuesto caro de Motor 3
     (Apollo/Hunter) debe gastarse primero en los leads de mayor urgencia. El
     score permite ordenar; el tier_final permite explicar.
 
-    Ejemplos (con señales frescas, factor de decay ≈ 1.0):
-        - Un TIER_0/CAUSA fresco (240 pts) CALIFICA solo (240 ≥ 150).
-        - Dos TIER_0 frescos ≈ 480 pts (sangrado activo doble).
-        - Un solo TIER_1 (90 pts) NO cruza el umbral (90 < 150): necesita
-          corroboración de otra señal para calificar.
+    Pesos y umbral (spec canónica v5.0 — fuente de verdad en
+    flujos_motor_1_y_2.md, sección "Signal-Based Selling v5.0"):
+
+        PUNTOS_BASE:  TIER_0 = 200   TIER_1 = 100   TIER_2 = 50   TIER_3 = 0
+        DECAY_DIAS:   CAUSA = 90     EFECTO = 45
+        UMBRAL_CALIFICACION = 150
+        BONUS_MULTI_ORIGEN  = +30  (>=2 orígenes DISTINTOS que contribuyen)
+        BONUS_TIER0_CRUCE   = +50  (>=1 origen cuya MEJOR contribución es
+                                    TIER_0 Y >=2 orígenes)
+
+    Ejemplos (con señales frescas, factor de decay ≈ 1.0; cada uno es
+    1-trigger-por-origen, así que la mejor-por-origen coincide con el propio
+    trigger):
+        - TIER_0 solo                = 200            ✅ (200 ≥ 150).
+        - TIER_1 solo                = 100            ✗  (100 < 150): nurturing.
+        - TIER_1 + TIER_2 (2 oríg.)  = 100+50+30 = 180 ✅ (bonus multi-origen).
+        - TIER_0 + TIER_0 (2 oríg.)  = 200+200+30+50 = 480 (lead de oro).
+        - 3×TIER_1 del MISMO origen  = 100            ✗  (colapsan a la mejor;
+                                                          un origen ruidoso no
+                                                          califica solo).
 
     Pura: no importa adaptadores ni hace red. Determinista salvo por el paso
     del tiempo (datetime.now), inherente al concepto de data decay.
@@ -597,17 +678,23 @@ class ScoreTriggerPolicy:
 
     UMBRAL_CALIFICACION: int = 150
 
-    PUNTOS_POR_TIER: dict[TierUrgencia, int] = {
-        TierUrgencia.TIER_0: 240,
-        TierUrgencia.TIER_1: 90,
-        TierUrgencia.TIER_2: 40,
-        TierUrgencia.TIER_3: 15,
+    PUNTOS_BASE: dict[TierUrgencia, int] = {
+        TierUrgencia.TIER_0: 200,
+        TierUrgencia.TIER_1: 100,
+        TierUrgencia.TIER_2: 50,
+        TierUrgencia.TIER_3: 0,
     }
 
     VENTANA_DECAY_DIAS: dict[TipoTrigger, int] = {
         TipoTrigger.CAUSA: 90,
         TipoTrigger.EFECTO: 45,
     }
+
+    # Bonus de cruce de señales (Regla de Oro TBBC): un lead con señales de
+    # varios orígenes distintos es más creíble que uno con una sola fuente, y
+    # un TIER_0 corroborado por un segundo origen es el lead de máxima calidad.
+    BONUS_MULTI_ORIGEN: int = 30
+    BONUS_TIER0_CRUCE: int = 50
 
     # Rango ordinal de urgencia: TIER_0 es el MÁS urgente (rango más bajo).
     _RANGO_URGENCIA: dict[TierUrgencia, int] = {
@@ -642,36 +729,88 @@ class ScoreTriggerPolicy:
         """
         Retorna (score, tier_final, califica).
 
-        - score        → round(Σ PUNTOS_POR_TIER[t.tier_urgencia] *
-                          factor_decay(t)) sobre todos los triggers. Lista
-                          vacía → 0.
-        - tier_final   → el tier MÁS urgente (TIER_0 es el más urgente) entre
-                          los triggers que aún contribuyen (factor de decay
-                          > 0). Si ninguno contribuye (o lista vacía) →
-                          TierUrgencia.TIER_3.
-        - califica     → score >= UMBRAL_CALIFICACION.
+        Algoritmo (spec canónica v5.0, agregación MEJOR-POR-ORIGEN):
+        1. Para cada trigger, factor de decay lineal en [0, 1] según su
+           tipo_trigger (CAUSA 90d, EFECTO 45d) — ver _factor_decay. La
+           contribución individual de un trigger es
+           PUNTOS_BASE[t.tier_urgencia] * factor(t).
+        2. Se agrupan los triggers por `origen`. De cada origen se toma SOLO
+           su MEJOR contribución (la más alta ya decayada). Esto impide que un
+           único origen ruidoso con varios titulares infle el score sumándose
+           a sí mismo (ej. 3×TIER_1 del mismo feed valen 100, no 300).
+        3. score_base = Σ de esas mejores-por-origen (una por origen distinto).
+        4. Contribuyentes = orígenes cuya MEJOR contribución es > 0. Un origen
+           cuya mejor contribución decayó a 0 no cuenta (ni para orígenes
+           distintos ni para el bonus). `origenes_distintos` es ese conjunto.
+        5. Si hay >=2 orígenes distintos contribuyentes:
+           score += BONUS_MULTI_ORIGEN (+30).
+        6. Si además la MEJOR contribución de algún origen contribuyente es de
+           tier TIER_0 (y persisten >=2 orígenes distintos):
+           score += BONUS_TIER0_CRUCE (+50).
+        7. score final = int(round(score)).
+        8. tier_final = el tier MÁS urgente (TIER_0 > TIER_1 > TIER_2 > TIER_3)
+           entre TODOS los triggers que efectivamente contribuyeron (factor >
+           0), no solo entre los "mejores por origen"; sin ninguno → TIER_3.
+        9. califica = score >= UMBRAL_CALIFICACION (150).
+
+        Lista vacía → (0, TIER_3, False).
 
         El parámetro `adaptadores_activos` se acepta por compatibilidad de
         firma con el sandbox y otras políticas del Motor 2; queda RESERVADO y
-        no gatea el resultado: el umbral de score es la única compuerta de
+        NO gatea el resultado: el umbral de score es la única compuerta de
         calificación en esta versión. No lanza excepción.
         """
         if not triggers:
             return 0, TierUrgencia.TIER_3, False
 
-        score_acumulado = 0.0
-        tiers_contribuyentes: list[TierUrgencia] = []
-        for trigger in triggers:
-            factor = self._factor_decay(trigger)
-            score_acumulado += self.PUNTOS_POR_TIER[trigger.tier_urgencia] * factor
-            if factor > 0:
-                tiers_contribuyentes.append(trigger.tier_urgencia)
+        # Contribución individual (ya decayada) de cada trigger, junto con el
+        # trigger que la produjo. Los de factor 0 quedan con contribución 0.
+        triggers_con_factor = [
+            (trigger, self._factor_decay(trigger)) for trigger in triggers
+        ]
 
-        score = round(score_acumulado)
+        # Todos los triggers que efectivamente contribuyeron (factor > 0) —
+        # base para tier_final (el tier más urgente entre ellos, aunque no
+        # sean la "mejor" de su origen).
+        contribuyentes = [t for t, factor in triggers_con_factor if factor > 0]
 
-        if tiers_contribuyentes:
+        # Agrupar por origen y quedarse con la MEJOR contribución de cada uno:
+        # (mejor_puntaje_decayado, tier_de_esa_mejor_contribucion).
+        mejor_por_origen: dict[OrigenTrigger, tuple[float, TierUrgencia]] = {}
+        for trigger, factor in triggers_con_factor:
+            contribucion = self.PUNTOS_BASE[trigger.tier_urgencia] * factor
+            actual = mejor_por_origen.get(trigger.origen)
+            if actual is None or contribucion > actual[0]:
+                mejor_por_origen[trigger.origen] = (
+                    contribucion,
+                    trigger.tier_urgencia,
+                )
+
+        # score_base = suma de las mejores-por-origen (una por origen distinto).
+        score_acumulado = sum(mejor[0] for mejor in mejor_por_origen.values())
+
+        # Orígenes cuya MEJOR contribución realmente aporta (> 0).
+        origenes_distintos = {
+            origen for origen, mejor in mejor_por_origen.items() if mejor[0] > 0
+        }
+        if len(origenes_distintos) >= 2:
+            score_acumulado += self.BONUS_MULTI_ORIGEN
+            # El TIER_0 debe ser la MEJOR contribución de algún origen
+            # contribuyente (no basta con que exista un TIER_0 marginal
+            # decayado que no fue lo mejor de su feed).
+            hay_tier0_mejor = any(
+                mejor[0] > 0 and mejor[1] == TierUrgencia.TIER_0
+                for mejor in mejor_por_origen.values()
+            )
+            if hay_tier0_mejor:
+                score_acumulado += self.BONUS_TIER0_CRUCE
+
+        score = int(round(score_acumulado))
+
+        if contribuyentes:
             tier_final = min(
-                tiers_contribuyentes, key=lambda tu: self._RANGO_URGENCIA[tu]
+                (t.tier_urgencia for t in contribuyentes),
+                key=lambda tu: self._RANGO_URGENCIA[tu],
             )
         else:
             tier_final = TierUrgencia.TIER_3

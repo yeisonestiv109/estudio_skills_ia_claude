@@ -21,6 +21,8 @@ from src.core.domain.models import (
     NivelConfianza,
     OrigenTrigger,
     TamanoEmpresa,
+    TierUrgencia,
+    TipoTrigger,
     Trigger,
 )
 from src.core.ports.interfaces import (
@@ -34,6 +36,20 @@ logger = logging.getLogger(__name__)
 _BASE_URL = "https://api.theirstack.com/v1"
 _JOBS_ENDPOINT = f"{_BASE_URL}/jobs/search"
 _REQUEST_TIMEOUT_SECS = 15
+
+# Límite de vacantes a traer en la consulta de SCORING. Se sube de 3 a 25
+# porque el TIER de la señal depende del AGING (antigüedad de la vacante
+# abierta más vieja) y TheirStack cobra por CONSULTA, no por resultado: traer
+# más vacantes en la MISMA llamada no agrega costo y mejora la estimación de
+# aging (la cota inferior del aging real es más ajustada con más muestras).
+# El "conteo" que muestra la descripción sigue gobernado por
+# max_resultados_scoring (parámetro del constructor), no por este límite.
+_LIMITE_VACANTES_AGING = 25
+
+# Umbral de aging (en días) a partir del cual una vacante abierta se considera
+# fill-rate failure (sangrado activo) — mismo valor que la ventana de decay de
+# EFECTO en ScoreTriggerPolicy: >= 45d abierta = TIER_0, < 45d = TIER_2.
+_AGING_TIER0_DIAS = 45
 
 
 def _calcular_nivel_confianza(n_vacantes: int) -> NivelConfianza | None:
@@ -128,7 +144,11 @@ class TheirStackAdapter(
             return []
 
         payload = {
-            "limit": self._max_scoring,
+            # Traemos más vacantes (25) que las que se reportan (max_scoring)
+            # para estimar el aging de la vacante más antigua sin costo extra
+            # (TheirStack cobra por consulta, no por resultado). Mantenemos el
+            # orden por date_posted desc.
+            "limit": _LIMITE_VACANTES_AGING,
             "order_by": [{"desc": True, "field": "date_posted"}],
             "company_domain_or": [empresa.dominio],
         }
@@ -146,18 +166,54 @@ class TheirStackAdapter(
         return self._parsear_triggers(data, empresa)
 
     def _parsear_triggers(self, data: dict, empresa: Empresa) -> list[Trigger]:
+        """
+        Construye el Trigger de scoring con los DOS EJES DE TIEMPO de la spec
+        canónica (Signal-Based Selling v5.0):
+
+        - Una vacante abierta es un EFECTO (síntoma observable del dolor).
+        - El TIER lo determina el AGING (antigüedad de la vacante abierta más
+          ANTIGUA): aging >= 45 días → TIER_0 (fill-rate failure, sangrado
+          activo); aging < 45 días → TIER_2 (demanda fresca, contexto).
+        - El DECAY lo determina la frescura de OBSERVACIÓN: una vacante aún
+          listada es un estado CONTINUO (fresco en cada re-observación), así
+          que fecha_evento = now (NO date_posted), para que el decay de EFECTO
+          (45d) de ScoreTriggerPolicy no elimine precisamente al TIER_0 de
+          aging alto.
+
+        LIMITACIÓN documentada: el aging se estima SOLO sobre las vacantes que
+        devolvió esta consulta (hasta _LIMITE_VACANTES_AGING), no sobre TODAS
+        las históricas. Es una cota INFERIOR honesta del aging real (la vacante
+        más antigua realmente abierta podría ser aún más vieja).
+        """
         vacantes = data.get("data", [])
         nivel = _calcular_nivel_confianza(len(vacantes))
         if nivel is None:
             return []
 
+        ahora = datetime.now(timezone.utc)
         techs = set()
-        fecha_evento: datetime | None = None
+        fechas_posted: list[datetime] = []
         for v in vacantes:
             for t in v.get("technologies", []):
                 techs.add(t.get("name", str(t)) if isinstance(t, dict) else str(t))
-            if fecha_evento is None:
-                fecha_evento = _parsear_fecha(v.get("date_posted"))
+            fecha_v = _parsear_fecha(v.get("date_posted"))
+            if fecha_v is not None:
+                fechas_posted.append(fecha_v)
+
+        # Aging = antigüedad de la vacante abierta MÁS ANTIGUA devuelta. Sin
+        # fecha parseable → aging 0 (TIER_2 conservador, fail-closed).
+        if fechas_posted:
+            aging_dias = (ahora - min(fechas_posted)).days
+            if aging_dias < 0:
+                aging_dias = 0
+        else:
+            aging_dias = 0
+
+        tier_urgencia = (
+            TierUrgencia.TIER_0
+            if aging_dias >= _AGING_TIER0_DIAS
+            else TierUrgencia.TIER_2
+        )
 
         titulo_sample = (
             vacantes[0].get("title", "Vacante técnica")
@@ -166,22 +222,33 @@ class TheirStackAdapter(
         )
         techs_str = ", ".join(sorted(techs)) if techs else "no especificadas"
 
-        # Si alcanzamos el techo de paginación, hay más señales ocultas: mostrar "+N".
+        # Si alcanzamos el techo de reporte (max_scoring), hay más señales
+        # ocultas: mostrar "+N".
         n_vacantes = len(vacantes)
         conteo_str = (
             f"+{n_vacantes}" if n_vacantes >= self._max_scoring else str(n_vacantes)
         )
 
+        aging_str = (
+            f"vacante más antigua: {aging_dias} días abierta"
+            if fechas_posted
+            else "aging no estimable (sin fecha)"
+        )
+
         descripcion = (
             f"{conteo_str} vacante(s) técnica(s) abiertas en '{empresa.nombre}'. "
-            f"Ejemplo: '{titulo_sample}'. Tecnologías: {techs_str}."
+            f"Ejemplo: '{titulo_sample}'. Tecnologías: {techs_str}. "
+            f"Aging ({aging_str})."
         )
 
         logger.info(
-            "TheirStack SCORING: '%s' — %d vacantes → confianza %s",
+            "TheirStack SCORING: '%s' — %d vacantes → confianza %s, "
+            "aging=%dd → %s (EFECTO, fecha_evento=now)",
             empresa.nombre,
             len(vacantes),
             nivel.value,
+            aging_dias,
+            tier_urgencia.value,
         )
         return [
             Trigger(
@@ -189,7 +256,9 @@ class TheirStackAdapter(
                 origen=OrigenTrigger.THEIRSTACK,
                 nivel_confianza=nivel,
                 descripcion=descripcion,
-                fecha_evento=fecha_evento,
+                fecha_evento=ahora,
+                tipo_trigger=TipoTrigger.EFECTO,
+                tier_urgencia=tier_urgencia,
             )
         ]
 
