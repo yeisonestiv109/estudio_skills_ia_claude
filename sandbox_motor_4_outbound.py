@@ -287,12 +287,16 @@ def ejecutar_seleccion(
 
         descartados = [d.nombre for d in decisores if d.id != elegido.id]
         if descartados:
+            lista_descartados = ", ".join(descartados)
+            texto_descartados = f'{len(descartados)} ({lista_descartados})'
+            texto_cargo = f'({elegido.cargo_original})'
             print(
                 f"  {negrita(empresa.nombre)}: descartando "
-                f"{gris(f'{len(descartados)} ({", ".join(descartados)})')}, "
+                f"{gris(texto_descartados)}, "
                 f"{verde(f'seleccionando a {elegido.nombre}')} "
-                f"{gris(f'({elegido.cargo_original})')}"
+                f"{gris(texto_cargo)}"
             )
+
         else:
             print(
                 f"  {negrita(empresa.nombre)}: único decisor disponible → "
@@ -460,15 +464,17 @@ def ejecutar_envio(
         color_fn = colores_resultado.get(resultado, gris)
         print(f"  {decisor.nombre} <{decisor.correo}> → {color_fn(resultado.value)}")
 
-    print(
-        f"\n  {gris('Nota: el resultado ENTREGADO aquí es la respuesta síncrona de Resend')}"
-    )
-    print(
-        f"  {gris('(\"aceptado para procesar\"), no la confirmación final de entregabilidad.')}"
-    )
-    print(
-        f"  {gris('El rebote real, si ocurre, se captura después vía webhook (no incluido).')}\n"
-    )
+        print(
+            f"\n  {gris('Nota: el resultado ENTREGADO aquí es la respuesta síncrona de Resend')}"
+        )
+    
+        msg_nota = '("aceptado para procesar"), no la confirmación final de entregabilidad.'
+        print(f"  {gris(msg_nota)}")
+
+
+        print(
+            f"  {gris('El rebote real, si ocurre, se captura después vía webhook (no incluido).')}\n"
+        )
 
 
 # ---------------------------------------------------------------------------

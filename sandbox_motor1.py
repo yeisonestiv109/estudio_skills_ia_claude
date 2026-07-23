@@ -141,13 +141,14 @@ def main() -> None:
         print(f"  3. Obtén tu clave gratis en: {cian('https://console.groq.com/keys')}\n")
         sys.exit(1)
 
-    print(f"  {verde('✓')} Adaptador listo. Modelo: {amarillo(GroqICPAdapter.MODEL)}")
-    print(f"  {verde('✓')} API Key cargada desde .env")
-    print(f"\n  {gris('Escribe una descripción de tu cliente ideal en lenguaje natural.')}")
-    print(f"  {gris('Ejemplo: \"Busco empresas SaaS colombianas con 100-500 empleados')}")
-    print(f"  {gris('          que tengan deuda técnica en backend Python y busquen')}")
-    print(f"  {gris('          arquitectos para escalar su plataforma.\"')}")
-    print(f"\n  {gris('Escribe \"salir\" o presiona Ctrl+C para terminar.')}\n")
+        ejemplo_l1 = 'Ejemplo: "Busco empresas SaaS colombianas con 100-500 empleados'
+        ejemplo_l2 = '          que tengan deuda técnica en backend Python y busquen'
+        ejemplo_l3 = '          arquitectos para escalar su plataforma."'
+        msg_salir = 'Escribe "salir" o presiona Ctrl+C para terminar.'
+        print(f"  {gris(ejemplo_l1)}")
+        print(f"  {gris(ejemplo_l2)}")
+        print(f"  {gris(ejemplo_l3)}")
+        print(f"\n  {gris(msg_salir)}\n")
 
     # ── Bucle interactivo ────────────────────────────────────────────────────
     while True:

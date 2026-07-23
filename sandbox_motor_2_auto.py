@@ -245,7 +245,8 @@ def main() -> None:
     print(f"  {verde('✓')} Motor 1 (Groq) inicializado.")
     print(f"  {verde('✓')} Motor 2 — {azul('TheirStack')} + {verde('Google News')} + {magenta('Wappalyzer')} + {amarillo('SECOP')} + {cian('GitHub')} listos.")
     print(f"\n  {gris('Describe tu ICP (texto libre):')}")
-    print(f"  {gris('Ej: \"SaaS colombiano gov-facing con monolito Django\"')}\n")
+    ejemplo = 'Ej: "SaaS colombiano gov-facing con monolito Django"'
+    print(f"  {gris(ejemplo)}\n")
 
     # Input del usuario
     try:
@@ -281,7 +282,9 @@ def main() -> None:
     if not empresas:
         print(f"\n{SEP}\n")
         print(f"  {amarillo('No hay empresas para analizar.')}")
-        print(f"  {gris('Verifica THEIRSTACK_API_KEY y la disponibilidad del ICP.\n')}")
+        ejemplo = 'Verifica THEIRSTACK_API_KEY y la disponibilidad del ICP.\n'
+        print(f"  {gris(ejemplo)}\n")
+
         sys.exit(0)
 
     # Motor 2B-D + Política de Agregación
