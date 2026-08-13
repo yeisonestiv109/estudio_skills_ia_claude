@@ -32,7 +32,7 @@ desacoplar proveedores, o hacer un sistema extensible a nuevos sectores.
 4. Mostrar cómo entra un **sector/cliente nuevo** como adaptador sin tocar el Core.
 5. Diagramar en Mermaid (hexagonal) y, si aplica, la máquina de estados.
 
-## Ejemplo de anclaje (Prospector Vía B)
+## Ejemplo de anclaje (Prospector )
 - Core: `ICPManifest`, `SpecificityScoreEngine`, `TriggerScoringEngine`, `StateTransitionPolicy`.
 - Puertos: `IntentParserPort`, `TriggerSourcePort`, `EnrichmentProviderPort`, `CompanyRepositoryPort`, `LLMPort`.
 - Adaptadores: PydanticAI, TheirStack, LinkedIn, Waterfall, PostgreSQL.

@@ -1,0 +1,17 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Format-on-Save (ruff)",
+      "description": "Al guardar un .py en src/ o tests/, corre ruff format y ruff check --fix en WSL (uv). Puente wsl.exe porque Kiro corre en Windows y uv solo existe en WSL.",
+      "trigger": "PostFileSave",
+      "matcher": "(src/.*[^/]*\\\\.py$|tests/.*[^/]*\\\\.py$)",
+      "action": {
+        "type": "command",
+        "command": "wsl.exe bash /home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/hooks/_run-ruff.sh"
+      },
+      "timeout": 60,
+      "enabled": true
+    }
+  ]
+}

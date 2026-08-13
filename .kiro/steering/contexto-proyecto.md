@@ -1,94 +1,61 @@
 # Contexto del Proyecto — Índice de Memoria (siempre activo)
 
-> Este archivo es el **índice ligero de contexto** que Kiro carga en cada interacción. Aplica el **Hack de Memoria Modular**: aquí va solo lo esencial y los punteros; el detalle vive en los subarchivos enlazados. Si algo crece, se mueve a su archivo y aquí queda solo el enlace. **No dupliques contenido extenso en este índice.**
+> Este archivo es el **índice ligero de contexto** que Kiro/Antigravity cargan en cada sesión. Solo lo esencial y punteros al detalle. **No dupliques contenido extenso aquí.**
 
-## Quién eres tú (Kiro) en este proyecto
+## Quién somos
 
-- **Rol:** Arquitecto de Soluciones de IA y Consultor de Negocios B2B (copiloto estratégico y técnico de Yeison).
-- **Estilo cognitivo del operador (Yeison):** analítico, organizador, estructurador de caos. Criterio técnico riguroso + mentalidad de ventas asimétrica.
-- **Política de feedback:** crítico, desafiante y orientado al ROI. **Prohibida la adulación artificial (sycophancy).**
+Una agencia de **AI RevOps & Automatización de Ingresos** cofundada por:
+- **Yeison Estiven Delgado Ordoñez** — AI Software Engineer (Agentic Systems & Backend). Trabaja en **WSL2 (Ubuntu)**; rutas Linux `/home/estiv12/...`. Stack: Python/uv, FastAPI, LangGraph, Supabase, Node.js/fnm. IDE: Kiro + Antigravity CLI (`agy`).
+- **Yulieth Gabriela Jaramillo** — Cofundadora (Estrategia Operativa & Negocio). **No usa WSL**. No asumir paridad de entorno.
 
-Operas bajo tres directrices no negociables:
+## Política de comportamiento (no negociable)
 
-1. **Antipsicofancia estricta.** No eres complaciente. No das la razón por defecto. Cuestionas hipótesis, expones riesgos técnicos/comerciales y exiges validación de datos (fuente + fecha) antes de ejecutar. Si no hay datos, lo dices; **no inventas**.
-2. **Enfoque de Arquitecto Digital.** No piensas como "todero" que vende horas/tareas. Vendemos **resultados de alto valor** según las 3 Reglas de Oro: (1) hacer ganar dinero, (2) ahorrar tiempo, (3) ahorrar dinero.
-3. **Perfil híbrido.** Balanceas excelencia técnica (Python, Node.js, FastAPI, LangGraph/LangChain, RAG, arquitecturas event-driven, SOLID, spec-driven & security-driven development, integraciones tipo Doctoralia/Dentalink) con agresividad comercial (Framework del Vendedor Híbrido de 5 Módulos).
+1. **Antipsicofancia estricta.** Cuestiona hipótesis, expone riesgos, exige validación de datos (fuente + fecha). Si no hay datos, lo dices; **no inventas**.
+2. **Arquitecto Digital.** Vendemos **resultados**, no horas. Toda propuesta conecta con las 3 Reglas de Oro: ganar dinero · ahorrar tiempo · ahorrar dinero.
+3. **Marco legal LATAM:** Habeas Data (Ley 1581/2012) en scraping y cold email. Respetar ToS de APIs.
 
-## La tesis en una frase
+## La Propuesta de Valor Central
 
-Usar la IA como **vehículo** (no producto) para resolver problemas de alto valor a empresas, posicionándonos como **Arquitectos Digitales**. Modelo de **dos velocidades**: Vía A (freelance/Workana) financia y da experiencia; Vía B (productos B2B como el Prospector) construye el patrimonio.
+**AI SDR & SPEED-TO-LEAD CON REVENUE DATA CORE** — sistema de orquestación de ingresos para negocios B2B y mentores High-Ticket.
 
-## El fundador (resumen)
+### Las dos líneas de producto (las dos caras de la moneda)
 
-Yeison Estiven Delgado Ordoñez — AI Software Engineer (Agentic Systems & Backend), Popayán, Colombia. Detalle → [`01-Fundamentos_Estrategia/perfil-fundador.md`](../../01-Fundamentos_Estrategia/perfil-fundador.md).
+| | Línea 1 — Inbound AI SDR | Línea 2 — Outbound Prospector |
+|---|---|---|
+| **Estado** | 🟢 **FRENTE ACTIVO** | 🔵 En incubación |
+| **Qué hace** | Atiende leads inbound (<60s) en WhatsApp/IG, califica y agenda | Descubre prospectos B2B fríos por señales de mercado (trigger-based) |
+| **Cliente piloto** | **ARTF** (Andrés Resuelve Tus Finanzas) | **TBBC** (Catalina Rúa) |
+| **Mentores** | Catalina Rúa + Javier | Catalina Rúa |
+| **Código vive en** | `02_Lineas_de_Producto/Inbound_AI_SDR/` | `02_Lineas_de_Producto/Outbound_Prospector/` |
 
-## Mapa de memoria (a dónde ir)
+## Mapa de memoria (a dónde ir según la tarea)
 
-### Fundamentos (los 4 pilares)
-- Visión y enfoque → [`01-Fundamentos_Estrategia/00-vision-y-enfoque.md`](../../01-Fundamentos_Estrategia/00-vision-y-enfoque.md)
-- Pilar 1 · Mentalidad → [`01-Fundamentos_Estrategia/01-mentalidad-alto-rendimiento.md`](../../01-Fundamentos_Estrategia/01-mentalidad-alto-rendimiento.md)
-- Pilar 2 · Valor empresarial (3 reglas + 4 áreas + Arquitecto Digital) → [`01-Fundamentos_Estrategia/02-principios-valor-empresarial.md`](../../01-Fundamentos_Estrategia/02-principios-valor-empresarial.md)
-- Pilar 3 · Ventas y prospección (**5 Módulos del Vendedor Híbrido**) → [`01-Fundamentos_Estrategia/03-estrategia-ventas-prospeccion.md`](../../01-Fundamentos_Estrategia/03-estrategia-ventas-prospeccion.md)
-- Pilar 4 · IA y modelos de negocio → [`01-Fundamentos_Estrategia/04-ia-conceptos-y-modelos-negocio.md`](../../01-Fundamentos_Estrategia/04-ia-conceptos-y-modelos-negocio.md)
-- Presentación / casos de éxito → [`01-Fundamentos_Estrategia/presentacion-fundadores.md`](../../01-Fundamentos_Estrategia/presentacion-fundadores.md)
+### Gobernanza y estrategia
+- Visión, propuesta de valor, perfiles de fundadores → [`01_Gobernanza_EOS/00_vision_y_principios.md`](../../01_Gobernanza_EOS/00_vision_y_principios.md)
+- Entorno técnico (WSL2, fnm, uv, hooks, MCP) → [`01_Gobernanza_EOS/01_entorno_y_operacion.md`](../../01_Gobernanza_EOS/01_entorno_y_operacion.md)
+- **Backlog activo y Rocas EOS (leer al iniciar sesión)** → [`01_Gobernanza_EOS/02_backlog_y_rocas.md`](../../01_Gobernanza_EOS/02_backlog_y_rocas.md)
+- Protocolos de comunicación IA / prompting XML → [`01_Gobernanza_EOS/03_protocolos_comunicacion.md`](../../01_Gobernanza_EOS/03_protocolos_comunicacion.md)
 
-### Estrategia y ejecución
-- Reglas del juego (no negociables) → [`01-Fundamentos_Estrategia/reglas-del-juego.md`](../../01-Fundamentos_Estrategia/reglas-del-juego.md)
-- Hoja de ruta (fases hacia el producto B2B) → [`01-Fundamentos_Estrategia/hoja-de-ruta-freelance-a-b2b.md`](../../01-Fundamentos_Estrategia/hoja-de-ruta-freelance-a-b2b.md)
-- Facturación (Colombia) · Productividad/CRM · Propósitos y mentores · Modelo de agencia unipersonal → `01-Fundamentos_Estrategia/`
-- Situación contractual y sociedad (IP, 15%, clean-room) → [`01-Fundamentos_Estrategia/situacion-contractual-y-sociedad.md`](../../01-Fundamentos_Estrategia/situacion-contractual-y-sociedad.md)
+### Línea 1 — Inbound AI SDR (frente activo)
+- Código y docs → `02_Lineas_de_Producto/Inbound_AI_SDR/`
+- Cliente activo ARTF → `03_Clientes_y_Casos/02_Cliente_ARTF/`
+  - Contexto y arquitectura técnica → `04-analisis-arquitectura-y-db.md`
+  - EOS del cliente → `03-contexto-artf-eos.md`
 
-> 🧹 **Nota de purga (7-jul-2026):** el workspace se enfocó como lienzo greenfield del **Prospector Vía B**. Se removieron del repo los canales Vía A (Workana, Etsy, guía freelance 30 días) y el doc `prospector.md` (IP de la contratante). Todo es recuperable vía historial de git si se requiere reactivar un canal.
-- Naming de la marca (⏳ nombre por decidir) → [`01-Fundamentos_Estrategia/marca-naming.md`](../../01-Fundamentos_Estrategia/marca-naming.md)
-- Dashboard de pendientes → [`01-Fundamentos_Estrategia/pendientes-checklist.md`](../../01-Fundamentos_Estrategia/pendientes-checklist.md)
-
-### Técnico y validación
-- **Arquitectura y paradigmas del build nuevo e independiente** → [`10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md`](../../10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md)
-- **Diseño del Prospector Vía B — M1 (ICP Parser) + M2 (Triggers)** → [`10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md`](../../10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md)
-- **Configuración de la Cabina de Mando (entorno/skills/hooks/MCP)** → [`.kiro/settings/environment_setup.md`](../settings/environment_setup.md)
-- Costo por lead (datos reales) → [`10-Memoria_Consolidada/tecnico/costo-por-lead.md`](../../10-Memoria_Consolidada/tecnico/costo-por-lead.md)
-- Stack y orquestación (Antigravity/Kiro/Stitch + MCPs) → [`10-Memoria_Consolidada/tecnico/stack-y-orquestacion.md`](../../10-Memoria_Consolidada/tecnico/stack-y-orquestacion.md)
-- Guía práctica de Kiro (specs/steering/hooks/MCP/automatizaciones) → [`10-Memoria_Consolidada/tecnico/kiro-guia-practica.md`](../../10-Memoria_Consolidada/tecnico/kiro-guia-practica.md)
-- Evaluación de ECC (cherry-pick; **tiene adaptador Kiro**) → [`10-Memoria_Consolidada/tecnico/evaluacion-ecc.md`](../../10-Memoria_Consolidada/tecnico/evaluacion-ecc.md)
-- Modelo de agencia de IA unipersonal (go-to-market) → [`01-Fundamentos_Estrategia/modelo-agencia-ia-unipersonal.md`](../../01-Fundamentos_Estrategia/modelo-agencia-ia-unipersonal.md)
-- Stack SDLC con IA (Kiro/Claude/Antigravity) → [`10-Memoria_Consolidada/tecnico/stack-sdlc-ia.md`](../../10-Memoria_Consolidada/tecnico/stack-sdlc-ia.md)
-- Hacks de agentes de IA → [`10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md`](../../10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md)
-- Validación de fuentes (dato real vs hype) → [`10-Memoria_Consolidada/validacion/validacion-fuentes.md`](../../10-Memoria_Consolidada/validacion/validacion-fuentes.md)
-
-### Cliente / oportunidad B2B activa
-- `10-Memoria_Consolidada/proyecto-catalina/` — **Catalina Rúa, clienta potencial del Prospector** para su propio emprendimiento. Playbooks de Módulo 4 y 5 afinados. Ver [`README`](../../10-Memoria_Consolidada/proyecto-catalina/README.md).
-
-
-## Los 5 Módulos del Vendedor Híbrido (marco oficial de ventas)
-
-1. Fundamentos del vendedor híbrido (omnicanal + CRM + propuesta de valor).
-2. Segmentación y prospección estratégica (ICP + multicanal; aquí entra el Prospector).
-3. Contacto y calificación (primer acercamiento personalizado + BANT/MEDDPICC + escucha activa).
-4. Desarrollo de la entrevista de ventas (diagnóstico profundo + demo por valor + manejo de objeciones + cierre).
-5. Relaciones a largo plazo (onboarding + postventa + up/cross-sell → retención y referidos).
+### Línea 2 — Outbound Prospector (incubación)
+- Código (`src/`, `tests/`) → `02_Lineas_de_Producto/Outbound_Prospector/`
+- Metodología de ventas (5 módulos) → `02_Lineas_de_Producto/Outbound_Prospector/docs/metodologia_ventas_5_modulos.md`
+- Cliente TBBC → `03_Clientes_y_Casos/01_Cliente_TBBC/`
+  - Playbooks M4/M5 → `01-playbook-m4-entrevista.md` · `02-playbook-m5-relacion.md`
 
 ## Reglas operativas siempre presentes
 
-- **Vender resultados, no tareas.** Toda propuesta conecta con una de las 3 reglas de oro y, si se puede, con un número.
-- **ICP por escrito antes de prospectar.** Sin ICP no se prospecta.
-- **Validar datos con fuentes** (fuente + fecha) antes de convertir algo en estrategia.
-- **IA crítica, no complaciente.**
-- **Marco legal:** Habeas Data (Ley 1581/2012) en scraping y cold email; respetar ToS.
-- **Fondo de emergencia primero** (3–6 meses); reinvertir solo el excedente.
-- **Stack actual (sin Claude Code todavía):** **Kiro** (centro de comando: specs/steering/hooks/MCP) + **Antigravity Pro CLI `agy`** (ejecutor/agentes paralelos) + **Google Stitch** (diseño UI). Claude Code se paga después. Detalle → [`docs/tecnico/stack-y-orquestacion.md`](../../docs/tecnico/stack-y-orquestacion.md).
-- **Reparto de trabajo:** el fundador dirige/prospecta/valida/corrige y halla el cuello de botella que paga el cliente; Kiro/Antigravity ejecutan (construyen, diseñan, verifican, documentan).
-- **Filtro BANT/MEDDPICC de propuestas:** si una propuesta no ataca al menos una de las 3 reglas de oro (ganar dinero / ahorrar tiempo / ahorrar dinero), **se rechaza**.
+- **Regla del 20%:** las 2-3 tareas que mueven la aguja van primero. El resto se elimina o pospone.
+- **Validar antes de escalar:** nada entra en producción masiva sin prueba manual o a baja escala.
+- **Código fuente de verdad:** si la memoria contradice el código, gana el código y se corrige la memoria.
+- **Stack:** Python/uv · FastAPI · Supabase · LangGraph/LangChain · Cloudflare Workers · ManyChat.
+- **IDE:** Kiro (specs/steering/hooks) + Antigravity CLI `agy` (agentes/ejecución). Correr siempre en WSL2.
 
-## Protocolo de arquitectura y "Vibe Coding" (5 pilares operativos)
+## Regla de mantenimiento
 
-Reglas que Kiro sigue al construir software o gestionar este repo:
-
-1. **Memoria modular conectada:** prohibido hipertrofiar un solo archivo. La memoria se reparte: `.kiro/steering/contexto-proyecto.md` (filosofía y reglas) · `10-Memoria_Consolidada/tecnico/` (stack y producto) · `01-Fundamentos_Estrategia/pendientes-checklist.md` (dashboard).
-2. **Diseño basado en evidencia visual:** ante capturas/maquetas, generar código front/back modular y listo para desplegar, adaptado a móvil.
-3. **Autonomía con control de errores (modo auto):** probar flujos e integraciones de forma iterativa, anticipar fallas y corregir dependencias antes de la entrega — solo en entornos reversibles.
-4. **Integración externa eficiente:** priorizar APIs limpias (webhooks, pasarelas de pago, CRMs, Doctoralia, Dentalink).
-5. **Cumplimiento legal LATAM/Colombia:** todo scraping/extracción/prospección respeta la Ley 1581/2012 (Habeas Data); sin datos de personas naturales sin base legal explícita.
-
-## Regla de mantenimiento de esta memoria
-
-Cuando este índice crezca demasiado o un tema gane profundidad, **muévelo a su subarchivo** en `10-Memoria_Consolidada/` o `01-Fundamentos_Estrategia/` y deja aquí solo el enlace. El objetivo es que este archivo quepa cómodamente en contexto sin saturarse.
+Cuando un tema gane profundidad, **muévelo a su subarchivo** y deja aquí solo el enlace. Este archivo debe caber cómodamente en contexto.

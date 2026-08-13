@@ -1,7 +1,15 @@
 # Especificación del MVP — El Nuevo Prospector Propio (Clean Room)
 *ID de Spec: spec-mvp-prospector-001*  
 *Fecha: 5-jul-2026*  
-*Estado: Pendiente de aprobación*
+*Estado: ⛔ SUPERADO POR IMPLEMENTACIÓN (24-jul-2026).*
+
+> **Nota de cierre (24-jul-2026):** este spec fue el MVP inicial de 3 tareas. El
+> proyecto ya lo rebasó: los Motores 1-4 están implementados y blindados (v6.2+,
+> 476/480 tests verdes) bajo arquitectura hexagonal. La fuente de verdad técnica
+> viva es `02_Lineas_de_Producto/Outbound_Prospector/docs/` (contratos en
+> `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`) y el estado en
+> `01_Gobernanza_EOS/02_backlog_y_rocas.md`. Este documento se conserva solo como
+> registro histórico del alcance original; **no usarlo como plan de trabajo actual.**
 
 Este documento establece la **fuente de la verdad técnica y funcional** para construir el nuevo motor de prospección B2B independiente de Yeison. Se diseña bajo el principio de **Clean Room** para asegurar el aislamiento de propiedad intelectual frente a la contratante anterior.
 

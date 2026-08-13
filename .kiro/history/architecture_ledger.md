@@ -1,9 +1,9 @@
 <!--
 ================================================================================
- ARCHITECTURE LEDGER — El Prospector (Vía B · Greenfield Build)
+ ARCHITECTURE LEDGER — El Prospector
 ================================================================================
  Autoría / Fundador : Yeison Estiven Delgado Ordoñez
- Proyecto           : El Prospector — Vía B Greenfield Build
+ Proyecto           : El Prospector —  Greenfield Build
  Inicio del ledger  : 7-jul-2026
  Naturaleza         : Documento histórico APPEND-ONLY. No se reescriben entradas
                       previas; solo se añaden nuevas al final.
@@ -17,7 +17,7 @@
 ================================================================================
 -->
 
-# Architecture Ledger — El Prospector (Vía B)
+# Architecture Ledger — El Prospector
 
 > Registro histórico append-only de decisiones de arquitectura. Cada entrada sigue
 > el formato de tres etapas. **No editar entradas pasadas; solo añadir al final.**
@@ -32,7 +32,7 @@
 
 ### Etapa 1 · Investigación
 Se auditó el entorno local de Kiro IDE antes de diseñar M3/M4: (a) tronco Git y
-ramas, (b) integridad de la purga greenfield (rastreo de referencias a canales Vía A
+ramas, (b) integridad de la purga greenfield (rastreo de referencias a canales 
 Workana/Etsy), (c) validez sintáctica de `~/.kiro/settings/mcp.json` y estado de los
 servidores MCP (`Memory MCP`, `google-sheets`). El río se rastreó hasta su origen: las
 referencias residuales resultaron ser documentación histórica, un `GOOGLE_PROJECT_ID`

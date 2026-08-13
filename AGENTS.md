@@ -12,12 +12,12 @@ Según la respuesta, responde con un mensaje corto de motivación (máx. 2 líne
 
 ## Cómo cargar contexto (estructura numerada canónica)
 
-1. **Memoria de trabajo:** lee siempre primero [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md) — handoff y objetivo de hoy.
-2. **Neocórtex técnico (fuente de verdad para código):** [`10-Memoria_Consolidada/`](10-Memoria_Consolidada/). Contratos en `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`. Subcarpetas: `tecnico/`, `validacion/`, `proyecto-catalina/` (**Aquí viven el Frente 1 - TBBC y el Frente 2 - Sandler/WhatsApp, prioridad absoluta**). Si no está ahí, no existe.
-3. **ADN / estrategia:** [`01-Fundamentos_Estrategia/`](01-Fundamentos_Estrategia/) (incluye `pendientes-checklist.md`, el dashboard de tareas).
-4. **Decisiones (porqué):** [`20-Bitacora_Decisiones/`](20-Bitacora_Decisiones/). **Ignora** `99-Archivo_Muerto/`.
-5. **Grafo de código:** si existe `graphify-out/graph.json`, usa `graphify query "<pregunta>"` antes de leer archivos de `src/` sueltos — devuelve solo el subgrafo relevante.
-6. El [`README.md`](README.md) tiene el mapa completo.
+1. **Memoria de trabajo (EOS):** lee siempre primero [`01_Gobernanza_EOS/02_backlog_y_rocas.md`](01_Gobernanza_EOS/02_backlog_y_rocas.md) — handoff, objetivos (rocas) y bitácora de decisiones.
+2. **Neocórtex técnico (fuente de verdad para código):** Revisa `02_Lineas_de_Producto/`. Si trabajas en Inbound (ARTF), ve a `Inbound_AI_SDR/docs/`. Si trabajas en Outbound (El Prospector), ve a `Outbound_Prospector/docs/`. Si el código no está en `src/`, no existe.
+3. **ADN / estrategia:** [`01_Gobernanza_EOS/00_vision_y_principios.md`](01_Gobernanza_EOS/00_vision_y_principios.md) (incluye la visión, las 3 reglas de oro y el perfil híbrido).
+4. **Clientes y Laboratorios:** Revisa [`03_Clientes_y_Casos/`](03_Clientes_y_Casos/) para entender el contexto particular de la oportunidad comercial activa (ej. ARTF).
+5. **Grafo de código:** si existe `graphify-out/graph.json`, usa `graphify query "<pregunta>"` antes de leer archivos de `src/` sueltos.
+6. El [`README.md`](README.md) tiene el mapa completo de la nueva estructura de 2 Velocidades (Inbound/Outbound).
 
 ## Reglas de comportamiento (no negociables)
 
@@ -29,9 +29,14 @@ Según la respuesta, responde con un mensaje corto de motivación (máx. 2 líne
 
 ## Higiene de memoria
 
-Mantén `contexto-proyecto.md` ligero (índice + punteros). El detalle vive en los subarchivos. Si algo crece, muévelo a su archivo y deja el enlace.
+Mantén el índice del `README.md` ligero. El detalle vive en los subarchivos. Si algo crece, muévelo a su archivo y deja el enlace.
+
+**Protocolo anti-confusión (lectura obligatoria):** Regla núcleo: **el código ejecutable + tests en verde le ganan a cualquier `.md`**. Si la memoria contradice al código, gana el código y se corrige la memoria. Usa siempre la estructura numerada de carpetas (`01_Gobernanza_EOS`, `02_Lineas_de_Producto`, `03_Clientes_y_Casos`). Las rutas viejas (`10-Memoria_Consolidada`, `01-Fundamentos_Estrategia`, `docs/`) fueron purgadas y consolidadas.
+
+## Perfiles y entorno
+
+Yeisiton usa WSL2 (Ubuntu); Gabyota **no**. El contexto del proyecto (memoria/hooks/skills) es compartido; el entorno de máquina no. Detalle → [`01_Gobernanza_EOS/01_entorno_y_operacion.md`](01_Gobernanza_EOS/01_entorno_y_operacion.md).
 
 ## Estado actual
 
-Handoff vivo: [`00-Cortex_Operativo/estado_actual.md`](00-Cortex_Operativo/estado_actual.md).
-Dashboard de tareas: [`01-Fundamentos_Estrategia/pendientes-checklist.md`](01-Fundamentos_Estrategia/pendientes-checklist.md).
+Handoff vivo y rocas de EOS: [`01_Gobernanza_EOS/02_backlog_y_rocas.md`](01_Gobernanza_EOS/02_backlog_y_rocas.md).

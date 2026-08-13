@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Gate de Verificacion (pytest)",
+      "description": "Al terminar una tarea, corre la suite pytest en WSL (uv). Si falla, no marcar la tarea como completada. Puente wsl.exe (uv solo existe en WSL).",
+      "trigger": "PostTaskExec",
+      "action": {
+        "type": "command",
+        "command": "wsl.exe bash /home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/hooks/_run-pytest.sh"
+      },
+      "timeout": 120,
+      "enabled": true
+    }
+  ]
+}

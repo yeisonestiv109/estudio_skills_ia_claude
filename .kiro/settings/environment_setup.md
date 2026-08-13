@@ -1,7 +1,7 @@
 # Cabina de Mando — Configuración del Entorno AI-Native (Kiro + MCP)
 
 ---
-*   **Proyecto:** El Prospector - Vía B Greenfield Build
+*   **Proyecto:** El Prospector Greenfield Build
 *   **Fecha de Creación:** 7 de Julio de 2026
 *   **Autoría:** Yeison Estiven Delgado Ordoñez (Fundador)
 ---

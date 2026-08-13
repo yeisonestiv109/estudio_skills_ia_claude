@@ -52,6 +52,13 @@ dist/
 secrets.json
 credentials.json
 
+# Datos reales de clientes (CRM/leads/financieros) — nunca versionar PII ni
+# credenciales de proyectos Supabase de clientes.
+03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/*.csv
+03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/*.xlsx
+03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/*.xls
+03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.env
+
 # ---------------------------------------------------------------------------
 # Artefactos de IDE / sistema operativo
 # ---------------------------------------------------------------------------

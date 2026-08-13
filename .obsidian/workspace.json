@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "10-Memoria_Consolidada/flujos_motor_1_y_2.md",
+                "file": "03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "flujos_motor_1_y_2"
+              "title": "05-validacion-migracion-datos-reales"
             }
           }
         ]
@@ -41,10 +41,12 @@
               "type": "file-explorer",
               "state": {
                 "sortOrder": "alphabetical",
-                "autoReveal": false
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
               },
               "icon": "lucide-folder-closed",
-              "title": "Explorador de archivos"
+              "title": "Files"
             }
           },
           {
@@ -94,6 +96,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -103,7 +106,7 @@
                 "unlinkedCollapsed": true
               },
               "icon": "links-coming-in",
-              "title": "Enlaces entrantes"
+              "title": "Backlinks"
             }
           },
           {
@@ -171,55 +174,56 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "switcher:Abrir selector rápido": false,
-      "graph:Abrir vista gráfica": false,
-      "canvas:Crear nuevo lienzo": false,
-      "daily-notes:Abrir la nota de hoy": false,
-      "templates:Insertar plantilla": false,
-      "command-palette:Abrir paleta de comandos": false,
-      "bases:Crear nueva base": false
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
     }
   },
   "active": "86dde43f881a3e16",
   "lastOpenFiles": [
-    "10-Memoria_Consolidada/tecnico/arquitectura-y-paradigmas.md",
-    "__pycache__/sandbox_tbbc_real.cpython-312.pyc",
-    "src/adapters/triggers/__pycache__/propuesta_valor_adapter.cpython-312.pyc",
-    "tests/__pycache__/test_propuesta_valor_adapter.cpython-312-pytest-9.1.1.pyc",
-    "tests/test_propuesta_valor_adapter.py",
-    "src/adapters/triggers/propuesta_valor_adapter.py",
-    "10-Memoria_Consolidada/tecnico/prospector-m1-m2-design.md",
+    "01_Gobernanza_EOS/02_backlog_y_rocas.md.tmp.1575.a46e242731b3",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/resiliencia_motor_2.md.tmp.1575.aea28c051641",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/flujos_motor_1_y_2.md.tmp.1575.37022705f500",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/flujos_motor_1_y_2.md.tmp.1575.e9de7fdd6735",
+    "02_Lineas_de_Producto/Outbound_Prospector/tests/__pycache__/test_domain_models.cpython-312-pytest-9.1.1.pyc.44475",
+    "02_Lineas_de_Producto/Outbound_Prospector/__pycache__/sandbox_piloto_latam_m3.cpython-312.pyc",
+    "02_Lineas_de_Producto/Outbound_Prospector/__pycache__/sandbox_motor_4_outbound.cpython-312.pyc",
+    "02_Lineas_de_Producto/Outbound_Prospector/__pycache__",
+    "02_Lineas_de_Producto/Outbound_Prospector/tests/__pycache__/test_domain_models.cpython-312.pyc",
+    "02_Lineas_de_Producto/Outbound_Prospector/src/adapters/triggers/__pycache__/propuesta_valor_adapter_backup.cpython-312.pyc",
+    "02_Lineas_de_Producto/Outbound_Prospector/sedPQ40b8",
+    "01_Gobernanza_EOS/03_protocolos_comunicacion.md",
+    "01_Gobernanza_EOS/04_eos_vto_agencia.md",
+    "03_Clientes_y_Casos/README.md",
+    "01_Gobernanza_EOS/02_backlog_y_rocas.md",
+    "01_Gobernanza_EOS/01_entorno_y_operacion.md",
+    "01_Gobernanza_EOS/00_vision_y_principios.md",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/metodologia_ventas_5_modulos.md",
+    "03_Clientes_y_Casos/02_Cliente_ARTF/04-analisis-arquitectura-y-db.md",
+    "03_Clientes_y_Casos/02_Cliente_ARTF/03-contexto-artf-eos.md",
+    "03_Clientes_y_Casos/02_Cliente_ARTF/02-frente-2-segunda-empresa-y-trueque-sandler.md",
+    "03_Clientes_y_Casos/01_Cliente_TBBC/02-playbook-m5-relacion.md",
+    "03_Clientes_y_Casos/01_Cliente_TBBC/01-playbook-m4-entrevista.md",
+    "03_Clientes_y_Casos/01_Cliente_TBBC/01-frente-1-tbbc-prospector.md",
+    "03_Clientes_y_Casos/01_Cliente_TBBC/00-contexto-cliente.md",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/tecnico/costo-por-lead.md",
     "10-Memoria_Consolidada/flujos_motor_1_y_2.md",
-    "__pycache__/sandbox_motor_2_auto.cpython-312.pyc",
-    "sandbox_tbbc_real.py",
-    "10-Memoria_Consolidada/proyecto-catalina/00-contexto-cliente.md",
-    "10-Memoria_Consolidada/proyecto-catalina/01-frente-1-tbbc-prospector.md",
-    "10-Memoria_Consolidada/proyecto-catalina/02-frente-2-segunda-empresa-y-trueque-sandler.md",
-    "01-Fundamentos_Estrategia/00-vision-y-enfoque.md",
-    "10-Memoria_Consolidada/tecnico/hacks-agentes-ia.md",
-    "10-Memoria_Consolidada/tecnico/evaluacion-ecc.md",
-    "10-Memoria_Consolidada/tecnico/costo-por-lead.md",
-    "10-Memoria_Consolidada/proyecto-catalina/README.md",
-    "10-Memoria_Consolidada/proyecto-catalina/02-playbook-m5-relacion.md",
-    "10-Memoria_Consolidada/proyecto-catalina/01-playbook-m4-entrevista.md",
-    "02-Protocolos_Comunicacion_IA/guia_prompting_xml.md",
-    "01-Fundamentos_Estrategia/situacion-contractual-y-sociedad.md",
-    "01-Fundamentos_Estrategia/reglas-del-juego.md",
-    "01-Fundamentos_Estrategia/propositos-y-mentores.md",
-    "01-Fundamentos_Estrategia/productividad-y-automatizacion.md",
-    "01-Fundamentos_Estrategia/presentacion-fundadores.md",
-    "01-Fundamentos_Estrategia/perfil-fundador.md",
-    "01-Fundamentos_Estrategia/pendientes-checklist.md",
-    "01-Fundamentos_Estrategia/modelo-agencia-ia-unipersonal.md",
-    "01-Fundamentos_Estrategia/marca-naming.md",
-    "01-Fundamentos_Estrategia/hoja-de-ruta-freelance-a-b2b.md",
-    "01-Fundamentos_Estrategia/facturacion-y-contratos-colombia.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/README.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/04-analisis-arquitectura-y-db.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/03-contexto-artf-eos.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/02-playbook-m5-relacion.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/02-frente-2-segunda-empresa-y-trueque-sandler.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/01-playbook-m4-entrevista.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/01-frente-1-tbbc-prospector.md",
+    "03_Clientes_y_Casos/ARTF_Resuelve_Finanzas/00-contexto-cliente.md",
+    "02_Lineas_de_Producto/Outbound_Prospector/docs/validacion/validacion-fuentes.md",
     "_tmp_mermaid_check/flujos_motor_1_y_2_3.svg",
-    "_tmp_mermaid_check/flujos_motor_1_y_2_3.mmd",
     "_tmp_mermaid_check/flujos_motor_1_y_2_2.svg",
-    "_tmp_mermaid_check/flujos_motor_1_y_2_2.mmd",
     "_tmp_mermaid_check/flujos_motor_1_y_2_1.svg",
-    "_tmp_mermaid_check/flujos_motor_1_y_2_1.mmd",
     "_tmp_mermaid_check/prospector-m1-m2-design_2.svg",
     "_tmp_mermaid_check/prospector-m1-m2-design_1.svg",
     "_tmp_mermaid_check/prospector-m4-design_2.svg",

@@ -1,7 +1,7 @@
 # DX Benchmarks 2026 — Plano de Optimización de la Cabina de Mando
 
 ---
-*   **Proyecto:** El Prospector - Vía B Greenfield Build
+*   **Proyecto:** El Prospector Greenfield Build
 *   **Fecha de Creación:** 7 de Julio de 2026
 *   **Autoría:** Yeison Estiven Delgado Ordoñez (Fundador)
 *   **Tronco Principal Git:** setup/base-conocimiento

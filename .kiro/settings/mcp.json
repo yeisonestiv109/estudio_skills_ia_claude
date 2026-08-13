@@ -1,28 +1,21 @@
 {
   "mcpServers": {
     "memory": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "env": {
-        "MEMORY_FILE_PATH": ".kiro/memory/prospector-knowledge-graph.json"
-      },
+      "command": "wsl.exe",
+      "args": [
+        "bash",
+        "-lc",
+        "MEMORY_FILE_PATH=/home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/memory/prospector-knowledge-graph.json exec npx -y @modelcontextprotocol/server-memory"
+      ],
       "disabled": false,
-      "autoApprove": ["search_nodes", "open_nodes", "read_graph"]
-    },
-    "google-sheets": {
-      "command": "REEMPLAZAR_CON_COMANDO_DEL_SERVIDOR",
-      "args": [],
-      "env": {
-        "GOOGLE_SHEETS_LEDGER_ID": "REEMPLAZAR_CON_ID_DE_LA_HOJA"
-      },
-      "disabled": false,
-      "autoApprove": ["sheets_get_metadata", "sheets_batch_get_values"]
-    },
-    "context7": {
-      "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "disabled": true,
-      "autoApprove": []
+      "autoApprove": [
+        "search_nodes",
+        "open_nodes",
+        "read_graph",
+        "create_entities",
+        "create_relations",
+        "add_observations"
+      ]
     }
   }
 }
