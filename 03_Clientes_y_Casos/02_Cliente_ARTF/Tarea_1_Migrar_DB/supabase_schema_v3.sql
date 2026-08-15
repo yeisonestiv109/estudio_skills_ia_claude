@@ -1815,3 +1815,195 @@ commit;
 -- select count(*) from pg_policies where schemaname = 'public';
 -- select relname, relrowsecurity from pg_class
 --   where relnamespace = 'public'::regnamespace and relkind = 'r' and not relrowsecurity;
+
+-- ===========================================================================
+-- 21. MIGRACION 15-ago-2026 -- resolucion gaps de negocio con Javier/Catalina
+--     (notebook "ARTF - Negocio y Reuniones"). Aplicada en vivo a staging
+--     (lrdtjsxtaadpgrzkchlw) como dos migraciones separadas via MCP Supabase;
+--     documentada aqui integra para que un deploy limpio reproduzca el mismo
+--     estado. Detalle de la decision -> 01_Gobernanza_EOS/02_backlog_y_rocas.md,
+--     sesion 15-ago-2026.
+-- ===========================================================================
+
+-- 21.1 vw_scorecard_check: chequeo N, cliente_sin_manychat_id (WARN).
+--      Gap historico aceptado (no se inventa manychat_id). Redefine la vista
+--      completa (A-M identicas a la seccion 18.4 + N nueva) -- ver ahi el
+--      detalle de cada chequeo A-M, no repetido aqui.
+create or replace view public.vw_scorecard_check
+with (security_invoker = on) as
+select 'ERROR'::text as severidad, 'descuadre_plan_pagos'::text as chequeo,
+       'ventas'::text as entidad, v.venta_id::text as entidad_id,
+       format('Venta %s: revenue %s pero plan de pagos suma %s (dif %s %s)',
+              v.venta_id, v.revenue_bruto, v.plan_total,
+              v.revenue_bruto - v.plan_total, v.currency_code),
+       v.revenue_bruto, v.plan_total, v.fecha_venta_local
+from public.vw_ventas_neto v where v.plan_total <> v.revenue_bruto
+union all
+select 'ERROR', 'sobrecobro', 'ventas', v.venta_id::text,
+       format('Venta %s: cash cobrado %s > revenue neto %s',
+              v.venta_id, v.cash_cobrado, v.revenue_neto),
+       v.revenue_neto, v.cash_cobrado, v.fecha_venta_local
+from public.vw_ventas_neto v where v.cash_cobrado > v.revenue_neto
+union all
+select 'ERROR', 'venta_sin_estado_ganado', 'gestion_leads', g.id::text,
+       format('Lead %s tiene venta registrada pero su estado es "%s"', g.id, e.codigo),
+       null, null, (v.fecha_venta at time zone public.fn_tz())::date
+from public.ventas v
+join public.gestion_leads g on g.id = v.gestion_lead_id
+join public.estados_lead e  on e.id = g.estado_id
+where not e.es_ganado
+union all
+select 'ERROR', 'ganado_sin_venta', 'gestion_leads', g.id::text,
+       format('Lead %s en estado ganado sin fila en VENTAS. Revenue fantasma.', g.id),
+       null, null, (g.cerrado_at at time zone public.fn_tz())::date
+from public.gestion_leads g
+join public.estados_lead e on e.id = g.estado_id
+where e.es_ganado and not exists (select 1 from public.ventas v where v.gestion_lead_id = g.id)
+union all
+select 'INFO', 'atribucion_divergente', 'ventas', v.id::text,
+       format('Venta %s atribuida a %s; el lead hoy esta asignado a %s. '
+              'La comision sigue al snapshot (correcto).',
+              v.id, uc.nombre, coalesce(ug.nombre, 'nadie')),
+       null, null, (v.fecha_venta at time zone public.fn_tz())::date
+from public.ventas v
+join public.gestion_leads g on g.id = v.gestion_lead_id
+join public.usuarios uc on uc.id = v.closer_id
+left join public.usuarios ug on ug.id = g.closer_id
+where g.closer_id is distinct from v.closer_id
+union all
+select 'ERROR', 'ventas_exceden_show_ups', 'scorecard', d.dia::text,
+       format('%s: %s ventas contra %s show ups. El embudo esta roto o falta registrar reuniones.',
+              d.dia, d.ventas, d.show_ups),
+       d.show_ups, d.ventas, d.dia
+from public.vw_embudo_diario d where d.ventas > d.show_ups
+union all
+select 'WARN', 'bookings_exceden_leads', 'scorecard', d.dia::text,
+       format('%s: %s bookings contra %s leads nuevos (posible booking de lead viejo, verificar)',
+              d.dia, d.bookings, d.leads),
+       d.leads, d.bookings, d.dia
+from public.vw_embudo_diario d where d.bookings > d.leads and d.leads > 0
+union all
+select 'ERROR', 'show_up_sin_fecha', 'reuniones', r.id::text,
+       format('Reunion %s marcada realizada sin fecha_realizada', r.id),
+       null, null, (r.fecha_programada at time zone public.fn_tz())::date
+from public.reuniones r where r.estado = 'realizada' and r.fecha_realizada is null
+union all
+select 'WARN', 'reunion_vencida_sin_resolver', 'reuniones', r.id::text,
+       format('Reunion %s programada el %s sigue en estado "%s". Show Up Rate subestimado.',
+              r.id, to_char(r.fecha_programada at time zone public.fn_tz(), 'YYYY-MM-DD HH24:MI'), r.estado),
+       null, null, (r.fecha_programada at time zone public.fn_tz())::date
+from public.reuniones r
+where r.estado in ('agendada','confirmada') and r.fecha_programada < now() - interval '24 hours'
+union all
+select 'WARN', 'cuota_vencida_sin_marcar', 'pagos_cuotas', p.id::text,
+       format('Cuota %s de la venta %s vencio el %s y sigue en "%s" (%s %s pendientes)',
+              p.numero_cuota, p.venta_id, p.fecha_programada, p.estado,
+              p.monto - p.monto_pagado, p.currency_code),
+       p.monto, p.monto_pagado, p.fecha_programada
+from public.pagos_cuotas p
+where p.estado in ('pendiente','parcial') and p.fecha_programada < (now() at time zone public.fn_tz())::date
+union all
+select 'WARN', 'venta_sin_fx', 'ventas', v.id::text,
+       format('Venta %s en %s sin fx_rate_usd. Excluida del consolidado USD.', v.id, v.currency_code),
+       null, null, (v.fecha_venta at time zone public.fn_tz())::date
+from public.ventas v where v.fx_rate_usd is null
+union all
+select 'WARN', 'reunion_sin_closer', 'reuniones', r.id::text,
+       format('Reunion %s sin closer_id: la venta que salga de aqui no tendra atribucion.', r.id),
+       null, null, (r.fecha_programada at time zone public.fn_tz())::date
+from public.reuniones r where r.closer_id is null and r.estado in ('agendada','confirmada','realizada')
+union all
+select 'WARN', 'posible_cliente_duplicado', 'clientes', (array_agg(c.id order by c.created_at))[1]::text,
+       format('%s clientes comparten el correo %s', count(*), c.correo),
+       null, count(*), max((c.created_at at time zone public.fn_tz())::date)
+from public.clientes c where c.correo is not null group by c.correo having count(*) > 1
+union all
+-- N. IDENTIDAD: cliente sin manychat_id -> no cruza con reuniones/salario.
+--    Gap historico ACEPTADO (decision Javier/Catalina, 15-ago-2026): leads de
+--    las primeras semanas de integracion ManyChat (ya resuelto en el flujo
+--    actual). Se deja NULL a proposito -- nunca se inventa un manychat_id.
+select 'WARN', 'cliente_sin_manychat_id', 'clientes', c.id::text,
+       format('Cliente %s sin manychat_id: no cruza con reuniones/salario. Gap historico aceptado.', c.id),
+       null, null, (c.created_at at time zone public.fn_tz())::date
+from public.clientes c where c.manychat_id is null;
+
+comment on view public.vw_scorecard_check is
+  'Auditoria en vivo. Cero filas con severidad ERROR = los numeros del L10 son defendibles. '
+  'WARN cliente_sin_manychat_id es un gap historico aceptado, no bloquea produccion.';
+
+-- 21.2 Oferta de Valientes (OFV): cuota inicial menor al 50% para separar
+--      cupo del programa Core. Un lead en OFV NO se considera "Ganado" hasta
+--      completar el 50% -- por eso NO puede modelarse via fn_registrar_venta
+--      (trg_ve_etapa lo marcaria ganado prematuramente). Tabla propia (permite
+--      multiples abonos parciales antes de llegar al 50%, ver audio) + estado
+--      intermedio, reusando fn_avanzar_estado (mismo patron que fn_venta_cierra_lead).
+insert into public.estados_lead
+  (codigo, nombre, categoria, orden, es_terminal, es_ganado,
+   cuenta_como_booking, cuenta_como_show_up, cuenta_como_oferta) values
+  ('reservo_oferta_valientes', 'Reservó con Oferta de Valientes', 'presentado', 65,
+   false, false, true, true, true)
+on conflict (codigo) do nothing;
+
+insert into public.estado_transiciones (estado_origen_id, estado_destino_id)
+select o.id, d.id
+from (values
+  ('show_up','reservo_oferta_valientes'),
+  ('oferta_presentada','reservo_oferta_valientes'),
+  ('reservo_oferta_valientes','ganado'),
+  ('reservo_oferta_valientes','perdido'),
+  ('reservo_oferta_valientes','nutricion')
+) as tr(origen, destino)
+join public.estados_lead o on o.codigo = tr.origen
+join public.estados_lead d on d.codigo = tr.destino
+on conflict do nothing;
+
+create table if not exists public.depositos_reserva (
+  id                 uuid primary key default gen_random_uuid(),
+  gestion_lead_id    uuid not null references public.gestion_leads(id),
+  monto              numeric not null check (monto > 0),
+  currency_code      char(3) not null references public.monedas(code),
+  fecha              timestamptz not null default now(),
+  notas              text,
+  created_by         uuid references public.usuarios(id),
+  created_at         timestamptz not null default now()
+);
+create index if not exists ix_depositos_reserva_lead on public.depositos_reserva(gestion_lead_id);
+
+alter table public.depositos_reserva enable row level security;
+
+create policy pol_dr_select on public.depositos_reserva
+  for select to authenticated using (
+    public.fn_es_admin()
+    or exists (select 1 from public.gestion_leads g where g.id = gestion_lead_id
+               and (g.closer_id = public.fn_usuario_id() or g.setter_id = public.fn_usuario_id()))
+  );
+create policy pol_dr_insert on public.depositos_reserva
+  for insert to authenticated with check (
+    public.fn_es_admin()
+    or exists (select 1 from public.gestion_leads g where g.id = gestion_lead_id
+               and g.closer_id = public.fn_usuario_id())
+  );
+
+comment on table public.depositos_reserva is
+  'Abonos de "Oferta de Valientes" -- cuota inicial menor al 50% que reserva '
+  'el cupo del programa. NO es una venta (fn_registrar_venta/ventas se usa '
+  'solo cuando se completa el 50% real). Puede haber varias filas por lead '
+  '(pagos parciales acumulados antes de llegar al 50%).';
+
+create or replace function public.fn_deposito_reserva_mueve_etapa() returns trigger
+language plpgsql security definer set search_path = '' as $$
+begin
+  perform public.fn_avanzar_estado(new.gestion_lead_id, 'reservo_oferta_valientes');
+  return null;
+end $$;
+
+drop trigger if exists trg_dr_etapa on public.depositos_reserva;
+create trigger trg_dr_etapa
+  after insert on public.depositos_reserva
+  for each row execute function public.fn_deposito_reserva_mueve_etapa();
+
+-- 21.3 Fix: depositos_reserva se creo DESPUES del GRANT original de la
+--      seccion 19 ("grant select on all tables..."), asi que no lo hereda.
+--      Sin esto las policies RLS de 21.2 nunca se evaluan.
+grant select, insert on public.depositos_reserva to authenticated;
+revoke all on public.depositos_reserva from anon;

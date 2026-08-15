@@ -4,7 +4,7 @@ esquema v3 de Supabase, para validar tablas/funciones/vistas/metricas con
 volumen y desorden reales antes de la migracion de produccion.
 
 Uso:
-  python3 migrate_crm.py --dry-run   # solo valida y reporta, no escribe nada
+  python3 migrate_crm.py             # dry-run (default): solo valida y reporta, no escribe nada
   python3 migrate_crm.py --write     # ejecuta la carga real contra Supabase
 """
 import os
@@ -451,8 +451,10 @@ def main():
             "fecha_realizada": fecha_realizada,
             "origen_escritura": "importacion",
         })
+    reunion_id_by_lead = {}
     if reunion_rows:
         inserted_reuniones = batch_insert("reuniones", reunion_rows)
+        reunion_id_by_lead = {r["gestion_lead_id"]: r["id"] for r in inserted_reuniones}
         print(f"  {len(inserted_reuniones)} reuniones insertadas.")
     else:
         print("  0 reuniones para insertar.")
@@ -485,6 +487,10 @@ def main():
             "p_upfront": upfront,
             "p_num_cuotas": num_cuotas,
             "p_fecha_venta": fecha_venta,
+            # ventas es append-only (fn_append_only bloquea UPDATE/DELETE): si no se
+            # pasa aqui, reunion_id queda NULL para siempre. Hallazgo real de la
+            # corrida de staging (05-validacion-migracion-datos-reales.md §4.3).
+            "p_reunion_id": reunion_id_by_lead.get(lead_row["id"]),
         }
         resp = call_rpc("fn_registrar_venta", payload)
         if resp.ok:

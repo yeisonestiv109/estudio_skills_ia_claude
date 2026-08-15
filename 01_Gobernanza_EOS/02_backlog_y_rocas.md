@@ -10,13 +10,168 @@
 > **Cliente actual: ARTF — Andrés Resuelve Tus Finanzas**
 > Mentores: Catalina Rúa (CGO) y Javier (Co-Fundador ARTF). Laboratorio activo de producto + validación de propuesta de valor.
 
-## Estado actual (06-ago-2026)
-**Fase:** Análisis de arquitectura y decisión de base de datos. El stack actual de ARTF (Cloudflare Workers + ManyChat + Google Sheets) tiene un cuello de botella crítico de concurrencia. La decisión de migrar a Supabase (Postgres/PostgREST) está fundamentada y pendiente de aprobación.
+## Estado actual (13-ago-2026)
+**Fase:** Migración de datos EN VALIDACIÓN (ya no es solo análisis — el 06/13-ago se
+cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
+(`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
+`03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
+
+**Sesión 15-ago-2026 — resolución de los 4 gaps de negocio con Javier/Catalina:**
+- **Notebook de NotebookLM registrado:** "ARTF — Negocio y Reuniones"
+  (`https://notebook.google.com/notebook/c9c609f7-cb64-4929-9273-f60a7f19857e`,
+  5 audios de reunión) — separado del notebook técnico existente para no
+  diluir su grounding (ver `04_Segundo_Cerebro/directrices_globales.md`).
+- **Punto 3 (Salario mensual) — CONFIRMADO por el fundador directamente**
+  (no aparece en los 5 audios de este notebook, pudo discutirse en otra
+  llamada). El campo `Salario` de cada lead SÍ es su salario mensual. La
+  migración ya lo había asumido así (`patch_salarios.py`, hallazgo 7 de
+  `05-validacion-migracion-datos-reales.md`) — queda confirmado, sin cambio de
+  código, solo se retira la nota "sin confirmar".
+- **Punto 4 (Oferta de Valientes, OFV) — CONFIRMADO Y AMPLIADO por los audios**
+  (fuente real: `WhatsApp-Ptt-2026-08-13-at-7.29.21-PM.mp3`). No es un producto
+  aparte: es una cuota inicial para separar el cupo del programa Core cuando el
+  upfront es menor al 50% pactado (ej. programa de 6M, 50%=3M, OFV=puede ser
+  500k). **Un lead en OFV NO se considera "Ganado"** hasta completar el 50% —
+  el "siguiente pago" es el resto para llegar a ese 50%, no el segundo 50%
+  post-venta. Confirmado en el propio audio: "en el CRM como tal no está, no
+  existen columnas... a nivel de base de datos lo podamos implementar como una
+  especie de estado o etiqueta". **Implicación de arquitectura importante:**
+  como `trg_ve_etapa` avanza automáticamente el lead a `ganado` en cada
+  `INSERT` sobre `ventas`, **OFV NO puede modelarse llamando
+  `fn_registrar_venta`** (marcaría el lead como vendido prematuramente) — hay
+  que decidir entre (a) una columna simple en `gestion_leads`
+  (`monto_reserva_pagado`) o (b) una tabla pequeña tipo `depositos_reserva`
+  (el audio menciona posibles pagos parciales múltiples antes de llegar al
+  50%, lo que favorece (b)). **Decisión del fundador: (b).** **IMPLEMENTADO
+  en staging (15-ago-2026):** nuevo `estados_lead.reservo_oferta_valientes`
+  (orden 65, entre `oferta_presentada` y `ganado`) + transiciones
+  (`show_up`/`oferta_presentada` → `reservo_oferta_valientes` →
+  `ganado`/`perdido`/`nutricion`) + tabla `public.depositos_reserva` (RLS +
+  policies calcadas de `ventas`, trigger `trg_dr_etapa` reusando
+  `fn_avanzar_estado`, mismo patrón que `fn_venta_cierra_lead`). Fix aplicado
+  en el camino: la tabla nueva no heredaba el `GRANT` de la sección 19 del
+  esquema original (creada después de que ese grant corriera) — corregido con
+  `grant select, insert on depositos_reserva to authenticated`. Todo
+  documentado íntegro en `supabase_schema_v3.sql` §21 para que un deploy
+  limpio reproduzca el mismo estado. **Pendiente (fuera de esta sesión):**
+  nadie llama a `fn_deposito_reserva_mueve_etapa`/inserta en
+  `depositos_reserva` todavía — eso lo hará el futuro "Formulario web para
+  Closers" del backlog.
+- **Punto 2 (133 leads sin ManyChat ID) — política decidida: se dejan NULL.**
+  Los audios NO confirman la cifra exacta ni que sea "un problema de conexión
+  inicial ya resuelto" (eso lo aportó el fundador directamente) — de cualquier
+  forma, no inventar un `manychat_id` es la decisión correcta con o sin esa
+  confirmación. **Hallazgo importante:** `public.vw_scorecard_check` (ya
+  existe en el esquema, `supabase_schema_v3.sql` §18.4) **YA ES** el panel de
+  "incidentes de datos para que un humano actúe" que se pidió como necesidad
+  futura de dashboard — no hay que construirlo de cero. `PROPUESTO`: extender
+  esa vista con un chequeo nuevo `cliente_sin_manychat_id` (WARN). Migración
+  redactada pero **bloqueada por el clasificador de auto-mode** (acción sobre
+  BD real, requiere confirmación explícita del fundador) — pendiente de luz
+  verde.
+- **Punto 1 (lead "Juan Manuel", venta $1.98M) — NO VERIFICADO en los audios.**
+  Búsqueda exhaustiva (2 preguntas, 5 audios): el nombre "Juan Manuel" no
+  aparece en ninguna fuente. El único caso de "estado mal registrado" que sí
+  aparece es un lead distinto, **Sebastián Cruz** (marcado "Ganado" pero sin
+  "etapa" asignada en el Team Manager — un problema de mapeo de estado, no de
+  fecha de pago). El fundador indica que Javier/Catalina confirmaron
+  verbalmente que si pagó y el closer olvidó actualizarlo, pero **no se aportó
+  fecha de pago real** — sin ese dato concreto no se puede registrar la venta
+  (`ventas` es append-only, no se adivina una fecha). **Pendiente:** conseguir
+  la fecha real (o confirmar que se deja pendiente hasta que el closer la
+  aporte). **Insight de arquitectura del fundador (válido independientemente
+  de este caso puntual):** el futuro dashboard debe superficiar estos
+  incidentes para que un humano actúe — exactamente lo que ya hace
+  `vw_scorecard_check_resumen` (semáforo por severidad/chequeo, ya diseñado
+  "para dashboard" en su propio comentario SQL). No hay que inventar el
+  concepto, hay que construir la UI que lo consuma — futuro "Formulario web
+  para Closers" del backlog.
+
+**Sesión 13-ago-2026 — fix + intento de re-validación:**
+- **Fix aplicado en `migrate_crm.py`:** el RPC `fn_registrar_venta` nunca recibía
+  `p_reunion_id` (existe en la firma del schema, `default null`). Como `ventas` es
+  append-only (trigger `fn_append_only`, bloquea `UPDATE`/`DELETE` sin excepción de
+  rol), ese dato se perdía para siempre en cada carga. Corregido: se construye un
+  mapeo `gestion_lead_id → reunion_id` desde las reuniones ya insertadas (que se
+  cargan ANTES que las ventas, el orden ya estaba bien) y se pasa al RPC.
+- **Intento de re-validar en vivo (limpiar staging + re-correr `--write`) BLOQUEADO
+  por diseño:** `activity_log` y `ventas` tienen el trigger `fn_append_only` que
+  rechaza cualquier `DELETE` incondicionalmente — ni el `service_role` vía REST
+  puede saltárselo (solo un superusuario con acceso psql directo, deshabilitando el
+  trigger, podría). No se forzó nada; staging quedó intacto (6.137 clientes/gestion_leads,
+  204 reuniones, 8 ventas, 6.220 activity_log). El fix se valida por revisión de
+  código (el nombre/tipo del parámetro coincide exacto con la firma SQL) y quedará
+  confirmado en la carga final de producción (o en un staging nuevo/limpio si se
+  decide provisionar uno).
+
+**Sesión 13-ago-2026 (continuación) — re-validación en vivo + auditoría de vistas/scorecard + migración de Activity Log:**
+- **Fix de `p_reunion_id` validado en vivo (ya no solo por revisión de código):**
+  vía el MCP de Supabase (`execute_sql`, acceso de administrador de BD, distinto
+  al `service_role` REST limitado) se deshabilitaron temporalmente los triggers
+  `trg_ventas_inmutable`/`trg_log_inmutable`, se limpió staging por completo, se
+  re-corrió `migrate_crm.py --write`, y se re-habilitaron los triggers. Resultado:
+  **8/8 ventas con `reunion_id` poblado, 0 en NULL.** `vw_scorecard_check`: 1 ERROR
+  (Juan Manuel, esperado) + WARNs consistentes con la corrida original (gaps reales
+  del Sheet, no bugs del esquema).
+- **Auditoría de vistas de reporte (`vw_embudo_diario` = reemplazo de "Daily
+  Metrics v2") cruzada columna-por-columna contra las pestañas "Global"/"Daily
+  Metrics v2"/"CRM" del Sheet real.** Hallazgos:
+  - `gastos_marketing` (AdSpend/impresiones) tiene **0 filas** — la pestaña
+    "Global" nunca se migró. `cp_lead`/`cac`/`roi_revenue` en la vista tienen la
+    fórmula correcta pero dan 0/NULL por falta de dato fuente. **Pendiente.**
+  - El plan de cuotas real del Sheet (fechas/montos de "siguiente pago") se
+    ignora — `fn_registrar_venta` genera cuotas automáticas repartiendo el
+    revenue en partes iguales. **Pendiente decidir si vale la pena migrar el
+    plan real.**
+  - **"Conversaciones" (antes ❌):** causa raíz encontrada y CORREGIDA — la
+    pestaña "Activity Log" del Sheet (7.227 filas, historial real de mensajes
+    lead/bot) nunca se leía en `migrate_crm.py`. Nuevo script
+    `migrate_activity_log.py` la migró: **6.906/7.227 filas insertadas**
+    (4.594 `mensaje_lead`, 667 `mensaje_bot`, 1.645 `nota` para eventos internos
+    del bot sin mapeo verificable — clasificación conservadora por evidencia de
+    contenido, no por adivinar el vocabulario interno del bot; `activity_log` es
+    append-only así que no se arriesgó un mapeo a `cambio_estado` sin certeza).
+    Bug propio detectado y corregido en el camino: la paginación de PostgREST
+    (tope ~1000 filas/respuesta, ya documentado en el hallazgo §7 de
+    `05-validacion-...md`) se me olvidó en el primer intento del script nuevo —
+    corregido con el mismo patrón `Range` de `add_reuniones.py`. Segundo bug
+    propio: el matching por IG Handle fallaba 91% de las veces porque el tab
+    "CRM" casi siempre trae `@handle` y "Activity Log" casi nunca — normalizado
+    (sin `@`, minúsculas) subió el match a 99.9% (5715/5719 handles únicos).
+    **Pendiente:** `vw_embudo_diario` no expone "conversaciones" como columna
+    todavía (el dato ya está en la tabla, falta agregarlo a la vista).
+  - **"Oferta de Valientes" (OFV) (antes ❌):** causa raíz encontrada — NO es un
+    bug de migración. Búsqueda exhaustiva en toda la data cruda del CRM: nunca
+    fue columna ni estado, solo aparece en 12 menciones de texto libre en
+    "Notas" (depósito 150-300 USD, pago por sesiones). El texto ya está
+    preservado en `clientes.notas`; lo que falta es la DECISIÓN de negocio de
+    si formalizarlo como oferta/producto propio. Agregado como pregunta 4 al
+    mensaje para Javier/Catalina.
 
 ## Próximos pasos — Inbound AI SDR
 
-- [ ] **Presentar análisis de BD a Javier y Catalina.** Exponer el análisis técnico del cuello de botella en Google Sheets y la recomendación de Supabase. Doc: `03_Clientes_y_Casos/02_Cliente_ARTF/04-analisis-arquitectura-y-db.md`.
-- [ ] **Migración de datos.** Una vez aprobado, migrar el CRM de ARTF (leads, etapas, historial) de Google Sheets a Supabase.
+- [x] ~~Presentar análisis de BD a Javier y Catalina~~ — superado: la migración a
+      Supabase ya se ejecutó y validó en staging con datos reales (dos veces).
+- [ ] **Resolver con Javier/Catalina los 4 gaps del Sheet** (bloqueantes para
+      producción, NO resolubles por IA — requieren decisión de negocio):
+      1. Lead "Juan Manuel" (ganado, revenue $1.98M): "Fecha Pago" = texto "No ha
+         pagado" → su venta no se puede registrar sin fecha real.
+      2. 133/6.136 leads sin ManyChat ID → sin identificador de cruce confiable
+         para reuniones/salario.
+      3. Confirmar si "Salario" es efectivamente mensual (asumido, no confirmado
+         por el Sheet).
+      4. "Oferta de Valientes" (OFV): ¿formalizar como oferta/producto propio
+         con seguimiento estructurado, o queda informal en notas?
+      Mensaje borrador listo para enviar (fuera del repo, en el scratchpad de la
+      sesión de Claude Code del 13-ago).
+- [ ] **Cargar `gastos_marketing`** desde la pestaña "Global" del Sheet (AdSpend)
+      para que CAC/ROI/CP-L dejen de dar 0 en `vw_embudo_diario`.
+- [ ] **Agregar "conversaciones" a `vw_embudo_diario`** (contar `activity_log`
+      por día donde `evento in ('mensaje_lead','mensaje_bot')`) — el dato ya
+      existe, falta exponerlo en la vista.
+- [ ] **Migración a producción.** Una vez resueltos los 4 gaps: cargar `reuniones`
+      antes que `ventas` (ya así en `migrate_crm.py`), correr `--write` contra el
+      proyecto de producción real (no `lrdtjsxtaadpgrzkchlw`, ese es staging).
 - [ ] **Formulario web para Closers.** Construir la UI web que reemplaza el formulario Google Sheets para los Closers de ARTF.
 - [ ] **Profesionalizar la arquitectura.** Transitar de scripts sueltos a arquitectura event-driven basada en el documento "Vistas y Más Allá" compartido por Javier.
 - [ ] **Definir el diseño del AI SDR para ARTF.** ¿ManyChat + Cloudflare Worker + Supabase? ¿O cambio de plataforma? Evaluar con Javier.
@@ -28,6 +183,12 @@
 - [ ] ¿Cuál es el volumen real de leads concurrentes que llegan en picos (ej. después de un Reel viral)?
 - [ ] ¿El Closer accede al formulario desde móvil o desktop? ¿Hay conexión estable?
 - [ ] ¿Cuántas etapas tiene el pipeline actual en Sheets y cuál es el campo más crítico para no perder?
+- [ ] Los 3 gaps de datos del Sheet listados arriba (fecha de pago, identidad sin ManyChat ID, periodicidad del salario).
+
+---
+
+## 📜 Historial — Estado anterior (06-ago-2026, superado arriba)
+**Fase:** Análisis de arquitectura y decisión de base de datos. El stack actual de ARTF (Cloudflare Workers + ManyChat + Google Sheets) tiene un cuello de botella crítico de concurrencia. La decisión de migrar a Supabase (Postgres/PostgREST) está fundamentada y pendiente de aprobación.
 
 ---
 
