@@ -59,6 +59,15 @@ credentials.json
 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/*.xls
 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.env
 
+# Transcripciones de reuniones (PII / info de negocio sensible, Segundo
+# Cerebro Fase 1, 14-ago-2026) — la carpeta y su README sí se versionan, el
+# contenido real no, hasta definir en Fase 2 una política completa de qué se
+# puede subir.
+01_Gobernanza_EOS/Reuniones_Audios_Negocio/*.md
+!01_Gobernanza_EOS/Reuniones_Audios_Negocio/README.md
+03_Clientes_y_Casos/02_Cliente_ARTF/Reuniones_Audios/*.md
+!03_Clientes_y_Casos/02_Cliente_ARTF/Reuniones_Audios/README.md
+
 # ---------------------------------------------------------------------------
 # Artefactos de IDE / sistema operativo
 # ---------------------------------------------------------------------------
