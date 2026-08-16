@@ -1,0 +1,77 @@
+{
+  "info": {
+    "name": "ARTF - Worker Bridge Supabase (pruebas)",
+    "description": "Pruebas del Worker nuevo (worker_bridge_supabase_NUEVO_paralelo.js) SIN pasar por ManyChat -- simula exactamente los payloads que ManyChat mandaría. Todos los manychat_subscriber_id usan el prefijo POSTMAN_TEST_ para poder identificarlos y borrarlos fácil después. Antes de correr: crea la variable de entorno worker_url con la URL real del Worker ya desplegado (ej. https://setter-bridge-supabase.TU-CUENTA.workers.dev).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "worker_url", "value": "https://CAMBIA-ESTO.workers.dev", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Lead nuevo - caso feliz completo",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"manychat_subscriber_id\": \"POSTMAN_TEST_001\",\n  \"first_name\": \"Postman\",\n  \"last_name\": \"PruebaUno\",\n  \"full_name\": \"Postman PruebaUno\",\n  \"ig_username\": \"postman_test_1\",\n  \"fuente\": \"DM directo\",\n  \"last_text\": \"Hola, control\",\n  \"conversation_summary\": \"\",\n  \"etapa_actual\": \"\",\n  \"profesion\": \"\",\n  \"ingreso_mensual_cop_M\": \"\",\n  \"dolor_opcion\": \"\",\n  \"urgencia\": \"\"\n}"
+        },
+        "url": { "raw": "{{worker_url}}", "host": ["{{worker_url}}"] },
+        "description": "Estructura completa real de lo que manda ManyChat (todos los campos que lee worker_cloudflare.md), aunque este Worker nuevo solo usa un subconjunto (es capture-only). Esperado: 200, {\"ok\":true,\"action\":\"captured\",\"manychat_id\":\"POSTMAN_TEST_001\"}. En Supabase debe aparecer 1 cliente + 1 gestion_lead nuevo, estado='nuevo'."
+      }
+    },
+    {
+      "name": "2. Placeholders sin resolver (debe ignorarse, cero escritura)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"manychat_subscriber_id\": \"{{user_id}}\",\n  \"first_name\": \"{{first_name}}\",\n  \"last_name\": \"{{last_name}}\",\n  \"full_name\": \"\",\n  \"ig_username\": \"{{ig_username}}\",\n  \"fuente\": \"\",\n  \"last_text\": \"{{last_input_text}}\",\n  \"conversation_summary\": \"\",\n  \"etapa_actual\": \"\",\n  \"profesion\": \"\",\n  \"ingreso_mensual_cop_M\": \"\",\n  \"dolor_opcion\": \"\",\n  \"urgencia\": \"\"\n}"
+        },
+        "url": { "raw": "{{worker_url}}", "host": ["{{worker_url}}"] },
+        "description": "Simula un retry manual desde la UI de ManyChat sin contexto real resuelto (Bug #9 del Worker original). Esperado: 200, {\"ok\":true,\"action\":\"ignored_no_context\"}. NO debe crear nada en Supabase -- si aparece un cliente nuevo aquí, es un bug."
+      }
+    },
+    {
+      "name": "3. Mismo lead escribe de nuevo (debe actualizar, NO duplicar)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"manychat_subscriber_id\": \"POSTMAN_TEST_001\",\n  \"first_name\": \"Postman\",\n  \"ig_username\": \"postman_test_1\",\n  \"fuente\": \"DM directo\",\n  \"last_text\": \"segundo mensaje de prueba, mismo lead\"\n}"
+        },
+        "url": { "raw": "{{worker_url}}", "host": ["{{worker_url}}"] },
+        "description": "Correr DESPUÉS de la prueba 1, con el mismo manychat_subscriber_id. Esperado: 200 captured otra vez, pero en Supabase debe seguir habiendo SOLO 1 fila en gestion_leads para POSTMAN_TEST_001 (upsert por manychat_id, no un cliente/lead duplicado)."
+      }
+    },
+    {
+      "name": "4. last_text sin subscriber_id (caso borde)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"manychat_subscriber_id\": \"\",\n  \"first_name\": \"Postman\",\n  \"last_text\": \"mensaje sin subscriber id\"\n}"
+        },
+        "url": { "raw": "{{worker_url}}", "host": ["{{worker_url}}"] },
+        "description": "last_text SÍ viene resuelto pero manychat_subscriber_id no -- pasa el primer guard (hasNoResolvedContext) pero no se puede hacer upsert en clientes sin ese dato. Esperado: 200, {\"ok\":true,\"action\":\"ignored_no_subscriber_id\"}. NO debe crear nada."
+      }
+    },
+    {
+      "name": "5. Segundo lead nuevo distinto",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"manychat_subscriber_id\": \"POSTMAN_TEST_002\",\n  \"first_name\": \"Postman\",\n  \"last_name\": \"PruebaDos\",\n  \"ig_username\": \"postman_test_2\",\n  \"fuente\": \"Instagram\",\n  \"last_text\": \"hola quiero info\"\n}"
+        },
+        "url": { "raw": "{{worker_url}}", "host": ["{{worker_url}}"] },
+        "description": "Segundo lead independiente, para confirmar que no hay interferencia entre contactos distintos. Esperado: 200 captured, cliente/gestion_lead nuevo separado del POSTMAN_TEST_001."
+      }
+    }
+  ]
+}

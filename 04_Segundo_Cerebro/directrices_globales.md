@@ -38,6 +38,8 @@ y Prospector, en vez de duplicarlos (regla "un concepto, un lugar").
 | `02_Lineas_de_Producto/Outbound_Prospector/docs/notebooklm/` | Contexto/estrategia de la línea Prospector para RAG | `PROPUESTO` — "Outbound Prospector — Contexto y Estrategia" |
 | `03_Clientes_y_Casos/02_Cliente_ARTF/Reuniones_Audios/` | Transcripciones de reuniones de negocio ARTF | `IMPLEMENTADO` — "ARTF — Negocio y Reuniones" (`https://notebook.google.com/notebook/c9c609f7-cb64-4929-9273-f60a7f19857e`, 15-ago-2026) |
 | *(ya existía)* — notebook técnico ARTF | Arquitectura/DB/esquema — **no** se mezcla con reuniones de negocio | `IMPLEMENTADO` — "ARTF: Arquitectura de Software y Sistema Operativo de Negocio" (`https://notebook.google.com/notebook/ae2ca639-f8f7-48b9-b5b8-526f5ace0a95`) |
+| *(nuevo, sin carpeta de repo dedicada)* | Investigación UX/diseño (Deep Research) para el Formulario Closers | `IMPLEMENTADO` — "UX/Diseño — Deep Research" (`https://notebook.google.com/notebook/8614a750-e564-4c75-a189-af4e234ac714`) |
+| *(nuevo, sin carpeta de repo dedicada)* | SOP real del setter + contexto de arquitectura actual (ManyChat/Worker/agenda) | `IMPLEMENTADO` — "ARTF — Arquitectura Actual y Rol Setter" (`https://notebook.google.com/notebook/e98171ed-cba6-4da6-9dfc-22cf40820a7f`) |
 
 **Por qué no es 1:1 forzado carpeta↔notebook:** un notebook de NotebookLM rinde
 mejor cuando sus fuentes son temáticamente coherentes (mejor grounding de RAG).

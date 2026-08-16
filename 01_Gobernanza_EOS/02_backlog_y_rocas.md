@@ -16,6 +16,1106 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
 (`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
 `03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
 
+**Sesión 16-ago-2026 (continuación) — Despliegue real Fase 1: repo Next.js,
+auth con Supabase, Pipeline/Incidencias/Métricas conectados a datos reales,
+bug de performance RLS encontrado y corregido en producción:**
+- **Pedido de Yeisiton:** pasar del mockup (Artifact estático) a la app real
+  desplegada — investigar mejores prácticas de la industria, conectar a
+  Supabase real, resolver auth/sesiones/creación de cuentas "sin tener
+  problemas". Pidió preguntas estratégicas antes de empezar dado el salto de
+  alcance.
+- **Decisiones tomadas vía `AskUserQuestion`:** stack Next.js + Vercel;
+  entorno = el proyecto de staging actual (`lrdtjsxtaadpgrzkchlw`, ya tiene
+  los 6.136 leads reales) operando ahora como real; cuentas creadas por
+  admin (sin registro self-service); repo nuevo en GitHub. Se usó `EnterPlanMode`
+  dado el tamaño del cambio (infraestructura real, RLS, credenciales) antes
+  de tocar nada.
+- **Corrección de identidad importante:** Yeisiton (quien da todo el
+  feedback de este proyecto) es el propio setter/usuario, no "el fundador"
+  — error de lenguaje mío corregido en esta sesión. El fundador/CEO real es
+  Andrés (también actúa como closer a veces); Javier es el arquitecto de
+  operaciones/IA (autor de `Arquitectura RTF - Views & Beyond.pdf`). Por
+  ahora Yeisiton tiene roles `setter`+`admin` en la cuenta real para poder
+  verificar todo él mismo mientras se construye.
+- **Hallazgo clave al auditar el esquema real con un agente Explore:** la
+  arquitectura de auth/roles/RLS YA estaba construida (`usuarios` +
+  `usuario_roles`, RLS activo con políticas en las 18 tablas, vistas
+  `vw_pipeline`/`vw_scorecard_check`/`vw_embudo_diario` ya existentes) — el
+  trabajo real no era diseñar RLS desde cero, sino poblar datos (no había
+  ninguna fila de `usuarios` todavía) y conectar la app.
+- **Repo creado:** `https://github.com/yeisonestiv109/artf-pipeline-app`
+  (privado). Next.js 16 + TypeScript + Tailwind v4 + `@supabase/ssr` +
+  `lucide-react`. Se verificó contra Context7 (documentación actual, no
+  memoria) que Next.js 16 renombró `middleware.ts`→`proxy.ts` — se usó el
+  nombre correcto desde el inicio, evitando el warning/error de deprecación.
+- **Cuenta real creada** (`scripts/provision-user.mjs`, uso único, no se
+  despliega): Yeisiton, `yeisonestivendelgado109@gmail.com`, roles
+  setter+admin, vinculada a `auth_user_id` real. Verificado en vivo: sesión
+  con access_token+refresh_token, `vw_pipeline` devuelve 5.943 leads reales
+  para esta cuenta.
+- **Bug de performance real encontrado y corregido en la base de datos de
+  producción** (no en el archivo de esquema, que ya se sabía desactualizado
+  en al menos una tabla): `vw_scorecard_check` y `vw_embudo_diario` daban
+  timeout (~8.2s) vía la API REST real. Diagnosticado con `EXPLAIN ANALYZE`
+  real (no adivinado): **las 42 políticas RLS de las 18 tablas llamaban
+  `fn_es_admin()`/`fn_usuario_id()`/`fn_tiene_rol()`/`fn_auth_uid()` sin
+  envolver en `(select ...)`**, forzando su reevaluación fila por fila en
+  vez de una sola vez por consulta (patrón conocido de Postgres/Supabase,
+  confirmado contra la skill `supabase-postgres-best-practices`). Prueba
+  física: un `Seq Scan` sobre 13.524 filas de `activity_log`, 100% en
+  caché (cero I/O de disco), tardaba 17.6s solo por la re-evaluación de la
+  función. **Corregido con 2 migraciones** (`fix_rls_wrap_functions_in_select`,
+  luego `fix_rls_activity_log_lead_es_mio`): la primera envolvió las 42
+  llamadas bare en `(select ...)` (`vw_scorecard_check`: 12.4s→338ms); la
+  segunda reescribió las 2 políticas que llamaban `fn_lead_es_mio(x)` con
+  argumento por fila (que no se puede cachear con un simple wrap) como un
+  `EXISTS` en línea equivalente — se verificó el cuerpo real de la función
+  con `pg_get_functiondef` antes de reescribirla, no se adivinó
+  (`vw_embudo_diario`: 27.5s→313ms, confirmado también por la ruta real de
+  la API con una cuenta real logueada, no solo SQL directo). **Verificación
+  de que la corrección no cambió qué puede ver cada persona:** se
+  comparó el mismo set de 6 conteos (vw_pipeline, gestion_leads, reuniones,
+  ventas, clientes, activity_log) antes y después con el mismo usuario
+  impersonado (QA Closer y el admin real) — idénticos en ambos casos.
+- **Construido y funcionando con datos 100% reales** (verificado con
+  `npm run build` limpio + pruebas contra la API real con la cuenta real):
+  Login/sesión (`@supabase/ssr`, proxy protege rutas), **Pipeline** (Kanban
+  desde `vw_pipeline`, drawer, filtros de recencia + búsqueda, cambios de
+  estado vía `UPDATE gestion_leads` protegido por RLS + el trigger
+  `fn_motor_etapas` ya existente — sin duplicar lógica de permisos en el
+  cliente), **Incidencias** (`vw_scorecard_check`, el filtrado por rol sale
+  gratis de RLS, no hizo falta lógica nueva), **Métricas** admin
+  (`vw_embudo_diario` agregable por día/semana/mes, datos reales).
+  Paleta "aura empresarial" pedida explícitamente: sidebar oscura + acento
+  más profundo, iconos reales `lucide-react` reemplazando los glifos
+  unicode del mockup, manteniendo el minimalismo del resto.
+- **Explícitamente fuera de esta Fase 1** (documentado en el plan
+  aprobado, no un olvido): Agenda (sin tabla real de disponibilidad),
+  Métricas → Global (74 filas) y Show-ups (14 columnas) tal cual el
+  mockup (esos datos viven en el Sheet, no en Supabase), Notas internas
+  (candidato de Fase 2, podría mapear al mecanismo real
+  `INCIDENTE_REVISION:` ya existente), panel de developers/feedback
+  (necesitaría tablas nuevas).
+- **No se instaló Chromium/Playwright para pruebas E2E de navegador** —
+  Yeisiton pidió explícitamente no instalar cosas fuera de su entorno
+  (usa `fnm`/`uv`); el intento con `--with-deps` requería `sudo` interactivo
+  y se descartó. La verificación automatizada se hizo por otras vías
+  (build limpio, redirect de auth por HTTP, y llamadas reales a la API vía
+  Node con la cuenta real) — la prueba de clic-por-clic en navegador queda
+  para Yeisiton con su propia cuenta, como ya estaba en el plan original.
+- **Pendiente inmediato:** conectar el repo a Vercel (requiere la cuenta de
+  Vercel de Yeisiton, no se puede hacer sin su login) y probar en vivo.
+
+**Sesión 15-ago-2026 (continuación) — análisis del código real del Worker + Apps Script (CORRIGE hallazgo previo sobre el setter):**
+- **CORRECCIÓN CRÍTICA a la sesión anterior de este mismo día:** la afirmación "el rol
+  de setter es 100% MANUAL hoy — no hay ningún bot conversacional operando" se basó
+  en el SOP/audio de entrenamiento (fuentes de venta humana), NO en el código. Con el
+  código real (`worker_cloudflare.md`, compartido por el fundador) se confirma que
+  **SÍ existe un bot conversacional completo**, construido y probado: Cloudflare Worker
+  que recibe cada DM de ManyChat y llama a **Claude Sonnet 4.6** con un system prompt
+  de ~500 líneas ("Andrés"/interno "Javit", hoy renombrado **"Andrew"** en el CRM) que
+  ejecuta un árbol de decisión determinístico completo (M1→M5.C: profesión+ingreso →
+  dolor → urgencia → pitch → agenda → confirmación → cierre), 9 objeciones scripteadas
+  literales, y lógica de handoff a humano. Es "el script de calificación" que la sesión
+  previa dio por no-construido-aún — **ya está construido**, no es una iniciativa futura
+  desde cero.
+  - **Estado ACTUAL confirmado por el fundador (vía Javier, no verificado aún en el panel
+    de Cloudflare):** el bot **estuvo activo un tiempo respondiendo DMs reales**, pero
+    **actualmente NO responde mensajes** — hoy solo actúa de bridge de captura. Esto
+    coincide EXACTO con la rama `JAVIT_ACTIVO=false` del código: captura datos básicos
+    del lead, aplica tags `EXISTENTE_CONVERSACION`/`REQUIERE_RESPUESTA_HUMANA`, sincroniza
+    al CRM con `etapa=JavitOff` → mapea a "Lead Nuevo - Sin Atender", pero el flow omite
+    el envío del mensaje al lead. **Conclusión correcta y matizada:** el rol de setter
+    SÍ es 100% manual **hoy**, pero no porque nunca existió automatización — existió,
+    funcionó, y fue apagada (razón de negocio no confirmada aún). La "iniciativa futura
+    de un bot" del backlog debería reencuadrarse como **auditoría/reactivación de un bot
+    existente**, no diseño desde cero — a discutir con el fundador cuándo y si procede
+    (sigue fuera del alcance del Formulario Dashboard, ver decisión de alcance abajo).
+  - **`apps-script-crm-bridge.md`:** puente Worker→Google Sheet. Recibe el POST de cada
+    turno del bot, upsert por `manychat_id`/IG handle contra la pestaña "CRM" (25
+    columnas A-Y). Separación real bot-vs-manual: el bot escribe profesión/ingreso/dolor/
+    urgencia/estado; los closers llenan a mano WhatsApp, Correo, Fecha Llamada Realizada,
+    Fecha Pago, Revenue, Upfront, Recurring (el sync nunca los toca). También escribe cada
+    turno a "Activity Log" (auditoría completa) — ya migrado a Supabase vía
+    `migrate_activity_log.py` (ver sesión 13-ago).
+  - **`daily-metrics-scorecard.md`:** reconstruye la pestaña "Daily Metrics v2" con
+    fórmulas COUNTIFS/SUMIFS EN VIVO sobre "CRM" (secciones funnel/revenue/cash/cuotas
+    A-R). Es la fuente real de las pestañas Global/Daily Metrics que se intentó mapear a
+    `vw_embudo_diario` en sesiones previas.
+  - **Inconsistencia detectada, PENDIENTE de verificar contra el Sheet real (no asumir):**
+    `daily-metrics-scorecard.md` usa `valCol='R'` para la métrica "Revenue" y `valCol='Q'`
+    para "Upfront Cash"; `apps-script-crm-bridge.md` define `COL.REVENUE=Q(17)` /
+    `COL.UPFRONT=R(18)` — orden invertido entre los dos scripts. No se puede saber cuál
+    documento es el correcto sin mirar el Sheet real.
+  - **`limpiar-fechas-crm.md`:** utilitario de un solo uso (corrige fechas guardadas como
+    texto en el CRM), sin relevancia arquitectónica para la migración.
+  - **Implicación de arquitectura, PENDIENTE de decisión del fundador, NO implementada:**
+    dado que el alcance ya confirmado es "migración completa a Supabase, dejar el Sheet
+    atrás", el Worker necesitaría redirigir `syncToCRM()` de Apps Script/Sheet a Supabase
+    directamente (REST/RPC) para que la captura de leads (incluso en el modo bridge-only
+    actual) escriba en tiempo real en Supabase. Esto es DISTINTO de reactivar la lógica
+    conversacional del bot (que sigue fuera de alcance). Es un cambio sobre un sistema
+    productivo real (Cloudflare Worker en vivo) — requiere aprobación explícita antes de
+    tocar nada, no solo del alcance del dashboard.
+
+**Sesión 15-ago-2026 (continuación) — validación contra el Sheet real para el mapeo etapa→estado (puntos 1-2 de la migración del Worker):**
+- **Fuente usada:** `Tarea_1_Migrar_DB/Copia de CRM - Leads Campaña 1 Reconexión Financiera.xlsx`
+  (copia local del 13-ago, 6.136 filas, MISMO archivo que ya usó/validó
+  `migrate_crm.py`) — no se asumió nada sin abrir el archivo real.
+- **Revenue/Upfront (Q/R) — RESUELTO.** Encabezado real: `Q17="$ Upfront Cash
+  COP"`, `R18="Revenue COP"`. Coincide EXACTO con `daily-metrics-scorecard.md`.
+  El error estaba en los nombres de las constantes `COL.REVENUE`/`COL.UPFRONT`
+  de `apps-script-crm-bridge.md` (invertidos) — **sin impacto real**: el
+  bridge nunca escribe esas dos columnas (son 100% manuales del closer), solo
+  las nombra mal en un comentario/constante no usada para escritura.
+- **"Alucinaciones" del Estado — CONFIRMADAS con evidencia, y ya resueltas por
+  trabajo previo.** La columna Estado real tiene **28 valores distintos**, de
+  los cuales **12 no están en `ESTADOS_VALIDOS`** (255/6.136 filas, ~4.2%):
+  `Descalificado - Endeudamiento`(90), `Perdido`(81), `No show`(50),
+  `Reprogramada`(11), `Ganado`(9), `Pendiente decisión`(8), `M5 Enviado -
+  Esperando agendamiento`(3), `M4 Enviado - Esperando resp`(2), `M4 -
+  Objeción info`(1) — 9 valores libres, 255 filas. **Los 9 YA están cubiertos
+  por el `ESTADO_MAP` de `migrate_crm.py`** (0 anomalías reales en la
+  migración ya ejecutada). Explicación fundamentada: ninguno de estos 9 lo
+  produce el bot (su `etapa` nunca pasa de M5.C) — son ediciones MANUALES de
+  los closers directamente en el Sheet para el ciclo de vida post-agendamiento
+  (show up/no show/reprogramar/ganar/perder), más `Descalificado -
+  Endeudamiento` que corresponde al 3er criterio del SOP (Endeudamiento ≤50%)
+  que el Worker actual **no implementa** (el system prompt solo verifica
+  ingreso y urgencia). Esto no bloquea la migración: esos estados posteriores
+  a `agendado` los seguirá escribiendo un humano, ahora vía el drawer del
+  dashboard (ya construido en el mockup), no el bridge del bot.
+- **Gap real detectado (nuevo, sin precedente en los datos):** 3 valores del
+  dropdown oficial que el `mapEstado()` de Apps Script SÍ puede producir
+  (`Handoff - Agendamiento manual`, `Handoff - Crisis emocional`, `Handoff -
+  Ex cliente`) nunca aparecieron en los 6.136 leads históricos → nunca
+  necesitaron entrar al `ESTADO_MAP` de `migrate_crm.py`. Para el bridge en
+  vivo sí hay que cubrirlos porque el Worker los puede generar. Sin dato real
+  que lo valide — pendiente de confirmación del fundador (ver mensaje de la
+  sesión).
+- **Vocabulario canónico de `estados_lead` confirmado leyendo
+  `supabase_schema_v3.sql` directamente (línea 1303):** `nuevo, contactado,
+  calificado, agendado, no_show, show_up, oferta_presentada, ganado, perdido,
+  descalificado, nutricion` (+ `reservo_oferta_valientes`, agregado después
+  según la sesión de OFV). Ninguna propuesta de mapeo usa un código inventado.
+- **Mapeo directo etapa(bot)→estado(codigo) propuesto para el bridge en vivo**
+  (reutiliza el `ESTADO_MAP` ya validado de `migrate_crm.py`, no inventa
+  criterios nuevos salvo el gap señalado arriba): `Inicial/JavitOff→nuevo`;
+  `M1,M2,M2.D,M3,M3.B,M4,M5→contactado` (M5 se queda en contactado hasta
+  agendamiento confirmado — mismo precedente ya validado); `M5.B,M5.C→
+  agendado`; `Descalificado→descalificado` (motivo se preserva en
+  `handoff_razon`/notas, no en el código); `Handoff (cualquier razón),
+  AgendaManual_1, AgendaManual_2→calificado` (mismo trato que ya reciben
+  `Handoff - Otro`/`Handoff - Pregunta precio` en el precedente real; para
+  las 3 razones sin precedente, ver gap arriba). Estados posteriores a
+  `agendado` quedan fuera del bridge — los gestiona el humano vía el
+  dashboard, no el Worker.
+- **Gap de Handoff sin precedente — RESUELTO por decisión explícita del
+  fundador (no por defecto/heurística):** `Handoff - Agendamiento manual→
+  calificado`; `Handoff - Crisis emocional→nutricion` (se saca del pipeline
+  de venta activo, no es apropiado seguir empujando — transición
+  `contactado→nutricion` ya es legal en `estado_transiciones`, verificado en
+  `supabase_schema_v3.sql` línea ~1325, sin gap de esquema); `Handoff - Ex
+  cliente→calificado` (se deja para que un humano evalúe oportunidad de
+  upsell/referido, no se cierra de una vez).
+- **RPC del bridge — campos, fundamentados en el shape YA usado por
+  `migrate_crm.py`** (`build_payloads()`, líneas 242-332): `clientes`
+  (manychat_id, nombre←full_name, ig_handle, profesion, salario_monto/
+  currency/periodicidad, notas←summary); `gestion_leads` (setter_id, closer_id
+  —casi siempre null en turnos del bot—, fuente_codigo, estado_codigo —nuevo
+  mapeo—, fecha_contacto, fecha_atendido, dolor, urgencia, califica,
+  handoff_razon, `origen_escritura`: propongo `'bot'` como valor nuevo,
+  distinto de `'importacion'`, para distinguir tráfico en vivo del histórico).
+  Confirmado con el header real que el bridge NUNCA debe tocar: WhatsApp(M),
+  Correo(N), Fecha Llamada Realizada(O), Fecha Pago(P), Upfront Cash COP(Q),
+  Revenue COP(R), Forma de pago(S) —dato real sucio, mayormente texto libre—,
+  Closer(Z), Fecha inicio/fin programa(AA/AB), cuotas(AC-AE) —"Estado cuota"
+  100% vacío en los datos reales, así que "Cuotas Cobradas" en la vista
+  Métricas dará $0 real hasta que alguien empiece a marcar cuotas
+  "Realizado", no es un bug de mapeo—. **NO implementado — pendiente de
+  confirmar el gap de Handoff antes de escribir el RPC real.**
+
+**Sesión 15-ago-2026 (continuación) — `fn_sync_bot_turn` escrita, APLICADA y VALIDADA en staging:**
+- Función completa en `Tarea_1_Migrar_DB/fn_sync_bot_turn.sql` (también anexada
+  como §22 de `supabase_schema_v3.sql`) y **ya aplicada a staging**
+  (`lrdtjsxtaadpgrzkchlw`) vía MCP de Supabase, con autorización explícita del
+  fundador ("de una vez lo apliques y valides").
+- **3 bugs reales encontrados y corregidos probando contra la BD real (no en
+  teoría):**
+  1. Nombres de columnas de `RETURNS TABLE` (`cliente_id`, `gestion_lead_id`)
+     chocaban con columnas reales de las tablas → error "column reference
+     ambiguous". Corregido con prefijo `out_`.
+  2. `fn_avanzar_estado` solo permite UN salto legal a la vez. Un lead nuevo
+     cuyo PRIMER turno ya es un handoff de crisis emocional necesita
+     `nuevo→contactado→nutricion` (2 saltos) — el mapeo directo lo dejaba
+     atascado en `nuevo` (`avanzo=false` silencioso). Corregido con un salto
+     intermedio vía `contactado` cuando el directo falla.
+  3. El constraint `ck_gl_handoff_closer` exige `closer_id` no nulo cuando
+     `fecha_handoff` no es null — el bot nunca asigna closer. Se dejó de
+     tocar `fecha_handoff` en el bridge por completo (mismo criterio que ya
+     usaba `migrate_crm.py`: ese campo es "cuándo se entregó a un closer",
+     no "cuándo el bot marcó para revisión humana").
+- **1 hallazgo de seguridad real** (vía `get_advisors` de Supabase, cruzado
+  contra `information_schema.role_routine_grants`, no contra el caché del
+  linter): pese a un `REVOKE` en una migración intermedia, `anon`/
+  `authenticated` seguían con `EXECUTE` sobre la función. Corregido con un
+  `REVOKE` final reverificado — hoy solo `service_role`/`postgres` pueden
+  ejecutarla, igual que `fn_avanzar_estado`.
+- **Pruebas ejecutadas contra staging** (leads `TEST_BRIDGE_001..005`,
+  quedan en la BD claramente marcados, mismo criterio que los usuarios QA
+  ya existentes): secuencia completa M1→M2→M3→M4→M5→M5.B en un mismo
+  `manychat_id` → **una sola fila** de `gestion_leads` (no duplica), termina
+  en `agendado`, profesión/salario se capturan y preservan; Descalificado
+  directo desde `nuevo` (ingreso bajo en el primer mensaje); AgendaManual_1
+  como primer turno (salto intermedio); reapertura de un lead `descalificado`
+  que vuelve a escribir → reabre la MISMA fila (`descalificado→contactado`,
+  no crea una fila paralela); no-clobber verificado (WhatsApp/Correo puestos
+  a mano por un closer sobreviven turnos posteriores del bot);
+  `activity_log` queda con el registro automático de `fn_log_gestion`
+  (creación/cambio_estado) MÁS el contenido de cada turno (mensajes +
+  resumen) que agrega esta función — auditoría más completa que la pestaña
+  "Activity Log" del Sheet original.
+- **Pendiente, siguiente paso — NO implementado:** el Worker de Cloudflare
+  (`worker_cloudflare.md`) todavía llama a `syncToCRM()`→Apps Script→Sheet.
+  Falta el cambio en el propio Worker (reemplazar esa llamada por un POST a
+  `/rest/v1/rpc/fn_sync_bot_turn` con la service_role key) para que el
+  bridge en vivo realmente quede activo — sigue siendo un cambio sobre un
+  sistema productivo real, requiere aprobación explícita antes de tocarlo.
+
+**Sesión 15-ago-2026 (continuación) — reconciliación completa Sheet fresco → staging (migración al día):**
+- **Fuente:** `Copia Actualizada (15 agosto) de CRM...xlsx`, subida por el fundador
+  (6.469 filas CRM, mismas 32 columnas/estructura que la copia del 13-ago —
+  sin drift de esquema). Comparada campo a campo contra la copia del 13-ago
+  y contra el estado real de staging (no se asumió nada, todo vía MCP de
+  Supabase).
+- **333 leads nuevos insertados** (clientes + gestion_leads + 9 reuniones),
+  reutilizando el `build_payloads()`/mapeos ya validados de `migrate_crm.py`
+  (0 anomalías). Verificado: `clientes` pasó de 6.136 a 6.469 exacto.
+- **21 leads existentes con cambios "de rutina" actualizados** (Estado,
+  Closer, WhatsApp, Correo, Nombre, Handoff Razón + reuniones: 12 creadas, 6
+  actualizadas). Las transiciones de estado se resolvieron con un
+  **pathfinder BFS sobre `estado_transiciones` real** (no solo el salto
+  directo de `fn_sync_bot_turn`) para cubrir saltos de 2 pasos como
+  `calificado→agendado→no_show`. **21/21 verificados en el estado esperado
+  tras aplicar, 0 errores.**
+- **2 ventas nuevas registradas** (Carolina Celis $5M contado 1 cuota;
+  Adriana Mejia Moreno $6M mixto 2 cuotas) vía `fn_registrar_venta`, con el
+  paso previo obligatorio `calificado→agendado→show_up` (sin eso,
+  `fn_venta_cierra_lead` habría fallado en silencio al intentar
+  `calificado→ganado`, que no es transición legal — hallazgo real
+  confirmado leyendo el trigger antes de ejecutar, no asumido). Reunión real
+  creada para Adriana (con fecha real) y pasada como `p_reunion_id` — para
+  Carolina no había fecha programada en el Sheet, quedó `NULL` (correcto,
+  no inventado).
+- **3 casos NO tocados, quedan pendientes de decisión del fundador**
+  (dinero real de por medio, mismo criterio que el caso "Juan Manuel" de la
+  sesión del 13-ago — no se asume, se pregunta):
+  1. **Marisol Tupaz** (`1252431934.0`): Estado pasó de "Lead Nuevo" a
+     "Desistió" pero con Fecha Pago + Upfront $2.7M + Revenue $5.4M ya
+     registrados en el Sheet. Ambiguo: ¿se quedó con la plata (retención
+     parcial) o se le devolvió todo?
+  2. **Juliana Osorio** (`120356523.0`) y **Daniela** (`1769260058.0`):
+     Estado sigue en "Agendada - Confirmada" en el Sheet (nunca se marcó
+     "Ganado"), pero Upfront/Revenue COP ya están completos (Upfront=Revenue
+     exacto) y "Estado cuota"="Realizado" — huele a venta real que el closer
+     olvidó marcar en el dropdown (mismo patrón que "Sebastián Cruz" en la
+     sesión del 13-ago). No se registró como venta sin confirmación.
+  Se aplicó SOLO lo inequívoco de estos 3 (asignación de Closer a Juliana/
+  Daniela) — nada financiero.
+- **Verificación final:** `vw_scorecard_check` revisado completo tras todos
+  los cambios — el único ERROR (`ganado_sin_venta`, 1 fila) y los 2 WARN de
+  `posible_cliente_duplicado` tienen `fecha_ref=2026-08-13`: **preexistentes
+  de la migración original ("Juan Manuel"), no introducidos hoy.** Nada
+  nuevo roto.
+- Todos los scripts de esta reconciliación quedaron en el scratchpad de la
+  sesión (no en el repo) por ser de un solo uso — la lógica reutilizable
+  (mapeos, pathfinder) queda documentada aquí para la próxima vez que haga
+  falta repetir este proceso.
+
+**Sesión 15-ago-2026 (continuación) — resolución de los 3 casos flaggeados + mecanismo de incidentes de revisión manual:**
+- **Decisiones del fundador:** "Juan Manuel" (ERROR preexistente,
+  `ganado_sin_venta`) se deja tal cual — debe seguir viéndose como incidente
+  en el dashboard. **Juliana Osorio y Daniela: SÍ registrar como ventas
+  ganadas** con los montos ya en el Sheet. **Marisol Tupaz: NO se tiene hoy
+  la info para resolverlo** — debe quedar como incidente visible, no
+  inventarse una resolución.
+- **Juliana Osorio ($4.132.339) y Daniela ($4.481.400) registradas** vía
+  `fn_registrar_venta` — mismo patrón que Carolina/Adriana (avance
+  `agendado→show_up` antes de la venta, reunión ya existente de la
+  migración original reutilizada como `p_reunion_id`). Verificado: ambas en
+  `ganado` con el monto correcto.
+- **Mecanismo nuevo, genérico, para incidentes de revisión manual
+  (respondiendo directamente al pedido del fundador de que "el dashboard
+  debe poder identificar estos casos para que cada rol actúe"):**
+  cualquier `gestion_leads.notas` que empiece con `INCIDENTE_REVISION:`
+  aparece automáticamente en `vw_scorecard_check` (WARN,
+  chequeo=`requiere_revision_manual`) — sin tabla ni columna nueva, mismo
+  patrón visual/de filtrado por rol que ya usa el mockup para Incidencias.
+  **Primer uso real: Marisol Tupaz** (nota completa con los montos y la
+  pregunta sin resolver, sin inventar una respuesta). View
+  `vw_scorecard_check` actualizada (nueva rama `UNION ALL`) y aplicada a
+  staging; anexada como §23 de `supabase_schema_v3.sql`. Verificado:
+  `requiere_revision_manual=1` (Marisol), `ganado_sin_venta=1` sigue igual
+  (Juan Manuel, sin tocar), resto de chequeos estables.
+- **Pendiente para cuando se conecte el Worker nuevo:** decidir si el bridge
+  en vivo (`fn_sync_bot_turn`) también debería poder escribir
+  `INCIDENTE_REVISION:` automáticamente cuando el bot reciba un `Estado`/
+  dato que no sepa mapear con confianza — hoy ese mecanismo solo existe para
+  uso manual/scripts de reconciliación, no está cableado al bridge en vivo.
+
+**Sesión 15/16-ago-2026 (continuación) — Mockup v5: fidelidad a "Perdido" +
+research UX aplicado + tabla/gráficas de Métricas:**
+- **El fundador compartió el historial completo del research de NotebookLM**
+  (el query directo seguía sin funcionar) — 4 bloques: minimalismo
+  funcional/ergonomía cognitiva, por qué el diseño con IA se ve genérico
+  (problema "Indigo-500", solución `DESIGN.md` con tokens rígidos, evitar
+  "Cardocalypse"), patrones Kanban/CRM (atribución dual setter/closer,
+  5-7 columnas máximo, indicadores de lead "rotting", reglas de salida no
+  de entrada), panel de incidencias/métricas (bandeja de excepciones,
+  totales reales, estados vacíos estratégicos, agenda bidireccional).
+- **Hallazgo del propio fundador, el más importante de esta ronda:** ningún
+  estado del Kanban representaba "el lead se perdió" — `perdido` no
+  aparecía en ninguna parte. Verificado: real y grave, el Kanban solo tenía
+  8 estados (nuevo→ganado), sin ningún estado de salida sin éxito.
+  **Corregido con criterio explícito, documentado, para balancear fidelidad
+  (pedido explícito) contra la regla de "5-7 columnas" del research (pedido
+  explícito también, "que le facilite la vida"):** se agregó UNA columna
+  "Perdido" que agrupa los 4 codigos reales de salida sin éxito del esquema
+  (`perdido`/`descalificado`/`nutricion`/`no_show`) — nada se esconde
+  (cada tarjeta en esa columna muestra su motivo exacto vía una etiqueta),
+  pero no se agregaron 4 columnas nuevas. `TRANSICIONES` del mockup
+  actualizado para reflejar que CASI todo estado real puede terminar en
+  `perdido` (fiel a `estado_transiciones`), y que `perdido→contactado` es
+  la única reapertura (igual que el esquema real).
+- **Atribución dual aplicada** (research, punto explícito): toda tarjeta del
+  Kanban ahora muestra Setter Y Closer siempre, no solo Closer cuando existe.
+- **Métricas del Admin reconstruidas** — pedido explícito: tabla real
+  (filas=métricas, columnas=Semana 1-4 + Total, franja de color por sección
+  igual que el script real: funnel=azul/base=gris/revenue=verde/cash=dorado,
+  columna %Conv junto a cada paso del funnel) en vez de la grilla de tiles
+  de v3/v4 — mismos totales mensuales que las versiones anteriores
+  (verificado, cero deriva de cifras). **+ 2 gráficas** (embudo de
+  conversión Lead→Venta en barras, Revenue Real semanal en línea), primera
+  vez que se usa la skill `dataviz` en este proyecto — un solo hue
+  (`--accent`), sin doble eje, tooltip al pasar el mouse, etiquetas
+  directas, siguiendo el spec de marcas de la skill (barras ≤24px con
+  extremo redondeado, líneas 2px, puntos ≥8px con anillo de superficie).
+- **Pendiente de decisión del fundador (no implementado, solo señalado):**
+  el research menciona `DESIGN.md` (tokens rígidos legibles por máquina) —
+  eso aplica al proyecto REAL cuando se construya con un framework, no a
+  este mockup HTML de una sola página; y "reglas de salida, no de entrada"
+  (validar datos obligatorios antes de dejar avanzar una tarjeta) — el
+  mockup no lo implementa aún, es una regla de negocio a decidir (qué
+  campos son obligatorios por transición) antes de construirla.
+
+**Sesión 16-ago-2026 (continuación) — Mockup v10: datos 100% reales
+extraídos del xlsx (no más aproximaciones), Global de 74 filas, Show-ups
+con las 14 columnas reales, corrección de un hallazgo previo equivocado:**
+- **Feedback del fundador sobre v9:** "aún faltan muchas cosas" — Global
+  sigue sin las columnas Benchmark/Promedio mensual, faltan más meses (y
+  pide que agregar meses sea automático), y sigue faltando filas que "sigo
+  sin ver" (v9 solo tenía 14 filas aproximadas, no las reales). Show-ups
+  sigue con muy pocas columnas — pide nombrarlas tal cual el Sheet, mismo
+  orden, sin importar los espacios vacíos. Instrucción explícita: quiere
+  las 3 vistas "tal cual están en el Sheet".
+- **Se encontró el xlsx completo con las 6 pestañas reales YA disponible
+  localmente** (`Tarea_1_Migrar_DB/Copia Actualizada (15 agosto) de
+  CRM...xlsx`, el mismo archivo usado para la migración a Supabase) — no
+  hizo falta pedirle un nuevo export al fundador. Se leyó **Global** y
+  **Show ups (Reuniones)** completas con `openpyxl` (mismo venv/patrón
+  usado toda la sesión para "sin suposiciones").
+- **Hallazgo importante: una afirmación de una sesión anterior (15-ago,
+  "quick-wins de métricas") estaba desactualizada o era incorrecta.** Esa
+  sesión decía que ROI FECC-UF y AOV-Cash estaban vacías en TODOS los
+  meses — **falso en los datos actuales**: ambas filas SÍ tienen cifras
+  reales (ROI FECC-UF: 4.49/4.92/6.56/1.99/4.42; AOV-Cash: $2.56M/$2.87M/
+  $3.08M/$1.74M/$3.57M). Lo que sí sigue vacío de verdad: Views, MQL/Call-
+  Confirmer, Sales Qualified Bookings, Ofertas (como conteo — su %Rate
+  asociado sí trae 0% real) y varias filas de desglose por producto (Core
+  Program/Low ticket/Producto 3/Producto 4, casi siempre vacías salvo
+  Precio Promedio). Se corrigió el mockup con los datos verificados AHORA,
+  no con el resumen de memoria de la sesión anterior.
+- **Global reconstruida con las 74 filas reales, en el orden exacto del
+  Sheet**, columnas Métrica | Benchmark | Promedio mensual | Mayo…
+  Diciembre 2026 (8 meses) | Total 2026 — igual que el Sheet real. Octubre-
+  Diciembre aparecen vacías pero SÍ están en la tabla: el Sheet real ya
+  tiene esas columnas pre-armadas esperando esos meses, así que "agregar
+  meses automático" ya está resuelto con solo listar las 8 columnas reales
+  tal cual existen, sin lógica adicional.
+- **Daily Metrics v2: se reemplazaron los datos de ejemplo por cifras
+  REALES** extraídas de las columnas "Mensual" del Sheet para Mayo-
+  Septiembre 2026 (Septiembre en 0 porque el mes no ha iniciado, salvo
+  Cuotas Cobradas=$3.000.000 ya registrado por adelantado). La granularidad
+  "Meses" ahora muestra estos 5 meses reales directamente, sin derivar
+  nada. "Semanas"/"Días" se siguen derivando (no hay forma práctica de
+  replicar la grilla real de 167 columnas anidadas día/semana/mes/total en
+  una página HTML), pero ahora parten del total REAL de Agosto (el mes más
+  reciente con datos) en vez de una cifra inventada — mismo patrón de
+  transparencia que antes (etiquetas "derivado del total real de Agosto"
+  en la UI), solo que ahora el ancla es real.
+- **Show-ups (Reuniones) reconstruida con las 14 columnas reales exactas**
+  (Nombre, IG Handle, Setter, Fecha Reunión, Estado, WhatsApp, Correo,
+  Fecha Pago, Revenue COP, $ Upfront Cash COP, Closer, Palabra clave (Ad),
+  Notas, Estado Reunión — 193 reuniones reales en el Sheet). Se corrigió
+  también el vocabulario de estados: lo que se había inventado antes
+  (show_up/no_show/pendiente) no existe así en el Sheet real — el
+  vocabulario real de "Estado" es de 10 valores (Ganado, Perdido, No show,
+  Agendada - Confirmada, Pendiente decisión, Reprogramada, Descalificado -
+  Ingresos bajos, Lead Nuevo - Sin Atender, Handoff - Otro, Desistió) y
+  "Estado Reunión" de 6 (Vendió, Descalificada, Pendiente, Desistió, Sin
+  definir, Reserva (OFV)) — ahora se usan tal cual.
+- **Decisión de privacidad, tomada sin preguntar por ser obvia dado el
+  contexto (Artifact potencialmente compartible):** las FILAS de la tabla
+  de Show-ups siguen siendo de ejemplo (nombres/WhatsApp/correos
+  inventados) — el Sheet real trae 193 nombres, teléfonos y correos reales
+  de clientes (PII) que no corresponde copiar a un mockup. Lo que SÍ es
+  real ahí: el resumen "Reuniones por mes" (Mayo=36, Junio=72, Julio=63,
+  Total=171, cifras reales) y el vocabulario de Estado/Estado Reunión.
+  Explicado directamente al fundador, no fue una decisión oculta.
+- **Orden de pestañas ajustado** a "Global, Daily Metrics v2, Show-ups"
+  (pedido explícito, antes estaba "Daily Metrics v2, Global, Show-ups").
+- **Validado con la prueba de humo de rondas anteriores**, ampliada para
+  confirmar que las 74 filas de Global y las 14 columnas de Show-ups
+  efectivamente aparecen en el HTML renderizado (no solo que el JS no
+  truena) — incluyó corregir el propio arnés de prueba (un stub de
+  `textContent` incompleto ocultaba contenido real que sí funciona en un
+  navegador de verdad).
+
+**Sesión 16-ago-2026 (continuación) — Mockup v9: fidelidad total de filas y
+columnas del Sheet real en Métricas (Global/Daily Metrics v2/Show-ups),
+lectura de `Arquitectura RTF - Views & Beyond.pdf`:**
+- **Feedback del fundador sobre v8:** "Capacidad por ahora no" (confirmado,
+  se mantiene fuera). Pide que las 3 pestañas de Métricas muestren **todas**
+  las filas y columnas reales del Sheet, no una selección condensada — "iré
+  revisando y si más adelante lo podemos condensar ya te comento". Señala
+  que el equipo usa el marco EOS/Traction y remite al documento
+  `Arquitectura RTF - Views & Beyond.pdf` para revisar antes de construir.
+  Instrucción explícita nueva: preguntar dudas DURANTE el desarrollo, no
+  esperar a terminar.
+- **Se leyó el documento de arquitectura completo** (metodología Views &
+  Beyond, Javier como autor, v1.0 agosto 2026). Confirma: el Esquema CRM
+  real tiene columnas A–AF; "Daily Metrics v2" es scorecard diario
+  (funnel/cash-A/R); "Global" es el dashboard MENSUAL que alimenta el Pulso
+  L10 semanal de EOS, con CAC-ROI como sus KPIs headline (D7 del rationale:
+  "Los números del Global alimentan el Pulso L10 semanal, cerrando el
+  ciclo de datos → decisión"); "Show ups" es reporte de reuniones por
+  estado y closer generado por ARRAYFORMULA. No detalla el catálogo
+  columna-por-columna de Global/Show-ups (ese detalle solo existe para
+  Daily Metrics v2, ya extraído de `daily-metrics-scorecard.md` en rondas
+  anteriores) — limitación reconocida, no inventada.
+- **Duda real planteada al fundador ANTES de construir** (siguiendo su
+  instrucción de preguntar sobre la marcha): la pestaña "Global" real tiene
+  filas confirmadas vacías en TODOS los meses (MQL/Call-Confirmer, Sales
+  Qualified Bookings, Ofertas, Views, desglose por producto, ROI FECC-UF,
+  AOV-Cash) — decisión previa con Javier fue NO construirlas. Se preguntó
+  vía `AskUserQuestion` si ahora sí incluirlas (con "—") para fidelidad
+  total de filas, o mantenerlas fuera. **Respuesta: incluirlas con "—".**
+  Esto invierte la decisión previa a propósito, por instrucción explícita
+  y informada (el fundador vio el trade-off antes de decidir).
+- **Bug de fidelidad propio, encontrado al releer el script real durante
+  esta ronda:** la columna %Conv de Daily Metrics v2 se estaba calculando
+  también para "Oferta de Valientes" y "Estudiantes activos" — el script
+  real (`FUNNEL_PREV = {1:0,2:1,3:2,4:3,5:4}`) SOLO calcula %Conv para
+  Conversaciones→Sales (5 pasos), esas dos filas quedan sin %Conv en el
+  Sheet real. Corregido (`idx<=5`) antes de que el fundador lo notara.
+- **Global ampliada a 14 filas** (antes 5): se agregaron las 7 filas
+  vacías confirmadas (con badge "sin dato en Sheet" en vez de solo "—" en
+  blanco, para que quede claro que es a propósito y no un error de
+  renderizado) + se agregó **CAC** (costo por venta, antes solo estaba
+  cp_lead) — el documento de arquitectura nombra explícitamente "CAC-ROI"
+  como los KPIs headline de Global, así que faltaba CAC. AdSpend sigue
+  siendo el único dato real (marcado "real"); Leads/Sales/Revenue de
+  ejemplo, cp_lead/CAC/ROI derivados (ya son campos reales de
+  `vw_embudo_diario`, solo con datos de ejemplo aquí).
+- **Show-ups (Reuniones) ampliada con su propio filtro Día/Semana/Mes**
+  (pedido explícito de que las 3 pestañas tengan filtros de periodo): a
+  diferencia de Daily Metrics v2 (una matriz métrica×periodo), Show-ups es
+  un LISTADO de reuniones, así que el filtro aquí filtra qué reuniones se
+  muestran por fecha (no pivotea columnas) — interpretación fiel a la
+  naturaleza real de esa pestaña. Se ampliaron los datos de ejemplo
+  (6 reuniones más, hasta 26 días atrás) para que el filtro "Mes" muestre
+  algo distinto de "Semana". **Nota dejada explícita en el propio mockup**
+  (no una suposición silenciosa): no se ha verificado si el Sheet real
+  tiene más columnas por reunión (duración, tipo) más allá de fecha/lead/
+  closer/resultado.
+- **Daily Metrics v2 ya estaba completa en filas** (las 21 métricas reales
+  de `daily-metrics-scorecard.md`, verificado explícitamente esta ronda
+  comparando etiqueta por etiqueta contra el script — coinciden exacto) —
+  no necesitó cambios de fondo más allá del fix de %Conv.
+- **Global se mantiene deliberadamente SIN el selector Día/Semana/Mes**
+  (ya documentado en v8, reafirmado esta ronda): el gasto se carga por mes
+  completo en el Sheet real, no por día — aplicar un filtro diario ahí
+  sería infiel a los datos, no una limitación de esta implementación.
+- **Validado con la prueba de humo en Node**, ampliada para cubrir las 3
+  pestañas de Métricas con todos sus filtros — sin errores.
+
+**Sesión 16-ago-2026 (continuación) — Mockup v8: Métricas separadas en las
+pestañas reales del Sheet (Global/Daily Metrics v2/Show-ups), fronteras de
+rol en el Pipeline, notas internas entre roles, CRUD del panel de
+developers:**
+- **Feedback del fundador sobre v7:** "sí me gusta más" — pero señala 3
+  problemas concretos y pide explícitamente ser más proactivo ("siento que
+  te estás dejando varios puntos por fuera... no te contengas a dejar solo
+  lo básico, ayúdame a dejar una versión lista para desplegar"): (1) la
+  tabla de Métricas está bien pero le faltaban las pestañas reales del
+  Sheet — "Global" y "Show-ups (reuniones)" — mezcladas en una sola vista
+  en vez de separadas; (2) el `<select>` de 21 métricas para graficar "se
+  llena la pantalla"; (3) pide que cada rol se encargue solo de sus propias
+  funciones del pipeline (sin cruces) más una forma de que los roles se
+  avisen cosas entre sí; y pide reforzar el panel "Para desarrolladores"
+  para que un developer pueda crear/activar/suspender funciones en prueba,
+  no solo verlas.
+- **Verificación contra el Sheet real ANTES de tocar nada** (pedido
+  explícito, "revísalo muy bien que sea fiel a los datos reales"): se
+  releyó `05-validacion-migracion-datos-reales.md`, que confirma **6
+  pestañas reales** en el Sheet: `Global`, `Daily Metrics v2`, `CRM`, `Show
+  ups (Reuniones)`, `Activity Log`, `Capacidad`. `CRM` ya es el Pipeline de
+  este mockup y `Activity Log` ya vive dentro de cada lead — no se
+  replicaron aparte. `Capacidad` **NO se incluyó** — no se ha verificado su
+  estructura real todavía; se dejó una nota explícita en el propio mockup
+  pidiéndole al fundador que confirme si es prioridad antes de construir
+  algo sobre datos sin verificar (su propia instrucción: "si alguna duda me
+  vas preguntando").
+- **Métricas restructurada en 3 pestañas de nivel superior** (`Daily
+  Metrics v2` / `Global` / `Show-ups (Reuniones)`), tipográficamente más
+  grandes/pesadas que las sub-pestañas Tabla/Gráficas que ya tenía
+  (anidadas, distinguibles a simple vista): `Daily Metrics v2` es la tabla
+  ya construida en v6/v7, sin cambios de fondo. `Global` es nueva: se
+  releyó también la sesión "quick-wins de métricas: AdSpend + conversaciones"
+  donde ya se había decidido (confirmado por audio con el fundador) que la
+  mayoría de filas reales de Global (MQL/Call-Confirmer, Ofertas, Views,
+  desglose por producto, ROI FECC-UF, AOV-Cash) están vacías en TODOS los
+  meses — vestigios de mala calidad de datos, no prioridades — **decisión
+  ya tomada de no construirlas, ahora aplicada también al mockup**. Lo que
+  sí se incluyó es real: **AdSpend cargado en `gastos_marketing`** (Mayo
+  $2.330.239, Junio $6.109.225, Julio $6.990.882 COP — cifras REALES, no de
+  ejemplo, con badge "real" visible en la tabla) + cp_lead y ROI derivados
+  con Leads/Revenue de ejemplo para ilustrar el cálculo (rotulados como
+  tal). Se documentó explícitamente que esta pestaña **solo tiene
+  granularidad mensual** (el gasto se carga por mes completo, no por día —
+  ya documentado en el esquema) y por eso NO lleva el selector Día/Semana/
+  Mes. `Show-ups (Reuniones)` también es nueva: una fila por reunión
+  (fecha/lead/closer/resultado), mismo grano que la tabla `reuniones` real
+  ya migrada (204 reuniones reales cargadas) — cifras de ejemplo, con
+  chips de Show Up Rate/No-shows/Pendientes (este último es literalmente
+  el chequeo real `reunion_vencida_sin_resolver` que ya existe en
+  `vw_scorecard_check`).
+- **Selector de gráficas curado de 21 a 5 opciones** (arregla el
+  desplegable que "llenaba la pantalla"): en vez de recortar arbitrariamente,
+  se usó el propio criterio del script real — `daily-metrics-scorecard.md`
+  marca `emphasize:true` en exactamente dos filas (Revenue Real, Upfront
+  Cash Real). Se completó con el inicio/fin del funnel (Leads, Sales) y el
+  cobro efectivo (Cuotas Cobradas) → 5 opciones, fiel a cómo el Sheet real
+  ya distingue sus propias filas importantes, no una selección inventada.
+- **Fronteras de rol en el Pipeline** (pedido explícito, "que cada rol se
+  encargue de sus respectivas funciones... para que no hayan cruces"):
+  nuevo mapeo `SETTER_STATES` (nuevo→agendado) / `CLOSER_STATES`
+  (agendado→ganado), con `agendado` como frontera compartida a propósito
+  (el Setter lo crea, el Closer lo recibe). Si el rol actual no es dueño de
+  la etapa del lead, el selector de "Avanzar estado" queda deshabilitado
+  con una nota ("Esta etapa la maneja el rol X") en vez de simplemente
+  ocultar la opción sin explicar por qué. Las acciones rápidas (confirmar
+  reunión, depósito OFV, cerrar venta) — todas territorio del Closer — ya
+  no aparecen en absoluto para el Setter.
+- **Notas internas entre roles** (pedido explícito, "una forma de que se
+  comuniquen o hagan saber al del otro rol que necesitan algo"): nueva
+  sección en el drawer de cada lead — lista de notas + un compose (texto +
+  destinatario). Deliberadamente NO se inventó un sistema de mensajería
+  aparte: cada nota nueva también se publica como una incidencia INFO
+  visible para el rol destinatario, reusando el mecanismo YA real del
+  backend (prefijo `INCIDENTE_REVISION:` en `gestion_leads.notas`,
+  auto-surfaced en `vw_scorecard_check`, ver sesión "resolución de los 3
+  casos flaggeados") — cierra el círculo con infraestructura que ya existe
+  en vez de duplicar funcionalidad.
+- **CRUD real en "Para desarrolladores"** (pedido explícito, "un
+  desarrollador sea quien pueda crear los formularios, tenerlos activos,
+  suspender, y evaluar"): botón "+ Nueva función en prueba" (formulario
+  inline nombre+descripción, se activa de inmediato); cada función tiene un
+  badge Activa/Suspendida y un enlace para alternar — suspender la saca del
+  selector del botón "🧪 Feedback" (no se puede seguir opinando sobre algo
+  suspendido) pero conserva sus respuestas históricas visibles, atenuadas,
+  para seguir evaluando lo ya recolectado. Se apoyó con una gráfica nueva
+  (barras, facilidad de uso promedio por función, reusando
+  `renderBarChartSVG` — mismo spec de la skill `dataviz` que ya se seguía)
+  para priorizar de un vistazo qué necesita más trabajo.
+- **Validado con la misma prueba de humo en Node** de v7, ampliada para
+  cubrir los flujos nuevos (fronteras de rol en `openDrawer` para varios
+  leads y roles, las 3 pestañas de Métricas, crear/activar/suspender una
+  función de prueba, enviar una nota interna) — sin errores.
+- **Pregunta abierta para el fundador** (dejada explícita en el propio
+  mockup y aquí, no una suposición): ¿la pestaña "Capacidad" del Sheet es
+  prioridad para este panel? No se ha revisado su estructura real todavía;
+  se prefirió preguntar en vez de inventarla.
+
+**Sesión 16-ago-2026 (continuación) — Mockup v7: filtros rápidos de Pipeline,
+Métricas por día/semana/mes con gráficas editables, export CSV, y panel
+"Para desarrolladores" con micro-encuesta de validación:**
+- **Feedback del fundador sobre v6:** "ya me gusta más" — confirma la
+  dirección de tipografía/color; pide más tamaño de letra en ciertas
+  partes puntuales (no un rediseño), filtros rápidos en Pipeline por
+  día/horas/semanas, ver Métricas por día/mes además de semana, gráficas
+  editables, exportar la tabla, "que sea algo más dinámico", y pidió
+  explícitamente mi criterio ("dame tu punto, analiza evalúa... sorpréndeme
+  para que quede listo para desarrollar") + investigar cómo se diseñan
+  encuestas de validación cortas para un panel nuevo "para developers".
+- **Tipografía — subida selectiva, no global** (pedido explícito, "en
+  ciertas partes"): `.view-title` (15→17px, 650→700), `.card-name`
+  (13→13.5px), `.drawer-name` (16→17.5px). Se dejó el resto igual a
+  propósito — subir todo habría revertido la jerarquía que ya funcionaba.
+- **Filtros rápidos en Pipeline** (pedido explícito, "por día, horas y
+  semanas"): como `LEADS` no tiene fecha de creación (solo `stale`, horas
+  desde la última actividad, que ya se mostraba en cada tarjeta), se usó
+  ese mismo campo real como base de los filtros — chips "Todos / Últimas
+  24h / Esta semana / Estancados (+24h)" — en vez de inventar un campo de
+  fecha que no existe en el modelo. Además se activó el buscador del
+  topbar, que en v1-v6 era un `<div>` decorativo sin función real; ahora
+  filtra por nombre en vivo.
+- **Métricas por Día/Semana/Mes** (pedido explícito): selector compartido
+  entre la tabla y las gráficas (mismo control, misma granularidad en
+  ambas vistas). "Semanas" sigue siendo el dataset real de v6 (mes actual,
+  4 semanas); "Días" se DERIVA matemáticamente de esas mismas 4 semanas
+  (reparto por pesos fijos entre 7 días, determinístico) — incluye el
+  mismo total mensual, es la misma ventana con más detalle, no un dato
+  nuevo; "Meses" es una ventana MÁS AMPLIA (últimos 4 meses, con una
+  trayectoria de crecimiento) — su total es distinto a propósito, porque
+  compara periodos distintos, no es inconsistencia. Todo sigue rotulado
+  como cifras de ejemplo, igual que el resto de `METRICAS_MOCK` desde v5.
+- **Gráficas editables** (pedido explícito): las dos gráficas fijas de v5/v6
+  (embudo + Revenue Real) se generalizaron — ahora cada una tiene un
+  `<select>` para elegir qué métrica graficar (cualquiera de las 21 filas
+  de `METRICAS_MOCK`, más la opción especial "Embudo (Lead→Venta)" en la
+  primera). Ambas respetan la granularidad activa. Refactor: las funciones
+  fijas `renderFunnelChart`/`renderRevenueChart` se reemplazaron por
+  `renderBarChartSVG`/`renderLineChartSVG` genéricas (mismo spec de la
+  skill `dataviz` que ya se seguía: un solo hue, barras ≤24px, líneas 2px,
+  tooltips, sin doble eje) más `renderChart1`/`renderChart2` que arman los
+  datos según la selección.
+- **Exportar CSV**: botón en la tabla de Métricas. **Limitación técnica
+  señalada explícitamente al fundador:** el visor de Artifacts de Claude
+  bloquea cualquier descarga que la página misma dispare (enlaces
+  `download`, blobs) — es una restricción del sandbox del visor, no un
+  bug de esta implementación. El botón genera el CSV real en memoria (la
+  lógica queda lista para producción) y muestra un toast confirmando el
+  archivo que se generaría, mismo patrón que ya usan otras acciones
+  simuladas del mockup (ej. el envío de invitación de Google Calendar al
+  agendar). En el build real (fuera del sandbox del Artifact) esa misma
+  función solo necesita conectarse a una descarga de Blob real.
+- **Panel "Para desarrolladores" (Admin) + micro-encuesta de validación**
+  (pedido explícito, con investigación previa vía WebSearch — ver fuentes
+  abajo): se investigaron patrones de "in-app micro-surveys" — hallazgo
+  clave: una sola pregunta bien elegida rinde más que cinco mediocres, y
+  el estándar para decidir si vale la pena invertir en una función es el
+  **PMF test de Sean Ellis** ("¿qué tan decepcionado estarías si ya no
+  pudieras usar esto?", ≥40% "muy decepcionado" = señal real de que vale
+  la pena seguir). Se adaptó a 3 preguntas, <30 segundos, tal como se
+  pidió: (1) pregunta estratégica estilo Sean Ellis en positivo ("¿qué
+  tanto extrañarías [función]?" Mucho/Un poco/Nada), (2) una **Single Ease
+  Question** (SEQ, el estándar más corto de usabilidad, escala 1-5 "qué
+  tan fácil fue usarla"), (3) comentario libre opcional al final — igual
+  a como se pidió ("algo que la persona quiera comentar"). Se marcaron
+  como "en prueba" las 3 funciones nuevas de esta misma ronda (filtros de
+  Pipeline, granularidad de Métricas, gráficas editables) para que el
+  mecanismo tenga algo real que validar desde el día uno, no un ejemplo
+  hipotético — con 4 respuestas semilla de ejemplo (rotuladas como tal).
+  El panel de Admin agrega por función: % Mucho/Poco/Nada, promedio de
+  facilidad, y el feed de comentarios. Acceso al formulario: botón
+  "🧪 Feedback" en el topbar, visible para los 3 roles (cualquiera que use
+  una función en prueba puede opinar, no solo Admin).
+- **Mi propia recomendación, dada la petición explícita de criterio
+  ("dame tu punto, analiza evalúa... sorpréndeme"):** lo que consideré y
+  DEJÉ FUERA a propósito, para no meter alcance innecesario en un mockup
+  que ya cubre lo pedido: (a) reglas de validación obligatoria por campo
+  antes de avanzar una tarjeta ("exit rules") — sigue siendo la brecha más
+  grande real antes de construir en firme, ya señalada desde v5, requiere
+  una decisión de negocio (qué campos son obligatorios por transición) que
+  no me corresponde inventar; (b) notificaciones/alertas de nuevo lead —
+  vale la pena a futuro pero es una función de backend real (push/email),
+  no algo que un mockup estático pueda demostrar con honestidad; (c) una
+  barra de "meta individual" tipo OKR — la descarté explícitamente porque
+  ARTF no maneja metas formales por persona hoy; hubiera sido una cifra
+  inventada, lo opuesto a lo que se pidió. Lo que SÍ agregué sin que se
+  pidiera explícitamente, por ser barato y de alto valor: activar el
+  buscador del topbar (ya existía visualmente desde v1, nunca tuvo
+  función).
+- **Republicado en el mismo Artifact** (misma URL, favicon 📊, label "v7:
+  filtros pipeline, granularidad, feedback"). Validado con dos capas esta
+  vez (antes solo se hacía `node -e "new Function(...)"` que solo revisa sintaxis):
+  la misma prueba de sintaxis, más una prueba de humo en Node con un DOM
+  simulado mínimo que ejecuta `enterApp()`, recorre los 3 roles, dispara
+  filtros/granularidad/gráficas/export/feedback y confirma que nada lanza
+  una excepción en tiempo de ejecución — encontró y confirmó que dos
+  errores iniciales eran limitaciones del propio stub de prueba (no bugs
+  reales del mockup), no defectos del código.
+
+- **Fuentes de la investigación de esta ronda:** [In-App Surveys: A
+  Practical Guide for SaaS Teams](https://www.featurebase.app/blog/in-app-surveys),
+  [The Ultimate Guide to In-App Surveys (Amplitude)](https://amplitude.com/explore/product/in-app-surveys),
+  [20+ Product Market Fit Survey Questions (Sean Ellis test)](https://formbricks.com/blog/product-market-fit-survey-questions),
+  [How to Measure Product Market Fit Using Microsurveys](https://userpilot.com/blog/pmf-survey/).
+
+**Sesión 16-ago-2026 (continuación) — Mockup v6: color + jerarquía tipográfica
+en Métricas, sub-pestañas Tablas/Gráficas, se quita "Cobertura" de Agenda
+Admin, Fuente corregida contra datos reales del xlsx, franja "Hoy":**
+- **Colores distintivos + jerarquía tipográfica en Métricas (pedido
+  explícito, "juega con eso"):** la franja de color de sección (izquierda de
+  cada fila) ya existía desde v5 pero era el único indicador; ahora también
+  se colorea la **etiqueta de sección** (`metrics-section-tag`, leyenda
+  arriba de la tabla) y la **columna Total** de las filas `revenue`/`cash`
+  (verde/dorado respectivamente) — mismo lenguaje de color que ya usa el
+  script real (funnel=azul, base=gris, revenue=verde, cash=dorado), sin
+  agregar tonos nuevos. Jerarquía tipográfica: filas "emphasis" (Revenue
+  Real, Upfront Cash Real — los totales que de verdad importan, ya
+  marcadas `emph` desde v5) ahora tienen fondo `--accent-wash` de fila
+  completa y su celda Total sube a 14.5px vs 13.5px del resto; el resto de
+  celdas numéricas baja a 12px/color `--ink-2` para que el ojo vaya directo
+  a los totales relevantes. Nada de esto agrega color fuera de Métricas —
+  el resto del mockup se mantuvo minimalista a propósito, tal como pidió el
+  fundador ("acorde manteniendo el minimalismo").
+- **Sub-pestañas "Tablas" / "Gráficas" dentro de Admin → Métricas** (pedido
+  explícito): `renderMetricas()` dividido en dos `.metrics-subview`
+  controladas por `setMetricsView()`; antes era un solo scroll largo con
+  tabla y gráficas una debajo de otra.
+- **Se quitó el bloque de "Cobertura próximos días" de Agenda (Admin)**
+  (confirmado por el fundador vía pregunta directa: la vista de Cobertura
+  era la que se sentía como vigilar/presionar al closer por su
+  disponibilidad, no como algo que le facilite el trabajo a nadie). Se
+  simplificó la vista de Admin a **un solo calendario compartido** del
+  equipo (se quitó también la tabla "Matriz por closer" duplicada, redundante
+  ahora que el calendario ya muestra closer+estado por bloque — antes eran
+  3 secciones, ahora 1, más fiel a "menos paneles, mismo trabajo").
+- **Fuente corregida contra datos reales del CRM** (pedido explícito, "sin
+  suposiciones") — se re-verificó el xlsx (`Copia Actualizada (15 agosto)…
+  .xlsx`, columna Fuente, 15-ago-2026): dominante 'DM directo' (5.395),
+  luego 'manual_backfill' (951, artefacto de migración histórica, no una
+  opción real que alguien elegiría manualmente), 'IG Ad "Camila"' (90), y
+  variantes minoritarias (instagram/orgánico/referido/WhatsApp/etc). El
+  dropdown `#nl-fuente` del modal "Nuevo lead" tenía opciones inventadas
+  (Instagram Ads/Instagram orgánico) que no correspondían a estos valores
+  reales — corregido a: DM directo / IG Ad / Referido / WhatsApp directo /
+  Otro. Se excluyó `manual_backfill` a propósito (no es una fuente que un
+  humano elegiría al crear un lead nuevo, es solo un artefacto de la
+  migración).
+- **"Sorpréndeme" — una franja "Hoy" para Setter/Closer** (pedido explícito
+  de investigar en la web y agregar algo bien elegido, sin caer en cosas
+  innecesarias): patrón de "daily priorities widget" de dashboards de
+  ventas (research vía WebSearch esta ronda) — franja arriba del Pipeline
+  con: leads propios sin actividad +24h, cuántas llamadas/leads agendados
+  hay HOY, y (solo para Setter) cuántos espacios abiertos hay para agendar.
+  Deliberadamente **NO aplica a Admin** — es autoservicio para la propia
+  persona (mismo dato que ya se podía ver en el board/agenda, solo resumido
+  arriba), no un reporte de actividad para que otro lo audite; eso es
+  justo el tipo de feature de vigilancia que se acaba de pedir quitar de
+  Agenda, así que se evitó reintroducirlo en otra forma. Se descartó (por
+  redundante/innecesario) la otra opción investigada, "quota/goal progress
+  bar", porque ARTF hoy no maneja metas individuales formales por
+  persona — habría sido una cifra inventada.
+- **Republicado en el mismo Artifact** (misma URL, favicon 📊, label "v6:
+  colores, subtabs, sin cobertura, Fuente real"). JS validado con
+  `node -e "new Function(...)"` antes de publicar (mismo procedimiento que
+  v2-v5).
+- **Nada quedó pendiente sin resolver en esta ronda** — los 6 puntos del
+  pedido del fundador (colores, tipografía, sub-pestañas, quitar Cobertura,
+  investigar+sorprender, verificar contra CRM real) se implementaron todos.
+
+**Sesión 15-ago-2026 (continuación) — Mockup v4: calendario real (Día/Semana/
+Mes) + Urgencia corregida contra el SOP real + notebook UX con problema
+técnico sin resolver:**
+- **Feedback del fundador sobre v3:** el calendario en columnas (v2/v3) no
+  le sirve — pidió un calendario real estilo Google (Semana/Mes) + vista
+  por Día también navegable (confirmado explícitamente, el mensaje original
+  tenía una negación ambigua que se aclaró antes de construir).
+- **Hallazgo real sobre "Urgencia", confirmado contra el SOP** (`SOP Setter
+  DM en Instagram V4.0.pdf`, notebook "ARTF — Arquitectura Actual y Rol
+  Setter", con cita textual): es el 3er filtro de calificación (junto con
+  ingresos y endeudamiento), pregunta literal del Mensaje 5: *"¿Resolver
+  esto es una prioridad AHORA para ti, o es algo para cuando tengas más
+  tiempo o dinero?"* — clasificación **binaria** (`ahora`/`algun_dia`,
+  columna V del CRM), NO 4 niveles. El desplegable de "Urgencia" del modal
+  "Nuevo lead" (Baja/Media/Alta/Crítica) no reflejaba el proceso real —
+  **corregido a binario** (Ahora=alta / Algún día=baja) en el mockup.
+- **Mockup v4 publicado** (misma URL). Cambios: Agenda reconstruida como
+  calendario real con 3 vistas navegables (Día/Semana/Mes, toolbar con
+  ‹ Hoy › + tabs, click en un día del mes salta a esa vista de día) para
+  los 3 roles; `SLOTS` ahora usa fechas ISO reales relativas a "hoy" en vez
+  de fechas quemadas ("Hoy · 15 ago"), para que la demo no quede vieja;
+  Urgencia del formulario corregida.
+- **Cuaderno "UX/Diseño — Deep Research" (recién agregado, `use_count:0`
+  antes de hoy) — problema técnico real, sin resolver:** 3 intentos de
+  `ask_question` (sesiones distintas, preguntas de largo variable)
+  devolvieron solo el placeholder de "cargando" de NotebookLM
+  ("Evaluando la relevancia…", "Explorando tu material…", "Revisando las
+  páginas…") en vez de la respuesta real — verificado en los logs del MCP
+  que sí corrió tiempo real (14-31s) cada vez, no fue un fallo instantáneo.
+  Notebook `ARTF — Arquitectura Actual y Rol Setter` (ya usado antes, sin
+  este problema) respondió normal en el intento 3. Hipótesis: puede que le
+  falte terminar de indexar del lado de Google (se agregó horas antes en
+  esta misma sesión). **Pendiente: reintentar más tarde, o que el fundador
+  comparta los hallazgos clave directamente.** El mockup v4 NO incorpora
+  hallazgos de ese research todavía — se basó en las buenas prácticas de
+  diseño minimalista funcional ya aplicadas desde v1 (paleta contenida,
+  jerarquía clara, objetivos de tap grandes), no en contenido nuevo de esa
+  notebook.
+
+**Sesión 15-ago-2026 (continuación) — re-prueba de Postman OK + hallazgo de
+zona horaria (requisito real para el dashboard, no un bug de datos):**
+- **Las 5 pruebas de Postman corridas de nuevo, ya con el fix aplicado —
+  todas correctas:** `estado=nuevo` en los 2 leads capturados (antes daba
+  `contactado`), 1 sola fila de `gestion_leads` por lead (sin duplicar pese
+  a 2-3 turnos), los 2 casos de guarda (placeholders sin resolver / sin
+  `subscriber_id`) no crearon nada. Limpiado después de verificar.
+- **Se encontraron y limpiaron 6 registros de prueba residuales de sesiones/
+  pasos anteriores** que no se habían borrado (`TEST_BRIDGE_001..005` de la
+  primera validación de `fn_sync_bot_turn`, y `TEST_DIAG_001` de una sesión
+  previa al 15-ago). Staging quedó en **6.468 clientes reales**, cero data
+  de prueba mezclada.
+- **Hallazgo del fundador, investigado a fondo — NO es un bug de datos, es
+  un requisito real para el dashboard:** el fundador notó que `created_at`
+  en Supabase mostraba 16-ago para leads que en el Sheet decían 15-ago.
+  Confirmado con evidencia: todo se guarda correctamente en UTC (práctica
+  estándar); Bogotá es UTC-5, así que cualquier evento entre las 7pm y
+  medianoche hora Colombia aparece fechado al día siguiente si se mira el
+  valor crudo sin convertir. Además, para los leads MIGRADOS, `created_at`
+  nunca representó la fecha del lead — es cuándo se corrió el script de
+  migración (metadato técnico); la fecha de negocio real está en
+  `fecha_contacto` (y demás columnas `fecha_*`), que sí quedó intacta y
+  correcta (verificado con un lead real: `fecha_contacto`=9-ago, correcto).
+  **Requisito anotado para cuando se construya el dashboard: TODA fecha que
+  se muestre en el frontend debe convertirse a `America/Bogota`
+  (`AT TIME ZONE fn_tz()` o equivalente en el cliente) antes de mostrarse —
+  nunca UTC crudo, o el equipo va a ver fechas "adelantadas" en cualquier
+  actividad nocturna.**
+
+**Sesión 15-ago-2026 (continuación) — Worker nuevo desplegado por el fundador + probado con Postman, bug real encontrado y corregido:**
+- **Despliegue:** el fundador topó con el flujo nuevo de Cloudflare
+  ("Upload and deploy", pensado para proyectos con build, no para un script
+  suelto) — resuelto usando la plantilla "Hello World" + editor en el
+  navegador en vez del drag-and-drop. Worker desplegado, secrets
+  configurados (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `MANYCHAT_API_TOKEN`).
+- **Colección de Postman creada**
+  (`ARTF_Worker_Bridge_Supabase.postman_collection.json`, 5 pruebas:
+  captura feliz, placeholders sin resolver, mismo lead 2 veces, sin
+  subscriber_id, segundo lead) para validar el Worker SIN necesitar acceso
+  a ManyChat (pendiente de solicitar). Las 5 corrieron OK del lado del
+  Worker (HTTP 200 en todas).
+- **Bug real encontrado revisando el resultado en Supabase (NO detectado por
+  las pruebas sintéticas anteriores de `fn_sync_bot_turn` con
+  `TEST_BRIDGE_*`):** los leads capturados vía el Worker nuevo (sin
+  `etapa_bot`/`handoff_humano`, exactamente el caso real de captura pasiva)
+  quedaban en `contactado` en vez de `nuevo`. Causa: el salto intermedio vía
+  `'contactado'` (fix #2 de `fn_sync_bot_turn`, sesión anterior) se
+  intentaba SIEMPRE que `fn_avanzar_estado` devolvía `false`, sin distinguir
+  "ya estaba en el destino" de "salto ilegal, necesita intermedio" — un lead
+  recién creado en `nuevo` con destino `nuevo` disparaba el salto de todos
+  modos, y como NADA transiciona de vuelta a `nuevo` en
+  `estado_transiciones`, quedaba atascado sin forma de autocorregirse.
+  **Corregido:** ahora se compara el código actual contra el destino ANTES
+  de intentar cualquier salto. Aplicado a staging y **verificado con una
+  llamada directa** (`out_estado_codigo: "nuevo"`, `out_avanzo: false`).
+  `fn_sync_bot_turn.sql` y `supabase_schema_v3.sql` (§24) actualizados.
+- **Limpieza:** los 2 leads de prueba afectados por el bug
+  (`POSTMAN_TEST_001`/`002`) no se podían corregir in-place (mismo motivo:
+  nada vuelve a `nuevo`) — se borraron completos (clientes + gestion_leads +
+  activity_log, desactivando temporalmente `trg_log_inmutable` y
+  reactivándolo después, verificado `tgenabled='O'`). Quedan 0 registros de
+  prueba en staging.
+- **Lección para la próxima vez que se toque `fn_sync_bot_turn`:** las
+  pruebas sintéticas (`TEST_BRIDGE_*`) siempre mandaban un `p_etapa_bot`
+  explícito — nunca se probó el caso "captura pasiva pura, sin etapa", que
+  es exactamente el único caso real que usa el Worker de captura. Cualquier
+  cambio futuro a esta función debe probarse también con los parámetros
+  opcionales vacíos, no solo con el camino "feliz" de una conversación
+  completa.
+
+**Sesión 15-ago-2026 (continuación) — plan de rollout confirmado (Worker paralelo) + Worker de captura escrito:**
+- **Confirmado directamente por el fundador (revisó logs de Cloudflare):**
+  `JAVIT_ACTIVO=false` en producción — coincide exacto con la conclusión
+  técnica de la sesión anterior.
+- **Plan de rollout acordado con el fundador** (no improvisado por IA): (1)
+  terminar de validar la migración Sheet→Supabase con datos frescos, (2)
+  desplegar un Worker de Cloudflare NUEVO y separado (no tocar el que ya
+  corre) que replica solo la captura pasiva pero escribe a Supabase vía
+  `fn_sync_bot_turn` en vez de Apps Script, (3) correr en paralelo mientras
+  el Sheet sigue siendo la fuente real que usa el equipo, validando con
+  tráfico real, (4) corte definitivo programado en ventana 4-6am (fecha aún
+  sin definir) donde se desconecta el Sheet.
+- **Falsa alarma resuelta:** el conteo inicial (COUNT de la columna "#" via
+  Google Sheets API, 6.113) sugería que el link compartido por el fundador
+  tenía menos filas que la copia local (6.136) — el fundador cuestionó el
+  hallazgo (correctamente). Re-verificado con `MAX(#)=6136`: coincide exacto
+  con la copia local; el COUNT estaba mal por 23 celdas en blanco en esa
+  columna específica, no por una diferencia real de filas. **Pendiente real,
+  sin resolver:** confirmar si el Sheet REAL de producción (`SHEET_ID
+  ...MGvaf0`, distinto del link compartido que es una copia) creció desde
+  este snapshot — el bridge sigue capturando leads nuevos con el bot
+  apagado, así que es esperable que sí.
+- **Riesgo de un Worker nuevo en la misma cuenta Cloudflare — analizado:**
+  aislamiento casi total a nivel de plataforma (cada Worker es un recurso
+  independiente, secrets/URL propios, cero interferencia con el Worker
+  actual). Dos puntos reales identificados: (a) la cuota de requests/día es
+  POR CUENTA, no por Worker — si están en el plan gratuito, el tráfico se
+  suma; pendiente confirmar el plan. (b) El único punto que sí toca el
+  sistema en vivo es el FLOW de ManyChat (necesita una segunda acción
+  "External Request" en paralelo apuntando al Worker nuevo) — el Worker
+  actual y su Apps Script/Sheet no se tocan, pero el flow de ManyChat sí,
+  mínimamente.
+- **Worker de captura nuevo escrito:**
+  `Scrips_Worker_and_AppScript/worker_bridge_supabase_NUEVO_paralelo.js`.
+  Alcance deliberadamente reducido (solo la rama de captura pasiva que
+  realmente corre hoy — sin lógica de Claude/Anthropic, que sigue siendo
+  iniciativa aparte y diferida). Llama a `fn_sync_bot_turn` en vez de
+  `syncToCRM()`/Apps Script. **Desviación deliberada marcada para decisión
+  del fundador:** el código actual manda `handoff_humano=true` en esta rama,
+  que vía `mapEstado()` (handoff tiene prioridad sobre etapa) termina
+  clasificando TODO lead recién capturado como "Handoff - Otro" → `calificado`
+  — inconsistencia real ya existente en el Sheet, no introducida ahora. El
+  Worker nuevo NO reproduce ese comportamiento: la captura pasiva no manda
+  `handoff_humano`, cae limpio en `nuevo`. Pendiente de confirmar si el
+  fundador prefiere replicar el comportamiento actual (bug incluido) para
+  comparar 1:1 durante la validación en paralelo, o quedarse con la
+  corrección. **Decisión del fundador (mismo día): dejar la corrección** (la
+  captura pasiva no manda `handoff_humano`, cae en `nuevo`) — no replicar el
+  bug del Sheet. **NO desplegado — código listo para revisión, el fundador
+  debe desplegarlo en Cloudflare (sin acceso MCP a Cloudflare en esta
+  sesión) y configurar la segunda acción en ManyChat.**
+- **Pendiente real, aún sin respuesta (2 puntos):** (1) plan de Cloudflare
+  del fundador (gratuito vs pago, por el tema de cuota compartida de
+  requests/cuenta), (2) si el Sheet REAL de producción (no la copia
+  compartida) creció más allá de las 6.136 filas ya migradas.
+
+**Sesión 15-ago-2026 (continuación) — alcance confirmado del Formulario Dashboard + diseño de Agenda:**
+- **Roles reales confirmados:** Yeisiton y Gabyota entran como SETTERS (para
+  ganar experiencia real del rol antes de automatizarlo). Closers actuales:
+  Andrés (alias "Pipe") y Catalina. El mockup (ver abajo) ya usa estos
+  nombres reales, no genéricos.
+- **Alcance del Formulario Dashboard, confirmado por el fundador:**
+  - SÍ: migración completa a Supabase (dejar el Sheet atrás), tablero por
+    rol, formulario de registro manual de leads (los 3 roles pueden
+    agregar un lead a mano — justificado, hoy YA se hace 100% a mano).
+  - NO (por ahora): el script de calificación (8 mensajes + objeciones) NO
+    va en este dashboard. Es la semilla de un futuro bot para automatizar
+    parte del rol de setter, que se diseñará DESPUÉS de que Yeisiton/Gabyota
+    acumulen experiencia real siendo setters. Iniciativa separada,
+    registrada aquí para no perderla, sin fecha aún.
+  - El Worker de Cloudflare SÍ tiene integración real con ManyChat (captura
+    `manychat_id`/`ig_handle`) — no es un bot conversacional, es solo
+    captura de datos. Pendiente de análisis a fondo cuando el fundador
+    comparta el código del Worker.
+- **Herramienta de agenda real CONFIRMADA (con evidencia, corrige al
+  playbook):** el enlace real
+  (`https://calendar.app.google/iMW5LBbkcAvorypF9`) redirige a
+  `calendar.google.com/appointments/schedules/...` — es **Google Calendar
+  Appointment Schedules**, NO Calendly (el `SOP Setter DM V4.0.pdf` está
+  desactualizado en ese punto puntual).
+- **Proceso real de agenda (descrito por el fundador, no en ningún
+  documento):** los closers abren ventanas de disponibilidad SOLO cercanas
+  (nunca semanas adelante, es estrategia deliberada) → los setters agendan
+  leads calificados en esas ventanas → cuando se llenan, se le pregunta al
+  closer por más espacios → se abren más. Hoy corre sobre Google Calendar
+  Appointment Schedules.
+- **Diseño de Agenda propuesto (implementado en el mockup v2, no en
+  producción):** tabla `disponibilidad_closer` (fecha, hora inicio/fin,
+  estado abierto/reservado) reemplaza Google Calendar Appointment Schedules
+  como fuente de verdad del estado de los espacios; al reservar, se llama a
+  la **API de Google Calendar** para crear el evento real (invita al lead
+  por correo + genera Meet automático) — no se reinventa esa mecánica.
+  Vistas por rol: Closer = "Mi disponibilidad" (agregar espacios rápido);
+  Setter = "Espacios abiertos" (reservar con un clic, asigna lead); Admin =
+  indicador de cobertura (espacios abiertos por closer en próximos días,
+  mismo lenguaje visual que `vw_scorecard_check`).
+- **Mockup actualizado y republicado** (misma URL:
+  `https://claude.ai/code/artifact/40e898e7-1774-4209-966c-3e6b8baa2816`),
+  incorporando: botones/objetivos de tap más grandes, botón "+ Nuevo lead"
+  visible en los 3 roles con formulario modal, panel de Incidencias visible
+  para los 3 roles (filtrado por rol — cada incidente tiene un array
+  `roles` que determina a quién le corresponde revisarlo; Admin ve todas
+  sin filtro), y la vista de Agenda completa con las 3 sub-vistas por rol
+  descritas arriba.
+- **Feedback del fundador sobre v2 (mismo día):** aprobado en general;
+  filtrado de pipeline/incidencias por rol confirmado como correcto (se
+  seguirá refinando más adelante, sin cambios de código ahora). Dos pedidos
+  de ajuste, **implementados en v3 (misma URL, republicado)**:
+  1. **Agenda con vista de calendario real** en vez de listas planas —
+     Closer/Setter ven columnas por día con bloques de horario (abierto/
+     reservado); Admin ve una matriz de cobertura (closers × días) además de
+     los chips de resumen que ya existían.
+  2. **Nueva vista "Métricas" solo para Admin** — replica la estructura
+     EXACTA de la pestaña "Daily Metrics v2" real (identificada al leer
+     `daily-metrics-scorecard.md`, ver sesión de análisis del Worker más
+     abajo): secciones Funnel (Leads, Conversaciones, Bookings, Day
+     QBookings, Quality Bookings Show Ups, Sales, Oferta de Valientes,
+     Estudiantes activos) con % de conversión entre pasos, Base/Desistidos,
+     Revenue (Revenue, Revenue OFV, Revenue Real) y Cash (Upfront Cash,
+     Dinero de OFV, Upfront Cash Real, Cuotas Cobradas, Cuotas Proy. A/R,
+     Dinero Desistido, Reserva Activa). Cifras de ejemplo — pendiente
+     conectar a `vw_embudo_diario` cuando exista el dato real en Supabase.
+
+**Sesión 15-ago-2026 (continuación) — investigación crítica: cómo funciona HOY el rol de setter (para el Formulario Closers):**
+- **Hallazgo mayor, con evidencia:** el rol de setter es 100% MANUAL hoy —
+  no hay ningún bot conversacional operando. Fuente: `SOP Setter DM en
+  Instagram V4.0.pdf` (11-ago-2026) + audio de entrenamiento, notebook
+  "ARTF — Arquitectura Actual y Rol Setter". Un humano copia/pega 8 mensajes
+  scripteados uno por uno en Instagram DM, con 3 filtros acumulativos
+  (Ingresos ≥$7M COP/mes, Endeudamiento ≤50% calculado a mano, Urgencia
+  ="ahora"), agenda vía el Calendly PERSONAL de Andrés (no del setter — el
+  setter no gestiona disponibilidad propia hoy), verifica el agendamiento a
+  mano antes de darlo por cerrado, y llena el CRM/Sheet columna por columna.
+  El audio de entrenamiento instruye explícitamente a los setters a NO
+  parecer un bot ("mensajitos como por párrafo, no de un solo golpe").
+- **Búsqueda exhaustiva (2 pasadas) de "ManyChat"/"bot"/"Cloudflare"/
+  "Worker"/"Andrew" en TODAS las fuentes: CERO menciones.** No se puede
+  confirmar ni descartar desde este notebook la sospecha del fundador de que
+  el bot de ManyChat dejó de responder — estas fuentes son material de venta
+  humana, no documentación técnica del bot. Son dos artefactos distintos;
+  para diagnosticar el bot se necesitan fuentes técnicas (config ManyChat,
+  logs, código del Worker si existe).
+  **Implicación:** el "Agente Comercial Autónomo... Andrew SDR" descrito en
+  `00_vision_y_principios.md` como foco activo actual **no parece estar
+  operativo hoy** según esta evidencia — a verificar, no asumir resuelto.
+- **Implicaciones de diseño para el Formulario Closers (pendientes de
+  decisión del fundador, NO implementadas):**
+  1. "Agenda para el setter" — el fundador pidió que el setter pueda crear/
+     validar espacios de agenda. Hoy NO existe eso (es el Calendly de
+     Andrés). Pendiente aclarar: ¿reemplazar Calendly por agenda propia, o
+     dar visibilidad/validación sobre Calendly vía su API?
+  2. Agregar leads manualmente (los 3 roles) — SÍ está justificado por la
+     realidad actual (todo se registra a mano hoy). Confirmado para diseño.
+  3. Posible alcance mayor: el Formulario Closers podría necesitar incluir
+     el script de calificación mismo (8 mensajes + objeciones), no solo un
+     tablero Kanban de estados — a decidir con el fundador.
+
+**Sesión 15-ago-2026 (continuación) — quick-wins de métricas: AdSpend + conversaciones:**
+- **Auditoría crítica del Sheet real vs. `vw_embudo_diario`** (cruzando el
+  `.xlsx` original, no solo memoria): varias filas de la pestaña "Global"
+  (MQL/Call-Confirmer, Sales Qualified Bookings, Ofertas, Views, desglose por
+  producto, ROI FECC-UF, $AOV-Cash) están en cero/vacías en TODOS los meses.
+  Validado contra los audios: Javier confirma que son vestigios de mala
+  calidad de datos, **no** prioridades reales — ROI FECC-UF y AOV-Cash no se
+  mencionan ni una vez en las reuniones. **Decisión: no se construyen.**
+  Habría sido sobreingeniería (`03_Clientes_y_Casos/02_Cliente_ARTF/...`
+  detalle completo pendiente de anexar a `05-validacion-...md` si hace falta
+  referencia futura).
+- **AdSpend cargado y verificado** en `gastos_marketing`: 3 filas reales
+  (Mayo $2.330.239, Junio $6.109.225, Julio $6.990.882 COP — corregido un
+  desfase de columna propio antes de escribir a la BD; Agosto sin dato, el
+  Sheet tampoco lo tiene). Única granularidad disponible es MENSUAL — se
+  documentó explícitamente en el esquema (`comment on table
+  gastos_marketing`) que esto distorsiona `cp_lead`/`cac`/`roi_revenue`
+  DIARIOS de `vw_embudo_diario` (todo el gasto del mes cae en el día 1) y que
+  solo son confiables en agregado mensual.
+- **`conversaciones` expuesta en `vw_embudo_diario`** (dato ya migrado por
+  `migrate_activity_log.py`, solo faltaba la columna). Validado: suma en la
+  vista = 5.261, idéntico al conteo crudo de `activity_log` filtrado por
+  `evento in ('mensaje_lead','mensaje_bot')`.
+- **Bug propio encontrado y corregido:** el primer intento de cargar AdSpend
+  vía `apply_migration` (INSERT...SELECT con subquery a `fuentes`) devolvió
+  `success: true` pero insertó 0 filas — la subquery quedó en 0 resultados
+  bajo RLS en ese contexto (la herramienta es para DDL, no DML). Detectado
+  verificando con un `SELECT` real después, no confiando en el mensaje de
+  éxito. Corregido usando `execute_sql` con el `fuente_id` literal. **Lección
+  para el futuro: para escrituras de datos (no schema), usar `execute_sql`,
+  no `apply_migration`, y siempre verificar con un SELECT posterior.**
+
 **Sesión 15-ago-2026 — resolución de los 4 gaps de negocio con Javier/Catalina:**
 - **Notebook de NotebookLM registrado:** "ARTF — Negocio y Reuniones"
   (`https://notebook.google.com/notebook/c9c609f7-cb64-4929-9273-f60a7f19857e`,
@@ -164,11 +1264,10 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
          con seguimiento estructurado, o queda informal en notas?
       Mensaje borrador listo para enviar (fuera del repo, en el scratchpad de la
       sesión de Claude Code del 13-ago).
-- [ ] **Cargar `gastos_marketing`** desde la pestaña "Global" del Sheet (AdSpend)
-      para que CAC/ROI/CP-L dejen de dar 0 en `vw_embudo_diario`.
-- [ ] **Agregar "conversaciones" a `vw_embudo_diario`** (contar `activity_log`
-      por día donde `evento in ('mensaje_lead','mensaje_bot')`) — el dato ya
-      existe, falta exponerlo en la vista.
+- [x] ~~Cargar `gastos_marketing` desde la pestaña "Global" del Sheet~~ — hecho
+      15-ago-2026, solo granularidad mensual disponible (ver sesión de arriba).
+- [x] ~~Agregar "conversaciones" a `vw_embudo_diario`~~ — hecho 15-ago-2026,
+      validado 5.261 = 5.261 contra `activity_log`.
 - [ ] **Migración a producción.** Una vez resueltos los 4 gaps: cargar `reuniones`
       antes que `ventas` (ya así en `migrate_crm.py`), correr `--write` contra el
       proyecto de producción real (no `lrdtjsxtaadpgrzkchlw`, ese es staging).

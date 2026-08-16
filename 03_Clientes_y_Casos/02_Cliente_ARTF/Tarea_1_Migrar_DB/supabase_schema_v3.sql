@@ -2007,3 +2007,544 @@ create trigger trg_dr_etapa
 --      Sin esto las policies RLS de 21.2 nunca se evaluan.
 grant select, insert on public.depositos_reserva to authenticated;
 revoke all on public.depositos_reserva from anon;
+
+-- ===========================================================================
+-- 22. BRIDGE EN VIVO: Worker Cloudflare ("Andrew", antes "Javit") -> Supabase
+-- ===========================================================================
+-- APLICADO Y VALIDADO en staging (lrdtjsxtaadpgrzkchlw) el 15-ago-2026 con
+-- datos de prueba (manychat_id TEST_BRIDGE_001..005, ver detalle de pruebas
+-- en la bitacora 02_backlog_y_rocas.md). Version final tras 4 iteraciones:
+--   1. Bug real: los nombres de columna de RETURNS TABLE (cliente_id,
+--      gestion_lead_id) chocaban con columnas reales -> "column reference
+--      ambiguous". Fix: prefijo out_ en las 4 columnas de salida.
+--   2. Bug real: fn_avanzar_estado solo permite UN salto legal a la vez. Un
+--      lead nuevo cuyo PRIMER turno ya es un handoff de crisis emocional
+--      necesita 'nuevo'->'contactado'->'nutricion' (2 saltos), no uno solo.
+--      Fix: si el salto directo falla, se intenta un salto intermedio via
+--      'contactado' y se reintenta el destino real.
+--   3. Bug real: el constraint ck_gl_handoff_closer exige closer_id no nulo
+--      cuando fecha_handoff no es null. El bot nunca asigna closer, asi que
+--      fecha_handoff se dejo de tocar en esta funcion por completo (ese
+--      campo es "cuando se entrego a UN CLOSER", no "cuando el bot marco
+--      para revision humana" -- mismo criterio que ya usaba migrate_crm.py).
+--   4. Hallazgo de seguridad real (via mcp Supabase get_advisors): a pesar
+--      del REVOKE incluido en una migracion anterior, `anon`/`authenticated`
+--      seguian con EXECUTE sobre la funcion (verificado contra
+--      information_schema.role_routine_grants, no contra el cache del
+--      linter). Corregido con un REVOKE explicito final, reverificado.
+--
+-- Fundamentado contra datos reales (sesion 15-ago-2026, NO se asumio nada):
+--   - Sheet real "Copia de CRM - Leads Campaña 1 Reconexión Financiera.xlsx"
+--     (6.136 filas, el mismo que ya valido migrate_crm.py).
+--   - Esquema EN VIVO del staging inspeccionado por MCP antes de escribir
+--     esta funcion: triggers trg_gl_motor/fn_motor_etapas (valida
+--     transiciones + gestiona cerrado_at solo), trg_gl_log/fn_log_gestion
+--     (ya escribe activity_log automatico para creacion/cambio_estado/
+--     asignacion), trg_touch/fn_touch_versioned (version/updated_at
+--     automaticos), indice parcial unico uq_gestion_abierta_por_cliente
+--     (cliente_id) WHERE cerrado_at IS NULL, constraint ck_gl_handoff_closer.
+--
+-- Mapeo etapa(bot) -> estado(codigo), validado contra el ESTADO_MAP ya usado
+-- y corrido por migrate_crm.py + decisiones explicitas del fundador para los
+-- 3 casos de Handoff sin precedente en los 6.136 leads historicos:
+--   Inicial/JavitOff                                -> nuevo
+--   M1,M2,M2.D,M3,M3.B,M4,M5                          -> contactado
+--   M5.B,M5.C                                         -> agendado
+--   Descalificado (cualquier motivo)                  -> descalificado
+--   Handoff (cualquier razon) EXCEPTO crisis_emocional,
+--     AgendaManual_1, AgendaManual_2                  -> calificado
+--   Handoff razon=crisis_emocional                    -> nutricion
+-- Estados posteriores a "agendado" (show_up, oferta_presentada,
+-- reservo_oferta_valientes, ganado, perdido, no_show) quedan FUERA del
+-- bridge: el bot nunca llega ahi; los gestiona un humano via el dashboard.
+--
+-- Simplificacion explicita: requiere p_manychat_id (el Worker ya corta antes
+-- de llamar aqui si no hay manychat_subscriber_id resuelto, ver
+-- hasNoResolvedContext() en worker_cloudflare.md) -- no se busca por
+-- ig_handle como fallback, a diferencia del Apps Script actual.
+create or replace function public.fn_sync_bot_turn(
+  p_manychat_id      text,
+  p_nombre           text,
+  p_ig_handle        text default null,
+  p_fuente_raw       text default null,
+  p_profesion        text default null,
+  p_salario_monto    numeric default null,
+  p_dolor            text default null,
+  p_urgencia_raw     text default null,   -- 'ahora' | 'algun_dia' | null (vocabulario del Worker)
+  p_califica         boolean default null,
+  p_handoff_humano   boolean default false,
+  p_handoff_razon    text default null,
+  p_etapa_bot        text default null,   -- M1..M5.C, Descalificado, Handoff, AgendaManual_1/2, JavitOff
+  p_summary          text default null,
+  p_ultimo_msg_lead  text default null,
+  p_ultimo_msg_bot   text default null
+) returns table(out_cliente_id uuid, out_gestion_lead_id uuid, out_estado_codigo text, out_avanzo boolean)
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  v_bot_id              uuid;
+  v_cliente_id          uuid;
+  v_gestion_id          uuid;
+  v_estado_actual_id    integer;
+  v_fuente_cod          text;
+  v_fuente_id           integer;
+  v_estado_destino_cod  text;
+  v_urgencia            public.nivel_urgencia;
+  v_avanzo              boolean := false;
+  v_ig_handle           text;
+begin
+  if p_manychat_id is null or btrim(p_manychat_id) = '' then
+    raise exception 'fn_sync_bot_turn: p_manychat_id es obligatorio.';
+  end if;
+
+  select id into v_bot_id from public.usuarios where nombre = 'Andrew' and es_bot limit 1;
+  if v_bot_id is null then
+    raise exception 'fn_sync_bot_turn: no existe usuario bot "Andrew" (es_bot=true) en usuarios.';
+  end if;
+
+  -- 1. Upsert de clientes -- SOLO columnas propiedad del bot. whatsapp_e164,
+  --    correo y pais_iso2 nunca se tocan aqui (son manuales del closer);
+  --    al omitirlas del UPDATE quedan intactas si el cliente ya existia
+  --    (verificado con prueba real: no-clobber confirmado).
+  v_ig_handle := nullif(btrim(lower(regexp_replace(coalesce(p_ig_handle, ''), '^@', ''))), '');
+
+  insert into public.clientes
+    (manychat_id, nombre, ig_handle, profesion, salario_monto,
+     salario_currency, salario_periodicidad, notas)
+  values
+    (p_manychat_id,
+     coalesce(nullif(btrim(p_nombre), ''), 'Lead ' || p_manychat_id),
+     v_ig_handle, nullif(btrim(p_profesion), ''), p_salario_monto,
+     case when p_salario_monto is not null then 'COP' end,
+     case when p_salario_monto is not null then 'mensual'::public.periodicidad end,
+     nullif(btrim(p_summary), ''))
+  on conflict (manychat_id) do update
+     set nombre                = coalesce(nullif(btrim(excluded.nombre), ''), public.clientes.nombre),
+         ig_handle             = coalesce(excluded.ig_handle, public.clientes.ig_handle),
+         profesion             = coalesce(excluded.profesion, public.clientes.profesion),
+         salario_monto         = coalesce(excluded.salario_monto, public.clientes.salario_monto),
+         salario_currency      = coalesce(excluded.salario_currency, public.clientes.salario_currency),
+         salario_periodicidad  = coalesce(excluded.salario_periodicidad, public.clientes.salario_periodicidad),
+         notas                 = coalesce(excluded.notas, public.clientes.notas)
+  returning id into v_cliente_id;
+
+  -- 2. fuente_codigo -- mismo mapeo ya validado por FUENTE_MAP de migrate_crm.py.
+  v_fuente_cod := case lower(btrim(coalesce(p_fuente_raw, '')))
+    when 'dm directo' then 'ig_organico'
+    when 'dm directo (lead previa)' then 'ig_organico'
+    when 'dm personal' then 'ig_organico'
+    when 'personal' then 'ig_organico'
+    when 'instagram' then 'ig_organico'
+    when 'instagramn' then 'ig_organico'
+    when 'story share (organico)' then 'ig_organico'
+    when 'story reply (organico)' then 'ig_organico'
+    when 'referido' then 'referido'
+    when 'whatapp' then 'whatsapp'
+    when 'whatssap' then 'whatsapp'
+    when 'whatsapp' then 'whatsapp'
+    else 'otro'
+  end;
+  select id into v_fuente_id from public.fuentes where codigo = v_fuente_cod;
+
+  -- 3. urgencia -- mismo mapeo ya validado por URGENCIA_MAP de migrate_crm.py.
+  v_urgencia := case p_urgencia_raw
+    when 'ahora' then 'alta'::public.nivel_urgencia
+    when 'algun_dia' then 'baja'::public.nivel_urgencia
+    else null
+  end;
+
+  -- 4. estado_codigo destino -- mapeo etapa(bot)->estado validado sesion 15-ago-2026
+  --    (ver comentario de cabecera de este archivo para el detalle completo).
+  v_estado_destino_cod := case
+    when p_handoff_humano and p_handoff_razon = 'crisis_emocional' then 'nutricion'
+    when p_handoff_humano then 'calificado'
+    when p_etapa_bot in ('AgendaManual_1', 'AgendaManual_2') then 'calificado'
+    when p_etapa_bot = 'Descalificado' then 'descalificado'
+    when p_etapa_bot in ('M5.B', 'M5.C') then 'agendado'
+    when p_etapa_bot in ('M1', 'M2', 'M2.D', 'M3', 'M3.B', 'M4', 'M5') then 'contactado'
+    else 'nuevo'  -- Inicial, JavitOff, o cualquier valor no reconocido: nunca se asume calificacion.
+  end;
+
+  -- 5. find-or-create gestion_leads: el intento MAS RECIENTE de este cliente.
+  --    Si esta abierto (cerrado_at is null) se actualiza en el sitio. Si esta
+  --    cerrado (venta perdida/descalificado/nutricion de un ciclo anterior) se
+  --    REABRE via fn_avanzar_estado en el paso 6 (las transiciones
+  --    'perdido/descalificado/nutricion -> contactado' ya existen en
+  --    estado_transiciones, probado con TEST_BRIDGE_004) en vez de crear una
+  --    fila paralela -- el indice parcial unico uq_gestion_abierta_por_cliente
+  --    solo permite UNA fila abierta por cliente a la vez.
+  select id, estado_id
+    into v_gestion_id, v_estado_actual_id
+    from public.gestion_leads
+   where cliente_id = v_cliente_id
+   order by fecha_contacto desc
+   limit 1
+   for update;
+
+  if v_gestion_id is null then
+    insert into public.gestion_leads
+      (cliente_id, setter_id, fuente_id, estado_id, fecha_contacto, fecha_atendido,
+       dolor, urgencia, califica, handoff_razon, origen_escritura, updated_by)
+    values
+      (v_cliente_id, v_bot_id, v_fuente_id,
+       (select id from public.estados_lead where codigo = 'nuevo'),
+       now(), now(), nullif(btrim(p_dolor), ''), v_urgencia, p_califica,
+       nullif(btrim(p_handoff_razon), ''), 'worker_ia', v_bot_id)
+    returning id, estado_id into v_gestion_id, v_estado_actual_id;
+  else
+    -- fecha_handoff NO se toca aqui: ck_gl_handoff_closer exige closer_id no
+    -- nulo cuando fecha_handoff no es null (verificado en vivo con error real
+    -- 23514), y el bot nunca asigna closer. Ese campo significa "cuando se
+    -- entrego a UN CLOSER especifico", no "cuando el bot marco para revision
+    -- humana" -- lo fijara la funcion que asigne closer, fuera de este bridge.
+    update public.gestion_leads
+       set dolor           = coalesce(nullif(btrim(p_dolor), ''), dolor),
+           urgencia         = coalesce(v_urgencia, urgencia),
+           califica         = coalesce(p_califica, califica),
+           handoff_razon    = coalesce(nullif(btrim(p_handoff_razon), ''), handoff_razon),
+           fecha_atendido   = now(),
+           setter_id        = coalesce(setter_id, v_bot_id),
+           origen_escritura = 'worker_ia',
+           updated_by       = v_bot_id
+     where id = v_gestion_id;
+  end if;
+
+  -- 6. Avance de estado -- SIEMPRE via fn_avanzar_estado (ya existe, ya valida
+  --    transiciones legales contra estado_transiciones, y NO fuerza si un
+  --    humano ya movio el lead a algo que la transicion automatica no cubre:
+  --    "el estado registrado por un humano gana sobre la inferencia
+  --    automatica", ver su propio comentario). fn_avanzar_estado solo permite
+  --    UN salto a la vez: si el destino no es alcanzable directo desde el
+  --    estado actual (ej. un lead recien creado en 'nuevo' cuyo PRIMER turno
+  --    ya es un handoff de crisis emocional: 'nuevo'->'nutricion' NO es
+  --    transicion directa, solo 'contactado'->'nutricion' lo es), se intenta
+  --    UN salto intermedio via 'contactado' -- el unico intermedio que hace
+  --    falta, porque desde 'contactado' SI son legales directamente
+  --    'calificado','agendado','nutricion','descalificado'. Si el salto
+  --    intermedio tampoco aplica (lead ya en estado terminal o mas avanzado
+  --    por accion humana), fn_avanzar_estado vuelve a no-opear en silencio.
+  --    avanzo=false es normal (mismo estado que ya tenia) -- no es un error.
+  v_avanzo := public.fn_avanzar_estado(v_gestion_id, v_estado_destino_cod);
+  if not v_avanzo and v_estado_destino_cod <> 'contactado' then
+    perform public.fn_avanzar_estado(v_gestion_id, 'contactado');
+    v_avanzo := public.fn_avanzar_estado(v_gestion_id, v_estado_destino_cod);
+  end if;
+
+  select estado_id into v_estado_actual_id from public.gestion_leads where id = v_gestion_id;
+
+  -- 7. Log de la conversacion -- SEPARADO del log automatico de trg_gl_log/
+  --    fn_log_gestion (ese ya escribe 'creacion'/'cambio_estado'/'asignacion'
+  --    en los pasos 5 y 6 de esta misma funcion). Este insert agrega el
+  --    CONTENIDO del turno (mensajes + resumen) que el trigger automatico no
+  --    conoce -- sin esto se pierde el texto de cada turno del bot.
+  insert into public.activity_log
+    (cliente_id, gestion_lead_id, evento, estado_nuevo_id, actor_tipo, actor_usuario_id,
+     origen_escritura, ultimo_msg_lead, ultimo_msg_bot, summary)
+  values
+    (v_cliente_id, v_gestion_id,
+     case when p_handoff_humano then 'handoff'::public.tipo_evento else 'mensaje_bot'::public.tipo_evento end,
+     v_estado_actual_id, 'bot'::public.tipo_actor, v_bot_id, 'worker_ia',
+     nullif(btrim(p_ultimo_msg_lead), ''), nullif(btrim(p_ultimo_msg_bot), ''),
+     nullif(btrim(p_summary), ''));
+
+  return query
+    select v_cliente_id, v_gestion_id,
+           (select codigo from public.estados_lead where id = v_estado_actual_id),
+           v_avanzo;
+end;
+$$;
+
+comment on function public.fn_sync_bot_turn is
+  'Bridge en vivo Worker Cloudflare (Andrew) -> Supabase, una llamada por '
+  'turno de conversacion. Reemplaza syncToCRM()/Apps Script/Google Sheet '
+  'para trafico en vivo. Solo llamable con la service_role key.';
+
+-- IMPORTANTE: el REVOKE debe reafirmarse despues de cualquier CREATE OR
+-- REPLACE futuro sobre esta funcion -- se detecto empiricamente (via mcp
+-- Supabase get_advisors + information_schema.role_routine_grants, no
+-- asumido) que anon/authenticated quedaban con EXECUTE pese a un REVOKE en
+-- una migracion previa. Reverificar con la consulta de abajo tras cualquier
+-- cambio:
+--   select grantee, privilege_type from information_schema.role_routine_grants
+--   where routine_schema='public' and routine_name='fn_sync_bot_turn';
+revoke execute on function public.fn_sync_bot_turn(
+  text, text, text, text, text, numeric, text, text, boolean, boolean, text, text, text, text, text
+) from public, anon, authenticated;
+
+grant execute on function public.fn_sync_bot_turn(
+  text, text, text, text, text, numeric, text, text, boolean, boolean, text, text, text, text, text
+) to service_role;
+
+-- ===========================================================================
+-- 23. Mecanismo generico de "incidente de revision manual" + primer caso
+--     real (Marisol Tupaz). Ver fn_sync_bot_turn.sql / bitacora 15-ago-2026
+--     para el detalle de por que se necesito esto (Estado "Desistió" del
+--     Sheet con dinero real de por medio, sin info suficiente para resolver
+--     automaticamente ni con reglas ya definidas).
+-- ===========================================================================
+-- Cualquier gestion_leads.notas que empiece con "INCIDENTE_REVISION:" pasa
+-- a aparecer en vw_scorecard_check (severidad WARN, chequeo
+-- 'requiere_revision_manual') automaticamente -- mecanismo reusable, no
+-- requiere tabla/columna nueva por cada caso ambiguo futuro.
+create or replace view public.vw_scorecard_check as
+ SELECT 'ERROR'::text AS severidad, 'descuadre_plan_pagos'::text AS chequeo, 'ventas'::text AS entidad,
+    v.venta_id::text AS entidad_id,
+    format('Venta %s: revenue %s pero plan de pagos suma %s (dif %s %s)'::text, v.venta_id, v.revenue_bruto, v.plan_total, v.revenue_bruto - v.plan_total, v.currency_code) AS detalle,
+    v.revenue_bruto AS valor_esperado, v.plan_total AS valor_real, v.fecha_venta_local AS fecha_ref
+   FROM vw_ventas_neto v WHERE v.plan_total <> v.revenue_bruto
+UNION ALL
+ SELECT 'ERROR'::text, 'sobrecobro'::text, 'ventas'::text, v.venta_id::text,
+    format('Venta %s: cash cobrado %s > revenue neto %s'::text, v.venta_id, v.cash_cobrado, v.revenue_neto),
+    v.revenue_neto, v.cash_cobrado, v.fecha_venta_local
+   FROM vw_ventas_neto v WHERE v.cash_cobrado > v.revenue_neto
+UNION ALL
+ SELECT 'ERROR'::text, 'venta_sin_estado_ganado'::text, 'gestion_leads'::text, g.id::text,
+    format('Lead %s tiene venta registrada pero su estado es "%s"'::text, g.id, e.codigo),
+    NULL::numeric, NULL::numeric, (v.fecha_venta AT TIME ZONE fn_tz())::date
+   FROM ventas v JOIN gestion_leads g ON g.id = v.gestion_lead_id JOIN estados_lead e ON e.id = g.estado_id
+  WHERE NOT e.es_ganado
+UNION ALL
+ SELECT 'ERROR'::text, 'ganado_sin_venta'::text, 'gestion_leads'::text, g.id::text,
+    format('Lead %s en estado ganado sin fila en VENTAS. Revenue fantasma.'::text, g.id),
+    NULL::numeric, NULL::numeric, (g.cerrado_at AT TIME ZONE fn_tz())::date
+   FROM gestion_leads g JOIN estados_lead e ON e.id = g.estado_id
+  WHERE e.es_ganado AND NOT (EXISTS (SELECT 1 FROM ventas v WHERE v.gestion_lead_id = g.id))
+UNION ALL
+ SELECT 'INFO'::text, 'atribucion_divergente'::text, 'ventas'::text, v.id::text,
+    format('Venta %s atribuida a %s; el lead hoy esta asignado a %s. La comision sigue al snapshot (correcto).'::text, v.id, uc.nombre, COALESCE(ug.nombre, 'nadie'::text)),
+    NULL::numeric, NULL::numeric, (v.fecha_venta AT TIME ZONE fn_tz())::date
+   FROM ventas v JOIN gestion_leads g ON g.id = v.gestion_lead_id JOIN usuarios uc ON uc.id = v.closer_id
+     LEFT JOIN usuarios ug ON ug.id = g.closer_id
+  WHERE g.closer_id IS DISTINCT FROM v.closer_id
+UNION ALL
+ SELECT 'ERROR'::text, 'ventas_exceden_show_ups'::text, 'scorecard'::text, d.dia::text,
+    format('%s: %s ventas contra %s show ups. El embudo esta roto o falta registrar reuniones.'::text, d.dia, d.ventas, d.show_ups),
+    d.show_ups, d.ventas, d.dia
+   FROM vw_embudo_diario d WHERE d.ventas > d.show_ups
+UNION ALL
+ SELECT 'WARN'::text, 'bookings_exceden_leads'::text, 'scorecard'::text, d.dia::text,
+    format('%s: %s bookings contra %s leads nuevos (posible booking de lead viejo, verificar)'::text, d.dia, d.bookings, d.leads),
+    d.leads, d.bookings, d.dia
+   FROM vw_embudo_diario d WHERE d.bookings > d.leads AND d.leads > 0
+UNION ALL
+ SELECT 'ERROR'::text, 'show_up_sin_fecha'::text, 'reuniones'::text, r.id::text,
+    format('Reunion %s marcada realizada sin fecha_realizada'::text, r.id),
+    NULL::numeric, NULL::numeric, (r.fecha_programada AT TIME ZONE fn_tz())::date
+   FROM reuniones r WHERE r.estado = 'realizada'::estado_reunion AND r.fecha_realizada IS NULL
+UNION ALL
+ SELECT 'WARN'::text, 'reunion_vencida_sin_resolver'::text, 'reuniones'::text, r.id::text,
+    format('Reunion %s programada el %s sigue en estado "%s". Show Up Rate subestimado.'::text, r.id, to_char((r.fecha_programada AT TIME ZONE fn_tz()), 'YYYY-MM-DD HH24:MI'::text), r.estado),
+    NULL::numeric, NULL::numeric, (r.fecha_programada AT TIME ZONE fn_tz())::date
+   FROM reuniones r
+  WHERE (r.estado = ANY (ARRAY['agendada'::estado_reunion, 'confirmada'::estado_reunion])) AND r.fecha_programada < (now() - '24:00:00'::interval)
+UNION ALL
+ SELECT 'WARN'::text, 'cuota_vencida_sin_marcar'::text, 'pagos_cuotas'::text, p.id::text,
+    format('Cuota %s de la venta %s vencio el %s y sigue en "%s" (%s %s pendientes)'::text, p.numero_cuota, p.venta_id, p.fecha_programada, p.estado, p.monto - p.monto_pagado, p.currency_code),
+    p.monto, p.monto_pagado, p.fecha_programada
+   FROM pagos_cuotas p
+  WHERE (p.estado = ANY (ARRAY['pendiente'::estado_cuota, 'parcial'::estado_cuota])) AND p.fecha_programada < (now() AT TIME ZONE fn_tz())::date
+UNION ALL
+ SELECT 'WARN'::text, 'venta_sin_fx'::text, 'ventas'::text, v.id::text,
+    format('Venta %s en %s sin fx_rate_usd. Excluida del consolidado USD.'::text, v.id, v.currency_code),
+    NULL::numeric, NULL::numeric, (v.fecha_venta AT TIME ZONE fn_tz())::date
+   FROM ventas v WHERE v.fx_rate_usd IS NULL
+UNION ALL
+ SELECT 'WARN'::text, 'reunion_sin_closer'::text, 'reuniones'::text, r.id::text,
+    format('Reunion %s sin closer_id: la venta que salga de aqui no tendra atribucion.'::text, r.id),
+    NULL::numeric, NULL::numeric, (r.fecha_programada AT TIME ZONE fn_tz())::date
+   FROM reuniones r
+  WHERE r.closer_id IS NULL AND (r.estado = ANY (ARRAY['agendada'::estado_reunion, 'confirmada'::estado_reunion, 'realizada'::estado_reunion]))
+UNION ALL
+ SELECT 'WARN'::text, 'posible_cliente_duplicado'::text, 'clientes'::text, (array_agg(c.id ORDER BY c.created_at))[1]::text,
+    format('%s clientes comparten el correo %s'::text, count(*), c.correo),
+    NULL::numeric, count(*), max((c.created_at AT TIME ZONE fn_tz())::date)
+   FROM clientes c WHERE c.correo IS NOT NULL GROUP BY c.correo HAVING count(*) > 1
+UNION ALL
+ SELECT 'WARN'::text, 'cliente_sin_manychat_id'::text, 'clientes'::text, c.id::text,
+    format('Cliente %s sin manychat_id: no cruza con reuniones/salario. Gap historico aceptado.'::text, c.id),
+    NULL::numeric, NULL::numeric, (c.created_at AT TIME ZONE fn_tz())::date
+   FROM clientes c WHERE c.manychat_id IS NULL
+UNION ALL
+ SELECT 'WARN'::text, 'requiere_revision_manual'::text, 'gestion_leads'::text, g.id::text,
+    g.notas, NULL::numeric, NULL::numeric, (g.updated_at AT TIME ZONE fn_tz())::date
+   FROM gestion_leads g WHERE g.notas ILIKE 'INCIDENTE_REVISION:%';
+
+comment on view public.vw_scorecard_check is
+  'Auditoria en vivo. Incluye el chequeo generico requiere_revision_manual: '
+  'cualquier gestion_leads.notas que empiece con "INCIDENTE_REVISION:" '
+  'aparece aqui automaticamente -- mecanismo reusable para flaggear casos '
+  'ambiguos para revision humana por rol, sin inventar tablas nuevas cada '
+  'vez. Primer uso: Marisol Tupaz (15-ago-2026, ver bitacora).';
+
+-- ===========================================================================
+-- 24. FIX real sobre fn_sync_bot_turn (§22), encontrado probando el Worker
+--     de captura nuevo vía Postman (15-ago-2026, no en las pruebas
+--     sintéticas anteriores): el salto intermedio vía 'contactado' se
+--     intentaba SIEMPRE que fn_avanzar_estado devolvía false, sin distinguir
+--     "ya estaba en el destino" (caso normal de una captura pasiva nueva,
+--     destino='nuevo') de "salto ilegal, necesita intermedio". Un lead nuevo
+--     se empujaba a 'contactado' por error y quedaba atascado ahí para
+--     siempre (nada transiciona de vuelta a 'nuevo'). Fix: comparar el
+--     código actual contra el destino ANTES de intentar cualquier salto.
+--     Ver fn_sync_bot_turn.sql para el archivo completo actualizado.
+create or replace function public.fn_sync_bot_turn(
+  p_manychat_id      text,
+  p_nombre           text,
+  p_ig_handle        text default null,
+  p_fuente_raw       text default null,
+  p_profesion        text default null,
+  p_salario_monto    numeric default null,
+  p_dolor            text default null,
+  p_urgencia_raw     text default null,
+  p_califica         boolean default null,
+  p_handoff_humano   boolean default false,
+  p_handoff_razon    text default null,
+  p_etapa_bot        text default null,
+  p_summary          text default null,
+  p_ultimo_msg_lead  text default null,
+  p_ultimo_msg_bot   text default null
+) returns table(out_cliente_id uuid, out_gestion_lead_id uuid, out_estado_codigo text, out_avanzo boolean)
+language plpgsql
+security definer
+set search_path to ''
+as $$
+declare
+  v_bot_id              uuid;
+  v_cliente_id          uuid;
+  v_gestion_id          uuid;
+  v_estado_actual_id    integer;
+  v_estado_actual_cod   text;
+  v_fuente_cod          text;
+  v_fuente_id           integer;
+  v_estado_destino_cod  text;
+  v_urgencia            public.nivel_urgencia;
+  v_avanzo              boolean := false;
+  v_ig_handle           text;
+begin
+  if p_manychat_id is null or btrim(p_manychat_id) = '' then
+    raise exception 'fn_sync_bot_turn: p_manychat_id es obligatorio.';
+  end if;
+
+  select id into v_bot_id from public.usuarios where nombre = 'Andrew' and es_bot limit 1;
+  if v_bot_id is null then
+    raise exception 'fn_sync_bot_turn: no existe usuario bot "Andrew" (es_bot=true) en usuarios.';
+  end if;
+
+  v_ig_handle := nullif(btrim(lower(regexp_replace(coalesce(p_ig_handle, ''), '^@', ''))), '');
+
+  insert into public.clientes
+    (manychat_id, nombre, ig_handle, profesion, salario_monto,
+     salario_currency, salario_periodicidad, notas)
+  values
+    (p_manychat_id,
+     coalesce(nullif(btrim(p_nombre), ''), 'Lead ' || p_manychat_id),
+     v_ig_handle, nullif(btrim(p_profesion), ''), p_salario_monto,
+     case when p_salario_monto is not null then 'COP' end,
+     case when p_salario_monto is not null then 'mensual'::public.periodicidad end,
+     nullif(btrim(p_summary), ''))
+  on conflict (manychat_id) do update
+     set nombre                = coalesce(nullif(btrim(excluded.nombre), ''), public.clientes.nombre),
+         ig_handle             = coalesce(excluded.ig_handle, public.clientes.ig_handle),
+         profesion             = coalesce(excluded.profesion, public.clientes.profesion),
+         salario_monto         = coalesce(excluded.salario_monto, public.clientes.salario_monto),
+         salario_currency      = coalesce(excluded.salario_currency, public.clientes.salario_currency),
+         salario_periodicidad  = coalesce(excluded.salario_periodicidad, public.clientes.salario_periodicidad),
+         notas                 = coalesce(excluded.notas, public.clientes.notas)
+  returning id into v_cliente_id;
+
+  v_fuente_cod := case lower(btrim(coalesce(p_fuente_raw, '')))
+    when 'dm directo' then 'ig_organico'
+    when 'dm directo (lead previa)' then 'ig_organico'
+    when 'dm personal' then 'ig_organico'
+    when 'personal' then 'ig_organico'
+    when 'instagram' then 'ig_organico'
+    when 'instagramn' then 'ig_organico'
+    when 'story share (organico)' then 'ig_organico'
+    when 'story reply (organico)' then 'ig_organico'
+    when 'referido' then 'referido'
+    when 'whatapp' then 'whatsapp'
+    when 'whatssap' then 'whatsapp'
+    when 'whatsapp' then 'whatsapp'
+    else 'otro'
+  end;
+  select id into v_fuente_id from public.fuentes where codigo = v_fuente_cod;
+
+  v_urgencia := case p_urgencia_raw
+    when 'ahora' then 'alta'::public.nivel_urgencia
+    when 'algun_dia' then 'baja'::public.nivel_urgencia
+    else null
+  end;
+
+  v_estado_destino_cod := case
+    when p_handoff_humano and p_handoff_razon = 'crisis_emocional' then 'nutricion'
+    when p_handoff_humano then 'calificado'
+    when p_etapa_bot in ('AgendaManual_1', 'AgendaManual_2') then 'calificado'
+    when p_etapa_bot = 'Descalificado' then 'descalificado'
+    when p_etapa_bot in ('M5.B', 'M5.C') then 'agendado'
+    when p_etapa_bot in ('M1', 'M2', 'M2.D', 'M3', 'M3.B', 'M4', 'M5') then 'contactado'
+    else 'nuevo'
+  end;
+
+  select id, estado_id
+    into v_gestion_id, v_estado_actual_id
+    from public.gestion_leads
+   where cliente_id = v_cliente_id
+   order by fecha_contacto desc
+   limit 1
+   for update;
+
+  if v_gestion_id is null then
+    insert into public.gestion_leads
+      (cliente_id, setter_id, fuente_id, estado_id, fecha_contacto, fecha_atendido,
+       dolor, urgencia, califica, handoff_razon, origen_escritura, updated_by)
+    values
+      (v_cliente_id, v_bot_id, v_fuente_id,
+       (select id from public.estados_lead where codigo = 'nuevo'),
+       now(), now(), nullif(btrim(p_dolor), ''), v_urgencia, p_califica,
+       nullif(btrim(p_handoff_razon), ''), 'worker_ia', v_bot_id)
+    returning id, estado_id into v_gestion_id, v_estado_actual_id;
+  else
+    update public.gestion_leads
+       set dolor           = coalesce(nullif(btrim(p_dolor), ''), dolor),
+           urgencia         = coalesce(v_urgencia, urgencia),
+           califica         = coalesce(p_califica, califica),
+           handoff_razon    = coalesce(nullif(btrim(p_handoff_razon), ''), handoff_razon),
+           fecha_atendido   = now(),
+           setter_id        = coalesce(setter_id, v_bot_id),
+           origen_escritura = 'worker_ia',
+           updated_by       = v_bot_id
+     where id = v_gestion_id;
+  end if;
+
+  select codigo into v_estado_actual_cod from public.estados_lead where id = v_estado_actual_id;
+
+  if v_estado_actual_cod = v_estado_destino_cod then
+    v_avanzo := false;
+  else
+    v_avanzo := public.fn_avanzar_estado(v_gestion_id, v_estado_destino_cod);
+    if not v_avanzo and v_estado_destino_cod <> 'contactado' then
+      perform public.fn_avanzar_estado(v_gestion_id, 'contactado');
+      v_avanzo := public.fn_avanzar_estado(v_gestion_id, v_estado_destino_cod);
+    end if;
+  end if;
+
+  select estado_id into v_estado_actual_id from public.gestion_leads where id = v_gestion_id;
+
+  insert into public.activity_log
+    (cliente_id, gestion_lead_id, evento, estado_nuevo_id, actor_tipo, actor_usuario_id,
+     origen_escritura, ultimo_msg_lead, ultimo_msg_bot, summary)
+  values
+    (v_cliente_id, v_gestion_id,
+     case when p_handoff_humano then 'handoff'::public.tipo_evento else 'mensaje_bot'::public.tipo_evento end,
+     v_estado_actual_id, 'bot'::public.tipo_actor, v_bot_id, 'worker_ia',
+     nullif(btrim(p_ultimo_msg_lead), ''), nullif(btrim(p_ultimo_msg_bot), ''),
+     nullif(btrim(p_summary), ''));
+
+  return query
+    select v_cliente_id, v_gestion_id,
+           (select codigo from public.estados_lead where id = v_estado_actual_id),
+           v_avanzo;
+end;
+$$;
