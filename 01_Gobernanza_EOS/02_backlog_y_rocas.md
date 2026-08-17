@@ -16,6 +16,71 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
 (`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
 `03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
 
+**Sesión 17-ago-2026 (continuación) — Fase 2b: página pública de
+agendamiento (corrige el modelo de reserva de la Fase 2) + instalación de
+Playwright + adopción de Antigravity CLI como herramienta complementaria:**
+- **Corrección de modelo tras probar la Fase 2 en vivo:** Yeisiton revisó la
+  Agenda de la Fase 2 (setter reserva directo por el lead) y corrigió la
+  premisa — el flujo real es que **el lead se agenda solo con un link único**
+  contra los espacios reales del closer (como hoy con Google, pero dentro de
+  la app), y el setter solo agenda manualmente como respaldo. Esto también
+  resuelve de raíz el 96% de `clientes.correo` vacío: ahora el lead lo
+  escribe él mismo al agendarse, así que el evento de Calendar por fin
+  invita por correo real — decisión que también hizo correo obligatorio en
+  el flujo de respaldo del setter (antes era opcional).
+- **Construido:** tabla `enlaces_agenda` (token único por lead), página
+  pública `/agendar/[token]` sin login (Server Component + server action con
+  cliente `service_role`, nunca expuesto al navegador), botón "Generar link
+  de agenda" en el Pipeline, y la extensión del flujo de respaldo del
+  setter con correo obligatorio. Tres RPCs de la Fase 2
+  (`fn_reservar_espacio`, `fn_marcar_incidente_calendar`,
+  `fn_registrar_evento_calendar`) se relajaron para aceptar llamadas sin JWT
+  de usuario (mismo patrón que ya usaba `fn_columnas_por_rol` para el
+  Worker/Bridge), y se agregó `fn_actualizar_contacto_lead` nueva.
+- **Hallazgo de seguridad crítico durante la construcción (Task 2):** la
+  relajación de las RPCs para aceptar `service_role` sin querer también dejó
+  la puerta abierta a `anon` — `fn_reservar_espacio` tenía un grant
+  explícito a `anon` desde que se creó en la Fase 2 (nunca revocado, un
+  `CREATE OR REPLACE FUNCTION` no resetea grants), lo que habría permitido
+  que cualquiera con la llave pública `anon` llamara la función directo vía
+  PostgREST, saltándose por completo la validación del token de la página
+  pública. Corregido y reverificado con `has_function_privilege()` sobre las
+  4 funciones y las 4 credenciales (anon/public/authenticated/service_role).
+- **Segundo hallazgo real durante la construcción (Task 6):** la ruta
+  pública devolvía mensajes crudos de Postgres a un visitante sin
+  autenticar (podían incluir el uuid interno de un lead) — corregido a
+  mensajes genéricos, salvo el único caso útil de traducir
+  ("ese espacio ya no está disponible").
+- **Revisión final de todo el branch (con el modelo más capaz):** encontró 3
+  hallazgos Importantes reales — (1) el middleware bloqueaba a staff
+  autenticado de abrir sus propios links generados (un solo flag booleano
+  compartido para dos propósitos distintos), (2) `fn_actualizar_contacto_lead`
+  no tenía ningún chequeo de ownership (cualquier setter podía sobreescribir
+  el correo de cualquier lead), (3) un supuesto hueco de doble-reserva entre
+  el flujo público y el manual — este último se **investigó y se refutó con
+  una prueba real en vivo**: el índice único `uq_reunion_activa_por_lead`
+  (ya existente desde la Fase 2) ya impide exactamente ese escenario, probado
+  reservando dos veces el mismo lead y confirmando el rollback limpio. Los
+  otros dos sí eran reales y se corrigieron.
+- **Verificado de punta a punta con navegador real** (Playwright, instalado
+  esta sesión): closer crea un espacio real → setter genera el link desde
+  el bot del Pipeline → una sesión sin cookies abre el link → llena
+  correo/WhatsApp → confirma → reabrir el mismo link muestra "ya no
+  disponible" → la base confirma que el correo quedó guardado. Mergeado y
+  pusheado a `master` (16 commits).
+- **Adopción de Antigravity CLI** (herramienta de Google, `agy`, ya
+  instalada y probada en esta máquina — modelos Gemini 3.1 Pro entre otros)
+  como complemento, no reemplazo: 3 casos de uso acordados (auditoría masiva
+  de artefactos históricos grandes, clasificación de las 268 incidencias
+  WARN como insumo de diseño, segunda opinión independiente en migraciones
+  sensibles). El análisis de audios/reuniones sigue siendo por NotebookLM,
+  no por Antigravity. Decisión + guía de prompting oficial de Gemini 3.1 Pro
+  guardadas en memoria persistente para futuras sesiones.
+- **Pendiente para Yeisiton:** revisar 8 filas reales de `disponibilidad_closer`
+  encontradas durante la verificación (probablemente su propia exploración
+  del servidor local que quedó corriendo) — no se tocaron, quedan para que
+  él decida si son válidas o se limpian.
+
 **Sesión 16/17-ago-2026 — Fase 2: Agenda de closers construida, revisada y
 mergeada a `master` (`artf-pipeline-app`), incluye un hallazgo crítico
 corregido antes de producción:**
