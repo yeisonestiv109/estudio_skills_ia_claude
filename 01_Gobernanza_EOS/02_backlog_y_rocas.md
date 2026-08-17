@@ -16,6 +16,86 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
 (`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
 `03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
 
+**Sesión 16/17-ago-2026 — Fase 2: Agenda de closers construida, revisada y
+mergeada a `master` (`artf-pipeline-app`), incluye un hallazgo crítico
+corregido antes de producción:**
+- **Pedido de Yeisiton:** seguir con el Formulario Dashboard, ahora la
+  Agenda (espacios de disponibilidad de los closers + reserva por el
+  setter + evento real de Google Calendar). Se siguió el proceso completo:
+  brainstorming (arquitectónico) → spec escrito y commiteado
+  (`docs/superpowers/specs/2026-08-16-agenda-closers-design.md`) → plan de
+  11 tareas (`docs/superpowers/plans/2026-08-16-agenda-closers.md`) →
+  ejecución con `subagent-driven-development` en un worktree aislado
+  (`agenda-closers`, ya eliminado tras el merge).
+- **Decisiones de diseño clave, todas verificadas antes de asumirlas:** la
+  API de Google Calendar NO expone la configuración de "Appointment
+  Schedules" (confirmado por búsqueda directa, no hay `eventType` para
+  eso) — por eso Supabase (`disponibilidad_closer`, tabla nueva) es la
+  fuente de verdad de los espacios, no Calendar. El 96% de `clientes.correo`
+  está vacío (6.228/6.468, verificado con `execute_sql`) porque hoy el
+  lead escribe su correo en el momento en la página pública de Google, que
+  nunca se sincroniza al CRM — por eso el evento nuevo se crea sin
+  invitado, y la app solo muestra el link de Meet para reenviar por
+  Instagram/WhatsApp. Toda la agenda real corre hoy sobre la cuenta única
+  de Andrés (confirmado por Yeisiton), así que se descartó Domain-Wide
+  Delegation por closer — basta una cuenta de servicio con el calendario
+  de Andrés compartido (prerequisito externo, sección 7 del spec, aún
+  pendiente).
+- **Construido:** tabla `disponibilidad_closer` + RLS; RPCs transaccionales
+  `fn_reservar_espacio` (compare-and-swap atómico) y `fn_cancelar_reunion`
+  (con trigger de reapertura del espacio si su hora no pasó); cliente de
+  Google Calendar (`googleapis`, cuenta de servicio); el primer *server
+  action* de la app (`src/app/agenda/actions.ts` — necesario porque
+  necesita un secreto que nunca debe llegar al navegador); UI completa por
+  rol (Closer: "Mi disponibilidad"; Setter: "Espacios abiertos"; Admin:
+  "Cobertura"). Si la creación del evento de Calendar falla, la reserva en
+  Supabase queda firme y se marca `INCIDENTE_REVISION:` para revisión
+  manual — no se pierde el cupo de un lead ya calificado por una falla
+  transitoria de Google.
+- **Bugs reales encontrados y corregidos durante la construcción** (todos
+  con evidencia real contra el proyecto Supabase `lrdtjsxtaadpgrzkchlw`,
+  ninguno adivinado): colisión de nombres de columna en
+  `fn_reservar_espacio` (`RETURNS TABLE` generaba parámetros OUT que
+  chocaban con columnas homónimas, error 42702); el script de verificación
+  necesitó un *fixture* QA reutilizable en vez de un lead nuevo por corrida
+  porque `activity_log` es append-only con FK RESTRICT hacia
+  `gestion_leads`/`clientes` (cualquier lead tocado queda permanentemente
+  imborrable).
+- **Hallazgo crítico de la revisión final de todo el branch (con el modelo
+  más capaz), que ninguna revisión por-tarea podía detectar:** el mecanismo
+  `INCIDENTE_REVISION:` escribía solo en `reuniones.notas`, pero la vista
+  real de Incidencias (`vw_scorecard_check`) SOLO revisa
+  `gestion_leads.notas` con match de prefijo — es decir, **el 100% de las
+  reservas de producción de hoy (mientras el prerequisito de Google siga
+  pendiente) habrían quedado con un incidente invisible, sin aparecer en
+  ningún lado de la app.** Corregido para escribir también (como prefijo
+  real) en `gestion_leads.notas`. Segundo hallazgo crítico: `fn_reservar_espacio`
+  nunca asignaba `gestion_leads.closer_id` (solo `reuniones.closer_id`),
+  lo que dejaba en blanco la columna "Closer" del Pipeline y le quitaba al
+  closer la visibilidad RLS sobre su propia reunión — corregido.
+- **Hallazgo de seguridad encontrado en la re-revisión del fix anterior,
+  confirmado con Yeisiton antes de tocarlo:** dos funciones
+  (`fn_marcar_incidente_calendar`, `fn_registrar_evento_calendar`) no
+  tenían ningún control de autenticación y `EXECUTE` estaba otorgado
+  incluso a `anon` (rol sin sesión) — cualquiera con la llave pública
+  anon podía sobreescribir `gestion_leads.notas` de cualquier lead
+  adivinando un `reunion_id`. Corregido exigiendo rol operativo
+  (setter/closer/admin autenticado) y revocando el `EXECUTE` de `anon`.
+- **Todo verificado de forma independiente contra la base real** (no solo
+  confiando en los reportes de los subagentes) y con
+  `scripts/verify-agenda.mjs` (11 aserciones, incluida una nueva que
+  ejercita el incidente vía RLS con la cuenta real del setter, no solo con
+  `service_role`). Mergeado a `master` y pusheado a `origin/master`
+  (commits `f55f8d5..4e22ef9`).
+- **Pendiente, fuera de alcance de IA:** (1) prerequisito externo — Andrés
+  debe compartir su calendario de Google con la cuenta de servicio (spec
+  §7); hasta entonces todo evento real de Calendar caerá en el fallback
+  `INCIDENTE_REVISION:` (que ahora SÍ es visible en `/incidencias`). (2)
+  Prueba manual de clic-por-clic en `/agenda` — no hay Playwright instalado
+  en este repo (decisión explícita de Yeisiton en la Fase 1 de no instalar
+  herramientas fuera de su entorno), así que solo la capa de datos/RPC
+  quedó verificada de forma automatizada.
+
 **Sesión 16-ago-2026 (continuación) — Despliegue real Fase 1: repo Next.js,
 auth con Supabase, Pipeline/Incidencias/Métricas conectados a datos reales,
 bug de performance RLS encontrado y corregido en producción:**
