@@ -57,7 +57,7 @@ for row in crm_rows:
     if not d.get("ManyChat ID"):
         leads_no_mcid.append(d)
 
-sup_clientes = fetch_all("clientes", "id,manychat_id,ig_handle,nombre")
+sup_clientes = fetch_all("clientes", "id,manychat_id,ig_handle,nombre,correo")
 
 matched_by_ig = []
 matched_by_name = []
@@ -100,25 +100,39 @@ print(f"Filas en Supabase 'pagos_cuotas': {len(sup_pagos)}")
 # Check missing ventas
 sup_leads = fetch_all("gestion_leads", "id,cliente_id")
 sup_leads_dict = {lead["id"]: lead["cliente_id"] for lead in sup_leads}
-cli_dict = {c["id"]: c["manychat_id"] for c in sup_clientes}
-mcids_with_venta = [cli_dict.get(sup_leads_dict.get(v["gestion_lead_id"])) for v in sup_ventas]
-missing_ventas = [d for d in sheet_ganados if str(d.get("ManyChat ID")) not in mcids_with_venta]
+mcid_dict = {c["id"]: c["manychat_id"] for c in sup_clientes}
+correo_dict = {c["id"]: c["correo"] for c in sup_clientes}
+mcids_with_venta = {str(mcid_dict.get(sup_leads_dict.get(v["gestion_lead_id"])))
+                     for v in sup_ventas if mcid_dict.get(sup_leads_dict.get(v["gestion_lead_id"]))}
+correos_with_venta = {str(correo_dict.get(sup_leads_dict.get(v["gestion_lead_id"]))).lower().strip()
+                       for v in sup_ventas if correo_dict.get(sup_leads_dict.get(v["gestion_lead_id"]))}
+
+missing_ventas = []
+for d in sheet_ganados:
+    mcid = d.get("ManyChat ID")
+    correo = d.get("Correo")
+    if mcid and str(mcid) in mcids_with_venta:
+        continue
+    if correo and str(correo).lower().strip() in correos_with_venta:
+        continue
+    missing_ventas.append(d)
+
 if missing_ventas:
     print(f"Faltan en DB {len(missing_ventas)} ganados:")
     for m in missing_ventas[:10]:
-        print(f" - Nombre: {m.get('Nombre')}, ManyChat: {m.get('ManyChat ID')}")
+        print(f" - Nombre: {m.get('Nombre')}, ManyChat: {m.get('ManyChat ID')}, Correo: {m.get('Correo')}")
 else:
     print("No faltan ganados en Supabase.")
 
 print("\n==== 5. 15 conflictos sin resolver ====")
-sup_reuniones = fetch_all("reuniones", "id,gestion_lead_id,estado,cliente_id,fecha_programada")
+sup_reuniones = fetch_all("reuniones", "id,gestion_lead_id,estado,fecha_programada")
 reuniones_realizadas = [r for r in sup_reuniones if r["estado"] == "realizada"]
 mcid_to_dict = {str(d.get("ManyChat ID")): d for d in crm_dicts if d.get("ManyChat ID")}
 
 conflictos = []
 for r in reuniones_realizadas:
     cli_id = sup_leads_dict.get(r["gestion_lead_id"])
-    mcid = cli_dict.get(cli_id)
+    mcid = mcid_dict.get(cli_id)
     if mcid and mcid_to_dict.get(mcid) and str(mcid_to_dict[mcid].get("Estado")).strip() == "No show":
         d = mcid_to_dict[mcid]
         conflictos.append({

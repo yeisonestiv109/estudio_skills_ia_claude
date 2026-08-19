@@ -16,6 +16,125 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
 (`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
 `03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
 
+**Sesión 19-ago-2026 (segunda) — `audit_18ago.py` corrido por primera vez,
+15 incidencias marcadas en el panel real, políticas reafirmadas con
+Yeisiton:**
+- Se ejecutó `audit_18ago.py` (dejado a medio terminar por Antigravity el
+  18-ago, nunca corrido) contra la base real y el export del Sheet del
+  18-ago 6pm. Antes de confiar en sus resultados se encontraron y
+  corrigieron 3 bugs propios del script: (1) seleccionaba
+  `reuniones.cliente_id`, columna inexistente (400 de Postgres); (2)
+  comparaba `str(manychat_id)` contra una lista con valores `None` crudos,
+  generando falsos positivos de "ganado sin venta" para cualquier lead sin
+  ManyChat ID — detectó como falso positivo a "Cesar Martínez", verificado
+  con SQL directo que su venta sí estaba registrada ($4.968.000, cobrada);
+  (3) una referencia rota (`cli_dict`/`mcid_dict`) tras el fix anterior.
+  Ruff limpio tras los 3 fixes.
+- **Resultado verificado de las 4 secciones:**
+  1. Activity Log: Sheet 7.730 filas vs Supabase 14.010 — abierto,
+     probablemente explicado por el bridge en vivo escribiendo directo desde
+     el 18-ago, no investigado a fondo.
+  2. 133 sin ManyChat ID: 100% (133/133) hacen match por nombre contra un
+     cliente real ya existente en Supabase con manychat_id. **Decisión de
+     Yeisiton: mantener NULL**, no backfillear (riesgo de falso match por
+     nombre duplicado, reafirma la política del 15-ago).
+  3. Financiero: único caso real pendiente sigue siendo "Juan Manuel" (mismo
+     gap documentado desde el 13-ago, lead en estado `Ganado (Venta)` con 0
+     filas en `ventas`, sin fecha de pago real).
+  4. 15 conflictos "realizada" (Supabase) vs "No show"/"canceló" (Sheet,
+     export 18-ago): **decisión de Yeisiton: marcarlos como incidencia, no
+     resolver ahora.** Escrito `INCIDENTE_REVISION:` en `gestion_leads.notas`
+     de los 15 leads correspondientes (matched por `manychat_id`, texto con
+     sufijo `.0` en Supabase — mismo patrón de bug de float-de-Excel de
+     sesiones anteriores), verificado con un SELECT posterior a
+     `vw_scorecard_check` que las 15 aparecen bajo `requiere_revision_manual`.
+
+**Sesión 19-ago-2026 — reconciliación completa Sheet-vs-Supabase, 1
+vulnerabilidad financiera crítica encontrada y corregida, adopción de
+tooling determinista (ruff/pytest/pre-commit/CI):**
+- Reconciliación determinista (script propio `reconciliar_18ago.py`, NO
+  análisis con LLM — comparación programática campo por campo, por decisión
+  explícita de Yeisiton: "necesito algo determinista"). Corrigió 198 números
+  de WhatsApp corruptos desde la migración original (bug del float de Excel
+  dejando un `.0` de más al sanitizar), 14 leads históricos de la "Gaby
+  vieja" (setter ya no activa) atribuidos por error a Andrew — hueco
+  sistemático real, no puntual: el proceso nunca resincroniza cambios
+  manuales de Setter/Closer hechos en el Sheet después de la captura inicial,
+  y sigue existiendo hacia adelante mientras Sheet y bridge corran en
+  paralelo. 9 closers restaurados, 23 estados corregidos (incluye un bug de
+  diseño real documentado no corregido: `fn_reunion_mueve_etapa` solo
+  reacciona a *cambios* de estado en `reuniones`, no a inserts masivos que ya
+  nacen en `no_show`/`realizada`). 167 leads nuevos importados.
+- **Vulnerabilidad financiera crítica encontrada y corregida:**
+  `fn_registrar_venta` (crea ventas) era ejecutable con la llave pública
+  `anon` — su propio código saltaba la validación de autorización cuando no
+  hay JWT, exactamente la condición de `anon`. Cualquiera con la llave
+  pública podía haber creado ventas falsas para cualquier lead. Encontrado
+  vía `get_advisors` (linter oficial de Supabase, no la función de
+  diagnóstico casera del agente). También se corrigieron 6 funciones sin
+  `search_path` fijo y 2 vistas preexistentes sin `security_invoker`
+  (`vw_scorecard_check_resumen`, `vw_ventas_neto` — esta última causaba que
+  cualquier setter/closer viera discrepancias de ventas ajenas).
+- **`vw_embudo_diario` (métricas de toda la empresa):** no se le puede poner
+  `security_invoker=true` sin romperla en silencio para no-admins (es un
+  agregado cruzando todos los closers/setters, no una fila por usuario). Se
+  envolvió en `fn_embudo_diario()` (mismo patrón que `fn_registrar_venta`:
+  chequeo de `fn_es_admin()` adentro), se quitó el SELECT directo a la vista
+  para `authenticated`.
+- Venta real registrada a mano con plan de pagos custom: Edwar Martos,
+  $5.000.000 COP, términos acordados directamente por Andrés —
+  `fn_registrar_venta` solo sabe repartir el saldo en cuotas iguales, no un
+  plan custom.
+- **Tooling determinista adoptado** (decisión de Yeisiton, fundamentada por
+  el agente): `pyproject.toml` compartido (ruff + pytest) en la raíz del
+  repo — NO aplicado a El Prospector (fuera de alcance). Lógica compartida de
+  los scripts ARTF extraída a `artf_common.py` (antes duplicada en 3
+  scripts — así se coló el bug del WhatsApp). 21 tests nuevos en
+  `Tarea_1_Migrar_DB/tests/` (`test_artf_common.py` +
+  `test_invariantes_schema.py` — verifica contra la base real que ninguna
+  vista pierda `security_invoker` ni ninguna función SECURITY DEFINER gane
+  acceso de `anon`, vía `fn_diagnostico_seguridad()`, solo accesible por
+  `service_role`). Pre-commit hooks bloqueantes instalados y probados en
+  ambos repos. GitHub Actions creados en los 2 repos (el de ARTF necesita 2
+  secrets configurados a mano por Yeisiton en GitHub para correr los tests de
+  invariantes de seguridad).
+- **Política de migraciones versionadas desde esta fecha:** cada migración
+  nueva contra Supabase se guarda también como `.sql` en
+  `artf-pipeline-app/supabase/migrations/`. No se reconstruyó el historial
+  anterior — empieza con `fn_embudo_diario_admin_gated`.
+- Commits: `estudio_skills_ia_claude` `703f0ff` (rama
+  `setup/base-conocimiento`), `artf-pipeline-app` `91d49d8` (rama `master`).
+
+**Sesión 18-ago-2026 — bridge Cloudflare→Supabase confirmado en vivo, 3
+fixes reales enviados a producción, revisión del reporte de Antigravity:**
+- Antigravity usado por primera vez para el caso de uso acordado
+  (clasificación de las 269 incidencias de `vw_scorecard_check`) — reporte
+  verificado sin alucinaciones contra la base real.
+- `worker_bridge_supabase_NUEVO_paralelo.js` (el worker "no desplegado
+  aún" de la nota del 15-ago) ya desplegado y escribiendo en vivo a
+  Supabase — sigue en modo paralelo/sombra, el Sheet sigue siendo la fuente
+  oficial mientras se valida.
+- Bug real encontrado y corregido: `gestion_leads.palabra_clave_ad` nunca
+  se llenaba (ni el Worker ni `fn_sync_bot_turn` la calculaban) — no era una
+  regresión nueva, ya estaba roto en el Sheet. Fix: nueva función
+  `fn_derivar_palabra_clave()`, backfill de ~5.200 leads existentes,
+  `fn_sync_bot_turn` ahora la deriva automáticamente hacia adelante.
+- Gap estructural real y activo encontrado: no existía ningún mecanismo
+  para que un setter humano reclamara un lead — todo lead nuevo entra con
+  `setter_id = Andrew` (el bot) por diseño, nada lo reasignaba después, y por
+  RLS eso significaba que ningún lead capturado por el bridge en vivo sería
+  visible jamás para un setter real. Fix: RPC `fn_reclamar_lead(uuid)`
+  (SECURITY DEFINER, bloquea robarle el lead a otro setter humano), botón
+  "Tomar este lead" en el Pipeline, extensión del trigger de auditoría a
+  reasignaciones de `setter_id`.
+- Bug de seguridad propio cometido y corregido en la misma sesión:
+  `fn_reclamar_lead` quedó con grant `EXECUTE` a `anon` por default de
+  Postgres al crearla — revocado, mismo patrón de disciplina que Fase 2b.
+- Mecanismo de "reconocer" incidencias en vez de ocultarlas para siempre:
+  nueva tabla `incidencias_reconocidas` — panel bajó de 269 → 127
+  incidencias reales tras reconocer 142 filas de deuda histórica de la
+  migración.
+
 **Sesión 17-ago-2026 (continuación) — Fase 2b: página pública de
 agendamiento (corrige el modelo de reserva de la Fase 2) + instalación de
 Playwright + adopción de Antigravity CLI como herramienta complementaria:**
