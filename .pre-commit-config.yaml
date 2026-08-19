@@ -1,0 +1,27 @@
+# Pre-commit hooks -- politica desde 19-ago-2026.
+#
+# IMPORTANTE: los hooks de ARTF solo corren si el commit toca archivos
+# dentro de esa carpeta (ver "files:" en cada hook). El Prospector todavia
+# tiene ~165 issues de ruff sin arreglar (mayormente orden de imports) --
+# no se le aplica este hook a proposito, para no bloquear commits ahi hasta
+# que se decida limpiarlo aparte.
+#
+# Instalar una sola vez por clon del repo: `pre-commit install`
+# Saltar en un caso excepcional: `git commit --no-verify` (evitar, es
+# exactamente lo que este hook existe para prevenir).
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-artf
+        name: ruff (scripts de migracion ARTF)
+        entry: .venv/bin/ruff check 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/
+        language: system
+        files: ^03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.*\.py$
+        pass_filenames: false
+
+      - id: pytest-artf
+        name: pytest (scripts de migracion ARTF)
+        entry: .venv/bin/pytest 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests/ -q
+        language: system
+        files: ^03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.*\.py$
+        pass_filenames: false

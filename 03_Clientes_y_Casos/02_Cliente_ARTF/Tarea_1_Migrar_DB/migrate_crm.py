@@ -7,12 +7,11 @@ Uso:
   python3 migrate_crm.py             # dry-run (default): solo valida y reporta, no escribe nada
   python3 migrate_crm.py --write     # ejecuta la carga real contra Supabase
 """
-import os
-import re
-import sys
 import argparse
 import datetime as dt
-from collections import Counter, defaultdict
+import os
+import re
+from collections import Counter
 
 import openpyxl
 import requests
@@ -293,7 +292,7 @@ def build_payloads(crm_rows, fuente_ids, estado_ids, usuario_ids):
         califica = {"Sí": True, "No": False}.get(califica_raw)
 
         fecha_contacto_dt = row.get("Fecha Contacto") or dt.datetime.now()
-        fecha_contacto = to_iso(fecha_contacto_dt) or dt.datetime.now(dt.timezone.utc).isoformat()
+        fecha_contacto = to_iso(fecha_contacto_dt) or dt.datetime.now(dt.UTC).isoformat()
 
         def clamp_after_contacto(v):
             # ck_gl_fechas_orden exige fecha_X >= fecha_contacto. En la fuente real,

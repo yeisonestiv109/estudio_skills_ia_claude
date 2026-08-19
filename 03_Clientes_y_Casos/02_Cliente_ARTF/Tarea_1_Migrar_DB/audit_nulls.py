@@ -3,10 +3,9 @@ Auditoria columna-por-columna de nulos en las tablas pobladas por la
 migracion, para distinguir "null correcto porque la fuente no tiene el dato"
 de "null que deberia tener dato y no lo tiene" (bug de mapeo).
 """
-from collections import Counter
 
-from migrate_crm import SUPABASE_URL, HEADERS, load_crm_rows
 from add_reuniones import fetch_all
+from migrate_crm import load_crm_rows
 
 
 def audit_table(table, columns):

@@ -13,11 +13,9 @@ Backfill de dos gaps reales encontrados en la auditoria de nulos:
    NO se puede backfillear: ventas es append-only y ya se registraron sin
    ese vinculo -- queda documentado como gap permanente de esta corrida.)
 """
-import re
 import requests
-
-from migrate_crm import SUPABASE_URL, HEADERS, load_crm_rows, norm
 from add_reuniones import fetch_all
+from migrate_crm import HEADERS, SUPABASE_URL, load_crm_rows, norm
 
 METODO_PAGO_MAP = {
     "transferencia": "transferencia",

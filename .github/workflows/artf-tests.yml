@@ -1,0 +1,43 @@
+name: ARTF — ruff + pytest
+
+# Respaldo del pre-commit local (.pre-commit-config.yaml). Corre lo mismo,
+# por si alguna vez se usa --no-verify o se sube desde otra maquina sin el
+# hook instalado. Solo se dispara si el push/PR toca la carpeta de ARTF --
+# no bloquea trabajo de El Prospector.
+on:
+  push:
+    paths:
+      - "03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/**"
+  pull_request:
+    paths:
+      - "03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/**"
+
+jobs:
+  ruff-y-pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: ruff
+        run: ruff check 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/
+
+      - name: pytest
+        env:
+          # Los tests de invariantes de seguridad (test_invariantes_schema.py)
+          # consultan el proyecto real de Supabase -- hay que configurar
+          # estos 2 secrets en GitHub (Settings -> Secrets and variables ->
+          # Actions) para que corran. Sin ellos, esos tests fallan aca pero
+          # el resto (test_artf_common.py) igual corre.
+          SUPABASE_URL: ${{ secrets.ARTF_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.ARTF_SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          echo "SUPABASE_URL=$SUPABASE_URL" > 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.env
+          echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.env
+          pytest 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests/ -v

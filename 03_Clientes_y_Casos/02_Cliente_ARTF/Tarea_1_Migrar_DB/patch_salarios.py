@@ -16,10 +16,10 @@ de calificacion de ARTF pregunta ingreso MENSUAL, pero es una inferencia,
 no un dato leido directamente del Sheet.
 """
 import re
-import requests
 
-from migrate_crm import SUPABASE_URL, HEADERS, load_crm_rows
+import requests
 from add_reuniones import fetch_all
+from migrate_crm import HEADERS, SUPABASE_URL, load_crm_rows
 
 RANGO_RE = re.compile(r"^\$?\s*([\d.,]+)\s*(?:M)?\s*a\s*\$?\s*([\d.,]+)\s*M?\s*(COP)?\s*$", re.IGNORECASE)
 MONTO_M_RE = re.compile(r"^\$?\s*([\d.,]+)\s*M\s*(COP)?\s*$", re.IGNORECASE)

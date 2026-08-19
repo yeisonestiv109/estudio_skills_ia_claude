@@ -30,11 +30,9 @@ Uso:
   python3 migrate_activity_log.py             # dry-run: solo valida y reporta
   python3 migrate_activity_log.py --write     # ejecuta la carga real
 """
-import os
-import re
-import sys
 import argparse
 import datetime as dt
+import os
 from collections import Counter
 
 import openpyxl

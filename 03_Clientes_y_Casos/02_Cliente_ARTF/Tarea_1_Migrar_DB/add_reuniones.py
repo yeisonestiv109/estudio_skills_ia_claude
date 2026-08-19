@@ -4,12 +4,16 @@ migrate_crm.py (append-only: no se puede reconstruir clientes/gestion_leads/
 ventas desde cero una vez que hay ventas registradas). Empareja por
 clientes.manychat_id, que es unico y se preservo en la carga original.
 """
-import openpyxl
 import requests
-
 from migrate_crm import (
-    SUPABASE_URL, HEADERS, XLSX_PATH, load_crm_rows, to_iso, norm_key,
-    ESTADO_MAP, ESTADO_DEFAULT, batch_insert,
+    ESTADO_DEFAULT,
+    ESTADO_MAP,
+    HEADERS,
+    SUPABASE_URL,
+    batch_insert,
+    load_crm_rows,
+    norm_key,
+    to_iso,
 )
 
 

@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/F = pyflakes+pycodestyle basicos (imports sin usar, variables sin usar,
+# nombres ambiguos, etc). UP = sintaxis moderna. I = orden de imports.
+# No se activa nada mas agresivo (docstrings, complejidad) para no generar
+# ruido en scripts de migracion que son deliberadamente lineales.
+select = ["E", "F", "UP", "I"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "02_Lineas_de_Producto/Outbound_Prospector/tests",
+    "02_Lineas_de_Producto/Inbound_AI_SDR/tests",
+    "03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests",
+]
