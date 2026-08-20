@@ -52,19 +52,19 @@ def diagnostico():
     return r.json()
 
 
-# Funciones de TRIGGER conocidas que Supabase tambien otorga a `anon` por
-# defecto. No son explotables via API -- PostgREST no expone funciones que
-# retornan `trigger` como RPC callable, solo se ejecutan dentro de su
-# trigger. Bajo riesgo real, se documentan en vez de tocarlas (revocar mal
-# una funcion de trigger sin necesidad real no vale el riesgo). Si aparece
-# aca una funcion que NO es de trigger, es un hallazgo real -- fallar el
-# test a proposito.
-TRIGGERS_CON_ANON_ACEPTADOS = {
-    "fn_auditar", "fn_columnas_por_rol", "fn_deposito_reserva_mueve_etapa",
-    "fn_estado_terminal_resync", "fn_gl_cerrado_coherente", "fn_log_gestion",
-    "fn_log_pago", "fn_log_venta", "fn_motor_etapas",
-    "fn_reabrir_espacio_al_cancelar", "fn_reunion_mueve_etapa",
-}
+# 19-ago-2026: las 11 funciones de TRIGGER que antes tenian EXECUTE de
+# PUBLIC (heredado por `anon`/`authenticated`, no explotable via API porque
+# PostgREST no expone funciones que retornan `trigger` como RPC callable,
+# pero igual quedaba de sobra) se revocaron explicitamente con
+# `REVOKE EXECUTE ... FROM PUBLIC` -- el REVOKE inicial a `anon,
+# authenticated` directamente no bastaba, el grant real vivia en PUBLIC.
+# Verificado en vivo que los triggers siguen disparando con normalidad
+# despues del revoke (UPDATE real + fila nueva en auditoria_cambios).
+# Este set queda vacio a proposito: si CUALQUIER funcion vuelve a aparecer
+# aca (via un futuro `CREATE OR REPLACE FUNCTION` que resetea grants, el
+# mismo patron que ya paso 3 veces en este proyecto), es una regresion
+# real -- debe fallar el test, no pasar en silencio.
+TRIGGERS_CON_ANON_ACEPTADOS = set()
 
 # vw_embudo_diario es un agregado de TODA la empresa por diseno (funnel/
 # revenue cruzando todos los closers/setters) -- security_invoker=true la
@@ -103,4 +103,19 @@ def test_ninguna_funcion_security_definer_callable_tiene_anon(diagnostico):
     assert not inesperadas, (
         f"Funciones SECURITY DEFINER callables con acceso de anon (regresion real, "
         f"revisar si son explotables via API): {inesperadas}"
+    )
+
+
+def test_ninguna_funcion_trigger_tiene_authenticated(diagnostico):
+    """19-ago-2026: ninguna funcion que retorna `trigger` deberia tener
+    EXECUTE otorgado a `authenticated` (ni a nadie -- los triggers no lo
+    necesitan, Postgres los invoca directo sin pasar por el chequeo de
+    EXECUTE del rol que dispara el INSERT/UPDATE/DELETE, verificado en vivo).
+    Si aparece algo aca es la misma clase de regresion de siempre: un
+    `CREATE OR REPLACE FUNCTION` que reseteo los grants a su default
+    (PUBLIC), sin que nadie lo revocara de nuevo."""
+    encontradas = set(diagnostico["funciones_trigger_con_authenticated"])
+    assert not encontradas, (
+        f"Funciones TRIGGER con EXECUTE de authenticated (regresion real, "
+        f"revisar si un CREATE OR REPLACE reseteo los grants): {encontradas}"
     )
