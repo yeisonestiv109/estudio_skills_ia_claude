@@ -26,3 +26,8 @@ Para garantizar un código perfecto y sin alucinaciones, el Humano y la IA deben
 *   Todo se diseña bajo **Arquitectura Hexagonal (Puertos y Adaptadores)**.
 *   Los datos de contacto (Scraping) deben respetar leyes de Habeas Data y límites de las APIs para no quemar IPs ni correos.
 *   Ningún lead avanza en la Cascada de Triggers con una (1) sola señal. Siempre se exige validación cruzada.
+
+## ✅ 4. Disciplina de Verificación (aplica a ARTF y a cualquier integración nueva)
+*   **Un linter/type-checker en verde no prueba que algo funcione.** El 19 y 20-ago-2026 se encontraron bugs reales de seguridad (funciones con acceso de `anon`/`authenticated` de más) y de UI (login/panel de Incidencias rotos) que pasaban `ruff`/`tsc`/`eslint` limpio y solo aparecieron corriendo la base real o la app real con un navegador. Ver `03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests/test_invariantes_schema.py` (base de datos) y `artf-pipeline-app/e2e/` (frontend, ver su `AGENTS.md`) para el detalle de cada uno.
+*   **Regla:** cuando una integración o actualización toque algo que otra pieza ya usa (una función, vista, policy, endpoint, componente compartido), corre la suite de verificación real correspondiente (tests de Python contra la base, o Playwright contra la app) antes de darlo por terminado — no solo el chequeo estático. Si el bug es de una clase nueva, agrégale un test permanente en vez de solo corregirlo una vez.
+*   Un hook (`PostToolUse` en `.claude/settings.json`, raíz de `proyecto_cliente_catalina`) recuerda esto automáticamente al tocar archivos sensibles de ARTF (scripts de migración, auth/data-layer/proxy del frontend) — no lo ignores cuando aparezca.
