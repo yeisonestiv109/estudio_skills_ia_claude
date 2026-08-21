@@ -8,7 +8,7 @@
       "matcher": "(src/.*[^/]*\\\\.py$|tests/.*[^/]*\\\\.py$)",
       "action": {
         "type": "command",
-        "command": "wsl.exe bash /home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/hooks/_run-ruff.sh"
+        "command": "wsl.exe bash /home/estiv12/proyecto_negocio_doscaras/estudio_skills_ia_claude/.kiro/hooks/_run-ruff.sh"
       },
       "timeout": 60,
       "enabled": true

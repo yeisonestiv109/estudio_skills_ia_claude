@@ -7,7 +7,7 @@
       "trigger": "PostTaskExec",
       "action": {
         "type": "command",
-        "command": "wsl.exe bash /home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/hooks/_run-pytest.sh"
+        "command": "wsl.exe bash /home/estiv12/proyecto_negocio_doscaras/estudio_skills_ia_claude/.kiro/hooks/_run-pytest.sh"
       },
       "timeout": 120,
       "enabled": true

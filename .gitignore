@@ -91,3 +91,6 @@ graphify-out/
 # src/adapters/revision_manual/.
 # ---------------------------------------------------------------------------
 /revision_manual/
+
+# Claude Code local settings (personal, not team-shared)
+.claude/settings.local.json

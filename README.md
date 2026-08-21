@@ -17,17 +17,17 @@ Este repositorio es la **fuente de la verdad** del negocio, estructurado bajo el
 │   ├── 03_protocolos_comunicacion.md (Prompting XML, antipsicofancia)
 │   └── 04_eos_vto_agencia.md       (V/TO — Vision/Traction Organizer de la agencia)
 │
-├── 02_Lineas_de_Producto/    ← CÓDIGO Y DOCUMENTACIÓN TÉCNICA
-│   ├── Inbound_AI_SDR/       (Línea 1: Atención autónoma Inbound — scaffold vacío;
-│   │   ├── docs/              el código real de ARTF hoy vive fuera del repo en
-│   │   ├── src/                Cloudflare Workers/ManyChat; los docs y scripts de
-│   │   └── tests/               migración están en 03_Clientes_y_Casos/02_Cliente_ARTF/)
+├── 02_Lineas_de_Producto/    ← DOCUMENTACIÓN/ARQUITECTURA (el código real ya NO vive aquí, ver abajo)
+│   ├── Inbound_AI_SDR/       (Línea 1: docs; código real de ARTF en artf-pipeline-app/,
+│   │   └── docs/               repo hermano — ver 03_Clientes_y_Casos/02_Cliente_ARTF/)
 │   │
-│   └── Outbound_Prospector/  (Línea 2: Caza activa Outbound)
-│       ├── docs/             (Arquitectura y flujos del Motor 1-4)
-│       ├── src/               (Código Python, hexagonal)
-│       ├── tests/             (Suite Pytest)
-│       └── revision_manual/   (Cola de revisión manual persistente, human-in-the-loop)
+│   └── Outbound_Prospector/  (Línea 2: docs — Arquitectura y flujos del Motor 1-4;
+│       └── docs/               código real en outbound-prospector-app/, repo hermano,
+│                                extraído el 20-ago-2026 preservando su historia de git)
+│
+├── (repos hermanos, mismo padre proyecto_negocio_doscaras/, cada uno con su propio graphify)
+│   ├── artf-pipeline-app/        ← código real Inbound_AI_SDR (Next.js, cliente ARTF)
+│   └── outbound-prospector-app/  ← código real Outbound_Prospector (Python, cliente TBBC)
 │
 ├── 03_Clientes_y_Casos/      ← OPERACIÓN Y LABORATORIOS
 │   ├── 01_Cliente_TBBC/        (Catalina Rúa — piloto Outbound Prospector)

@@ -5,7 +5,7 @@
       "args": [
         "bash",
         "-lc",
-        "MEMORY_FILE_PATH=/home/estiv12/proyecto_cliente_catalina/estudio_skills_ia_claude/.kiro/memory/prospector-knowledge-graph.json exec npx -y @modelcontextprotocol/server-memory"
+        "MEMORY_FILE_PATH=/home/estiv12/proyecto_negocio_doscaras/estudio_skills_ia_claude/.kiro/memory/prospector-knowledge-graph.json exec npx -y @modelcontextprotocol/server-memory"
       ],
       "disabled": false,
       "autoApprove": [

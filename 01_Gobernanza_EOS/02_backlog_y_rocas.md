@@ -16,6 +16,64 @@ cargaron los 6.136 leads reales del Sheet contra el esquema v3 en **staging**
 (`lrdtjsxtaadpgrzkchlw`) y se auditó columna por columna. Detalle completo →
 `03_Clientes_y_Casos/02_Cliente_ARTF/05-validacion-migracion-datos-reales.md`.
 
+**Sesiones 19/20-ago-2026 (resumen) — auditoría de duplicados + RLS +
+frontend + Calendar + roles cerrados vía el artefacto "Planos ARTF"
+(`https://claude.ai/code/artifact/e008fac2-e885-4b8a-9bcb-b7d6c46595a5`,
+detalle sección por sección ahí, no reproducido aquí para no duplicar):**
+- **19-ago (tercera continuación):** bug real de duplicación de leads (51+1
+  pares) por la misma causa raíz del `.0` de Excel en `manychat_id` — fusión
+  ejecutada y verificada en 0 duplicados. Fix estructural preventivo
+  aplicado: `fn_normalizar_cliente()` / `trg_normalizar_cliente` (BEFORE
+  INSERT OR UPDATE en `clientes`), normaliza `manychat_id` e `ig_handle`
+  siempre, sin importar la vía de escritura. `ig_handle` backfillado
+  completo (6.424 filas, 0 con "@").
+- **20-ago, sección 07 (Seguridad/RLS) cerrada:** 11 funciones trigger con
+  `EXECUTE` de `PUBLIC` corregidas de raíz (el `REVOKE` a roles específicos
+  no bastaba, el grant real vivía en `PUBLIC`); `citext` movido a
+  `extensions`; secrets de GitHub Actions configurados y CI verificado en
+  verde con una corrida real.
+- **20-ago, sección 08 (Frontend/Pipeline+Incidencias) cerrada:** 3 bugs
+  reales corregidos corriendo la app en vivo con Playwright (login pegado
+  por falta de `proxy.ts`, `/incidencias` vacío por permisos en
+  `vw_embudo_diario`, grant de `anon` en la función nueva) — suite E2E
+  permanente creada, disciplina de testing agregada a `AGENTS.md`/`CLAUDE.md`
+  de ambos repos.
+- **20-ago, sección 09 (Calendar) pausada por decisión explícita de
+  Yeisiton:** código de integración ya completo; credenciales de Google
+  Cloud (cuenta personal, Camino B) creadas; bloqueado en el share externo
+  del calendario de Andrés (política de Workspace, requiere su Super Admin).
+  Yeisiton pidió definir la arquitectura completa de Agenda antes de
+  retomar el desbloqueo técnico.
+- **20-ago, sección 10 (Roles) cerrada:** este proyecto corre bajo un
+  **trueque** — Yeisiton+Gabyota (brazo tecnológico de su propia agencia
+  emergente) profesionalizan la infraestructura de ARTF a cambio de
+  mentoría comercial de Javier/Catalina. Admin de Yeisiton es temporal (se
+  cede a Javier cuando el proyecto madure); rol Setter de Yeisiton y
+  Gabyota es dogfooding deliberado, no su asignación permanente.
+- **20-ago, sección 12 (Deuda técnica) — 3 de 5 patrones recurrentes
+  cerrados de raíz en esta misma fecha:**
+  1. Backfill de 263 `clientes.manychat_id` que quedaron con `.0` antes de
+     que existiera el trigger normalizador (0 colisiones verificadas antes
+     de tocar nada) + `CHECK` constraint (`clientes_manychat_id_solo_digitos`)
+     para que sea estructuralmente imposible que se vuelva a colar por
+     cualquier vía futura.
+  2. Causa raíz real del grant `EXECUTE` a `anon` sobreviviendo un
+     `CREATE OR REPLACE FUNCTION` (4 veces distintas: Fase 2, Fase 2b,
+     18-ago, 20-ago): Supabase configura
+     `ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT
+     EXECUTE ON FUNCTIONS TO anon...` a nivel de proyecto, y `postgres` es
+     el rol con el que se aplican las migraciones — corregido revocando ese
+     mismo default para `anon` (una sola vez, para siempre hacia adelante).
+  3. `fn_reunion_mueve_etapa`: en `INSERT` forzaba siempre `'agendado'` sin
+     mirar `new.estado`, dejando leads mal parados cuando una reunión se
+     insertaba directo en estado terminal (import histórico). Corregido
+     reusando el mismo mapeo que ya existía para `UPDATE`.
+  - Patrón restante (vistas sin `security_invoker`): ya cerrado desde antes
+    vía el test de regresión existente, no requiere código nuevo. Patrón de
+    Sheet-vs-Supabase en paralelo: no es un fix de código, es completar el
+    corte del Sheet ya planeado — pendiente definir el criterio exacto de
+    corte (sección 05).
+
 **Sesión 19-ago-2026 (segunda) — `audit_18ago.py` corrido por primera vez,
 15 incidencias marcadas en el panel real, políticas reafirmadas con
 Yeisiton:**

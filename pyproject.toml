@@ -10,8 +10,10 @@ target-version = "py312"
 select = ["E", "F", "UP", "I"]
 
 [tool.pytest.ini_options]
+# Outbound_Prospector se extrajo a su propio repo (outbound-prospector-app/,
+# hermano de este) el 20-ago-2026 -- su suite corre alli ahora, con su propio
+# pyproject.toml.
 testpaths = [
-    "02_Lineas_de_Producto/Outbound_Prospector/tests",
     "02_Lineas_de_Producto/Inbound_AI_SDR/tests",
     "03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests",
 ]

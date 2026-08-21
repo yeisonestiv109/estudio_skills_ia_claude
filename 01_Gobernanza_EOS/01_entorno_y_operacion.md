@@ -77,8 +77,65 @@ realmente se lanza (vs. que el usuario esté interactuando con otra ventana), mo
 `ps aux | grep -i chrom` durante el intento — el Chrome real corre con
 `--user-data-dir=.../notebooklm-mcp/chrome_profile` y `--ozone-platform=x11`.
 
+**🟡 Bug #4 — `ask_question` captura el texto de carga transitorio de NotebookLM en vez de
+la respuesta real** ("Explorando tu material…", "Leyendo capítulos enteros…", "Recuperando
+los detalles…", "Verificando el alcance…"), confirmado de nuevo el 20-ago-2026 (3/3 intentos
+en sesiones frescas con preguntas cortas devolvieron solo texto de carga). No hay forma
+confiable de "esperar" una respuesta pendiente — cada llamada a `ask_question` manda un
+mensaje nuevo y reinicia la generación, así que esperar más tiempo entre llamadas no ayuda.
+**Protocolo:** probar 2-3 preguntas cortas en sesiones frescas; si las 3 vuelven solo con
+texto de carga, dejar de insistir con la herramienta y usar la documentación local en su
+lugar, avisando que NotebookLM está inestable en ese momento — no proceder en silencio sobre
+una respuesta vacía/de carga, ni quedarse en loop reintentando.
+
 **Notebook activo:** "ARTF: Arquitectura de Software y Sistema Operativo de Negocio (Marco
 EOS)" → `https://notebook.google.com/notebook/ae2ca639-f8f7-48b9-b5b8-526f5ace0a95`
-(único en la librería local, sin duplicados tras la limpieza del 14-ago).
+(único en la librería local, sin duplicados tras la limpieza del 14-ago). **Es el "segundo
+cerebro" de Yeisiton para arquitectura/historia de ARTF — consultarlo proactivamente ante
+preguntas de ese tipo, no solo cuando se pida explícitamente.**
+
+## Reestructuración de repos + Graphify + memoria compartida (20-ago-2026)
+
+**Problema real detectado (no solo sospechado por Yeisiton):** la memoria auto-persistente
+de Claude Code vive por defecto en `~/.claude/projects/<cwd-saneado>/memory/` — una carpeta
+DISTINTA por cada directorio de trabajo raíz donde se abre una sesión. Confirmado en vivo que
+esto ya había fragmentado contexto real: una sesión abierta antes directamente dentro de
+`estudio_skills_ia_claude/` (13-ago) dejó 4 archivos de memoria completamente huérfanos
+(perfil de usuario, referencia del notebook de NotebookLM, bug de NotebookLM, estado de
+migración) que ninguna sesión posterior — incluida toda la ronda de trabajo del 19/20-ago —
+llegó a ver. Rescatados y fusionados a la memoria activa el 20-ago.
+
+**Fix aplicado — `autoMemoryDirectory` en `.claude/settings.local.json`** (mecanismo nativo
+de Claude Code, no un workaround manual): tanto `estudio_skills_ia_claude/`,
+`artf-pipeline-app/` como `ai_lead_prospector/ia_lead_prospector/` apuntan ahora al mismo
+directorio compartido (`~/.claude/projects/-home-estiv12-proyecto-cliente-catalina/memory`)
+— cualquier sesión futura, sin importar en cuál de estas carpetas se abra, lee y escribe la
+MISMA memoria. Archivo gitignored en los 3 repos (config personal, no de equipo).
+
+**`artf-pipeline-app` movido a `/home/estiv12/proyecto_cliente_catalina/artf-pipeline-app/`**
+(antes vivía separado en `/home/estiv12/artf-pipeline-app`, sin relación de carpetas con el
+resto) — al mismo nivel que `estudio_skills_ia_claude/`, para que ambos proyectos conectados
+(el código real y la base de conocimiento/gobernanza) se gestionen juntos. Movido excluyendo
+`node_modules`/`.next` (regenerados con `npm install`/`next build` en el destino, no tenía
+sentido copiar/mover ~1.4GB regenerable) — verificado con diff de archivos idéntico,
+`git log`/remote intactos, y `npm run type-check` limpio tras el movimiento. `ai_lead_prospector/ia_lead_prospector`
+**no se movió** (tenía cambios reales sin commitear en el momento de esta sesión) — queda
+pendiente esa misma reubicación cuando se retome El Prospector, decisión de Yeisiton, no
+técnica.
+
+**Graphify instalado en ambos repos** (`estudio_skills_ia_claude/` y `artf-pipeline-app/`,
+vía `uv tool install graphifyy[sql]` — incluye soporte de parseo SQL, relevante por el
+volumen de migraciones de ARTF). Construye un grafo de conocimiento del código con
+tree-sitter (AST, determinístico, sin costo de LLM) + opcionalmente una capa semántica de
+LLM (no configurada aún, requiere `GEMINI_API_KEY`/`GOOGLE_API_KEY`). `graphify claude
+install` en cada repo escribió la sección `## graphify` en su `CLAUDE.md` (instruye a
+Claude a consultar `graphify query`/`graphify explain` ANTES de leer/grepear código crudo,
+no después) + un hook `PreToolUse` (`Bash|Grep` y `Read|Glob`) que recuerda esto en cada
+intento de búsqueda/lectura — no bloquea, solo orienta. `graphify hook install` dejó un
+post-commit/post-checkout que reconstruye el grafo automáticamente (via Husky en
+`artf-pipeline-app`, git hooks nativos en `estudio_skills_ia_claude`) — el grafo anterior de
+`estudio_skills_ia_claude` estaba desactualizado desde el 26-jul, ya reconstruido (2877
+nodos, 7320 edges). `graphify-out/` gitignored en ambos repos (regenerable, no se commitea);
+`.gitattributes` con el merge driver de `graphify` sí se commitea.
 
 
