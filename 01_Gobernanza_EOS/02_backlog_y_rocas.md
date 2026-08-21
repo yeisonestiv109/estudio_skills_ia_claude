@@ -2278,7 +2278,7 @@ apunta a ella). El cierre de esta auditoría se hizo con push a esa rama.
 
 ## ⚠️ Bloqueos Pendientes (documentados, no resolubles por IA)
 
-**Habeas Data (Ley 1581) — YA NO ES TEÓRICO.** El código ahora procesa y ha enviado correos a PII real (nombres y direcciones de decisores reales del piloto de M3/M4). El compliance real requiere asesoría legal con abogado real antes de cualquier envío a escala. Ver `02_Lineas_de_Producto/Outbound_Prospector/docs/validacion/validacion-fuentes.md` §7. **Este bloqueo se activa formalmente ahora que existe envío real, no solo diseño.**
+**Habeas Data (Ley 1581) — YA NO ES TEÓRICO.** El código ahora procesa y ha enviado correos a PII real (nombres y direcciones de decisores reales del piloto de M3/M4). El compliance real requiere asesoría legal con abogado real antes de cualquier envío a escala. Ver `outbound-prospector-app/docs/validacion/validacion-fuentes.md` §7 (ruta corregida 21-ago-2026: el repo se extrajo el 20-ago, ya no vive en `02_Lineas_de_Producto/`). **Este bloqueo se activa formalmente ahora que existe envío real, no solo diseño.**
 
 **Bounce rate real del Motor 3 sin medir.** El piloto de M3 solo cerró el KPI de costo ($0.17 < $1.00 ✅). El KPI de calidad (<2% bounce) sigue abierto — depende del webhook de Resend (ver Próximo Paso #2).
 
@@ -3261,6 +3261,76 @@ revisión manual.
 5. **Créditos:** vigilar el gasto de company_search (3/empresa) y las 2 queries de
    banda de aging (0 si no hay señal).
 
+
+---
+
+## 🧠 Sesión 21-ago-2026 — Auditoría y corrección de la arquitectura de memoria
+
+**Fecha:** 2026-08-21
+**Módulo:** entorno
+**Tipo:** decision
+**Conclusión:** Se auditó el sistema de memoria completo (Skills de Kiro, MCP,
+NotebookLM, jerarquía de verdad) y se ejecutaron las correcciones autorizadas por
+el fundador: (1) rutas muertas corregidas en `handoff-cierre-sesion`,
+`sincronizador-spec`, `AGENTS.md`, `contexto-proyecto.md`, `estrategia-memoria.md`,
+`directrices_globales.md`, `03_protocolos_comunicacion.md`, `mvp-prospector-limpio.md`
+y las citas internas de `outbound-prospector-app/docs/tecnico/` — todas apuntaban a
+`02_Lineas_de_Producto/Outbound_Prospector/` (extraído el 20-ago); (2) MCP `memory`
+retirado de `mcp.json` (grafo nunca alimentado, `{}` vacío, solapado con Graphify +
+memoria de Claude — mismo criterio que el retiro del `decision_ledger` de Sheets del
+24-jul); `memory-preload` reescrita como aviso de retiro, `cerrar-decision` ya no la
+referencia; (3) duplicado eliminado de la librería NotebookLM
+(`artf-arquitectura-actual-y-rol-1`); (4) Bug #4 de `notebooklm-mcp` diagnosticado
+con causa raíz exacta (lista de frases de carga en español incompleta + heurística
+de elipsis solo detectaba `...` ASCII, no `…` Unicode) y parcheado localmente en el
+caché de `npx` — parche no verificado en vivo aún, requiere reinicio de la sesión de
+Claude Code para que el proceso MCP recargue el archivo; (5) jerarquía de verdad de
+`estrategia-memoria.md` extendida con un 6º nivel explícito para la memoria de
+Claude Code; (6) `guia_configuracion_memoria_ia.md` marcada como plantilla genérica
+histórica, no estructura vigente; (7) Outbound Prospector confirmado en pausa —
+directriz inyectada en `contexto-proyecto.md` y en memoria de Claude: al reanudar,
+Paso 1 es configurar su notebook de NotebookLM antes de tocar código.
+**Fuentes:** verificación en vivo (`list_notebooks`, `get_health`, `ask_question`
+×4, lectura directa de `.kiro/skills/*`, `.kiro/settings/mcp.json`), sesión de
+auditoría de memoria 2026-08-21. Detalle completo →
+`04_Segundo_Cerebro/guia_arquitectura_memoria.md`.
+**Estado:** validado (ejecutado con autorización explícita del fundador). Pendiente
+de confirmación por el fundador: eliminar `02_Lineas_de_Producto/Outbound_Prospector/`
+(solo caché `__pycache__`/`.pytest_cache`/`.ruff_cache`, bloqueado por el
+clasificador de seguridad de Claude Code, no ejecutado).
+
+---
+
+## 🧠 Sesión 21-ago-2026 (continuación) — verificación en vivo de la migración de cierre de deuda técnica (sección 12), pendiente desde el 20-ago
+
+**Fecha:** 2026-08-21
+**Módulo:** ARTF / Base de datos (`lrdtjsxtaadpgrzkchlw`)
+**Tipo:** verificación
+**Conclusión:** Los 3 puntos de la migración `20260821024645_cierre_deuda_tecnica_seccion_12_manychat_grants_reunion`
+(aplicada el 20/21-ago, verificación en vivo bloqueada entonces por el clasificador
+de auto-mode) se confirmaron correctos contra la base real, sin necesidad de tocar
+nada — solo lectura:
+1. **Backfill `manychat_id` + CHECK constraint:** `0` filas con sufijo `.0` sobre
+   6.664 clientes con `manychat_id`; `clientes_manychat_id_solo_digitos` existe en
+   `pg_constraint`.
+2. **Grant `EXECUTE` a `anon` revocado a nivel de `ALTER DEFAULT PRIVILEGES` para el
+   rol `postgres`** (el rol real que corre las migraciones): confirmado vía
+   `pg_default_acl` — el ACL por defecto de `postgres` en `public` para funciones ya
+   no incluye `anon` (`{postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}`).
+   Corrida `fn_diagnostico_seguridad()`: `funciones_security_definer_con_anon: []`,
+   `funciones_trigger_con_authenticated: []` — sin huecos nuevos. La única entrada en
+   `vistas_sin_security_invoker` (`vw_embudo_diario`) es la excepción de diseño ya
+   documentada y decidida el 19-ago (envuelta en `fn_embudo_diario_o_vacio()`), no un
+   hallazgo nuevo.
+3. **`fn_reunion_mueve_etapa` corregido:** `pg_get_functiondef` confirma que ahora
+   resuelve `v_codigo` desde `new.estado` también en `INSERT` (antes forzaba
+   `'agendado'` sin mirar el estado real) — coincide exacto con el fix descrito en la
+   sesión del 20-ago.
+**Fuentes:** `execute_sql` en vivo contra `lrdtjsxtaadpgrzkchlw` (4 queries de solo
+lectura: conteo+constraint, `pg_default_acl`, `fn_diagnostico_seguridad()`,
+`pg_get_functiondef`), `list_migrations` (confirma la migración aplicada).
+**Estado:** cerrado. Sección 12 (Deuda técnica) queda 100% verificada, no solo
+aplicada. Próximo paso en la ronda de arquitectura "Planos ARTF": sección 13.
 
 ---
 

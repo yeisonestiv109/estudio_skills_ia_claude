@@ -8,23 +8,28 @@ description: "Rutina de cierre de sesión de El Prospector. Úsala cuando el fun
 > Antes era un hook `userTriggered`; se reclasificó como skill (24-jul-2026)
 > porque es un procedimiento on-demand invocado por el fundador, no una
 > reacción a un evento. Ver `.kiro/steering/estrategia-memoria.md`.
+>
+> **Ruta corregida 21-ago-2026:** Outbound Prospector se extrajo al repo
+> hermano `outbound-prospector-app/` el 20-ago-2026. Proyecto **en pausa**
+> desde esa fecha — esta skill queda lista para cuando se reanude.
 
 Ejecuta este protocolo en orden estricto. No inventes datos; si algo no se puede
 verificar, dilo (antipsicofancia).
 
-> Asume que se está cerrando sesión sobre `02_Lineas_de_Producto/Outbound_Prospector/`
-> (única línea con código real hoy). Si el trabajo fue en Inbound_AI_SDR/ARTF, adapta
-> las rutas de este protocolo a esa carpeta.
+> Asume que se está cerrando sesión sobre el repo hermano `outbound-prospector-app/`
+> (único con código real hoy, aunque en pausa). Si el trabajo fue en
+> Inbound_AI_SDR/ARTF (`artf-pipeline-app/`, frente activo), adapta las rutas
+> de este protocolo a ese repo.
 
 1. **AUDITORÍA DE DRIFT CÓDIGO↔SPEC:** compara
-   `02_Lineas_de_Producto/Outbound_Prospector/src/core/domain/models.py`,
+   `outbound-prospector-app/src/core/domain/models.py`,
    `policies.py` e `interfaces.py` contra
-   `02_Lineas_de_Producto/Outbound_Prospector/docs/modelos_dominio_core.md`.
+   `outbound-prospector-app/docs/modelos_dominio_core.md`.
    Si el código tiene enums, campos o puertos que la spec no documenta (o
    viceversa), sincroniza la spec AL código (el código ejecutable es la verdad).
    Para localizar rápido, usa `graphify query` antes de leer `src/` a mano.
 
-2. **VERIFICACIÓN DE TESTS:** desde `02_Lineas_de_Producto/Outbound_Prospector/`,
+2. **VERIFICACIÓN DE TESTS:** desde `outbound-prospector-app/`,
    corre `uv run pytest -q` (entorno WSL2 de Yeisiton; NUNCA rutas de venv de
    Windows). Registra el nº de tests verdes. Si alguno falla, NO cierres la
    sesión: repórtalo y detente.
@@ -36,7 +41,7 @@ verificar, dilo (antipsicofancia).
 4. **CONSOLIDAR MEMORIA EN 3 NIVELES:**
    - `01_Gobernanza_EOS/02_backlog_y_rocas.md`: qué se hizo, estado de cada Motor,
      objetivo de la próxima sesión (bloque fechado arriba, no borrar historial).
-   - `02_Lineas_de_Producto/Outbound_Prospector/docs/`: si se validó un concepto
+   - `outbound-prospector-app/docs/`: si se validó un concepto
      nuevo, documéntalo.
    - `01_Gobernanza_EOS/02_backlog_y_rocas.md`, sección "BITÁCORA DE DECISIONES
      HISTÓRICAS": registra las decisiones técnicas con su porqué (encadena con

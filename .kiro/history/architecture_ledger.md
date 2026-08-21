@@ -144,3 +144,70 @@ Se ejecutó el volcado exitoso al MCP de Google Docs (pestaña "Desarrollo tecni
 Implementar validación cruzada obligatoria (antigüedad + señal technográfica/escala) para triggers.
 Delegar los pesos de evaluación a políticas inyectables (ScoringPolicy) para asegurar adaptabilidad.
 Corregir tipados de Pydantic v2 (fecha_captura, ultima_verificacion) para control riguroso de obsolescencia.
+
+---
+
+## Entrada 006 — Cierre del Memory MCP flaggeado en la Entrada 001
+
+- **Fecha:** 21-ago-2026
+- **Rama Git:** N/A (repo de gobernanza, sin código de producto)
+- **Autor:** Yeison Estiven Delgado Ordoñez (ejecutado por Claude Code, auditoría de memoria)
+
+### Etapa 1 · Investigación
+La Entrada 001 (7-jul-2026) validó el estado de `Memory MCP` y `google-sheets` al arrancar el proyecto, sin auditar después si se usaban de verdad. La auditoría del 21-ago-2026 encontró que `Memory MCP` (`@modelcontextprotocol/server-memory`, grafo en `.kiro/memory/prospector-knowledge-graph.json`) seguía configurado y documentado (`memory-preload` skill) pero el archivo del grafo era `{}` — nunca se escribió una sola entidad en más de un mes de uso del proyecto.
+
+### Etapa 2 · Acción Consolidada
+Se retiró `memory` de `.kiro/settings/mcp.json` (mismo criterio que el retiro del `decision_ledger` de Google Sheets, 24-jul-2026: la trazabilidad vive 100% en el repo). `memory-preload/SKILL.md` se reescribió como aviso de retiro con el contenido original conservado como referencia histórica; `cerrar-decision/SKILL.md` ya no referencia el MCP en su paso opcional.
+
+### Etapa 3 · Conclusión de Diseño
+No mantener infraestructura configurada "por si acaso" sin un problema de negocio real detrás — coherente con "Lo Aburrido es Oro" (`04_Segundo_Cerebro/directrices_globales.md`).
+Si aparece un caso de uso real que Graphify + los `.md` del repo no cubran, evaluarlo desde cero con el caso de uso concreto documentado primero, no reactivar esta configuración a ciegas.
+Detalle completo de la auditoría → `04_Segundo_Cerebro/guia_arquitectura_memoria.md`.
+
+---
+
+## Entrada 007 — Visión estratégica: orquestación Kiro + Antigravity (PROPUESTO)
+
+- **Fecha:** 21-ago-2026
+- **Rama Git:** N/A (decisión de arquitectura, sin código de producto todavía)
+- **Autor:** Yeison Estiven Delgado Ordoñez
+
+### Etapa 1 · Investigación
+Durante la auditoría de memoria del 21-ago se confirmó que las carpetas `.kiro/`
+(presentes en los 3 repos) y `.agents/` (Antigravity, en `estudio_skills_ia_claude/`)
+se mantienen deliberadamente, no por inercia: el fundador ya tiene decidido que en
+el futuro ambas herramientas se integrarán y trabajarán en conjunto con Claude Code,
+cada una explotada por su fortaleza real. Precedente ya validado y en uso: la
+decisión de adopción de Antigravity CLI (`agy`) para 3 casos de uso concretos
+(auditoría masiva, triage de incidentes, segunda opinión/revisión cruzada) —
+memoria `antigravity_cli_adoption_decision`, audio permanece en NotebookLM.
+
+### Etapa 2 · Acción Consolidada
+Ninguna todavía — es una declaración de intención estratégica, no una integración
+técnica. Se documenta ahora para que sesiones futuras (de Kiro, de Antigravity, o
+de Claude Code) no reinventen el criterio de reparto ni asuman que una herramienta
+reemplaza a la otra.
+
+### Etapa 3 · Conclusión de Diseño
+**Principio de reparto (a refinar cuando se ejecute, "en el momento oportuno" —
+palabras del fundador, sin fecha fijada):**
+- **Kiro** — IDE de registro de este workspace: specs, steering (`.kiro/steering/`,
+  carga automática), hooks de evento, skills on-demand. Su fortaleza es el trabajo
+  spec-driven, nativo del repo, donde reglas de largo plazo deben cargarse solas en
+  cada sesión sin que el humano las repita.
+- **Antigravity CLI (`agy`)** — agente de Google, ya validado para auditoría masiva,
+  triage de incidentes y segunda opinión/revisión cruzada sobre el trabajo de
+  Claude. Su fortaleza es actuar como verificador independiente (otro modelo, otro
+  ángulo) y absorber volumen que no necesita el contexto profundo de una sesión de
+  Claude Code.
+- **Claude Code** — orquestador de la mayoría del desarrollo profundo y de esta
+  misma auditoría de memoria.
+- **Regla dura, no negociable:** ninguna herramienta se usa "a medias". No se
+  delega a una tarea que la otra resuelve mejor solo por comodidad — cada
+  integración futura debe justificar explícitamente por qué esa herramienta y no
+  otra, mismo criterio anti-bazuca que ya rige el resto del proyecto.
+- **Pendiente real (no inventar hasta que se decida):** no existe todavía una matriz
+  de enrutamiento tarea→herramienta ni una integración técnica entre Kiro/Antigravity
+  y la memoria compartida de este workspace. Cuando se ejecute, debe pasar primero
+  por `estrategia-memoria.md`/`guia_arquitectura_memoria.md` para que ambas
+  herramientas hereden la misma jerarquía de verdad, no una paralela.

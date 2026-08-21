@@ -2,6 +2,12 @@
 
 Este repositorio es la **fuente de la verdad** del negocio, estructurado bajo el marco operativo **EOS (Traction)** y dividido en dos grandes líneas de producto.
 
+> 📖 **¿Primera vez aquí (humano o IA)?** Lee
+> [`01_Gobernanza_EOS/05_estado_del_negocio_manifiesto.md`](01_Gobernanza_EOS/05_estado_del_negocio_manifiesto.md)
+> primero — la fotografía completa: estructura de los 3 pilares + la historia
+> de cómo llegamos aquí y hacia dónde vamos. Este README es solo el índice de
+> navegación.
+
 ## Estructura de Navegación
 
 ```text

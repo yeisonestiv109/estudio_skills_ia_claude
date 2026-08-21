@@ -29,14 +29,28 @@ Cuando dos fuentes se contradicen, gana la de MÁS arriba. Sin excepción.
    (handoff, última sesión, objetivo próximo — sección "🔜 PRÓXIMO PASO" y el
    historial de sesiones encima de ella). Se lee SIEMPRE primero.
 3. **`02_Lineas_de_Producto/<Linea>/docs/`** — verdad sobre los CONTRATOS y flujos
-   de diseño (ej. `Outbound_Prospector/docs/modelos_dominio_core.md`,
-   `flujos_motor_1_y_2.md`). Debe seguir al código.
+   de diseño (ej. `Inbound_AI_SDR/docs/`; Outbound Prospector ya no vive aquí,
+   ver nivel 3b). Debe seguir al código.
+3b. **Para Outbound Prospector específicamente:** su código y docs se extrajeron
+   al repo hermano `outbound-prospector-app/` el 20-ago-2026
+   (`outbound-prospector-app/docs/modelos_dominio_core.md`,
+   `flujos_motor_1_y_2.md`) — mismo rango que el nivel 3, solo cambia la ruta
+   física porque es un repo distinto, no una carpeta de este.
 4. **`01_Gobernanza_EOS/02_backlog_y_rocas.md`, sección "BITÁCORA DE DECISIONES
    HISTÓRICAS"** — verdad sobre el PORQUÉ (decisiones tomadas). Una decisión
    marcada "pendiente" NO implica que el código la haya aplicado; verificar en
    el código antes de afirmar que está hecha.
 5. **`01_Gobernanza_EOS/00_vision_y_principios.md`** y **`04_eos_vto_agencia.md`**
    — ADN, estrategia y V/TO de la agencia (rara vez cambian).
+6. **Memoria auto-persistente de Claude Code** (`~/.claude/projects/.../memory/*.md`,
+   compartida entre los 4 puntos de entrada vía `autoMemoryDirectory`, ver
+   `01_entorno_y_operacion.md`) — el rango MÁS BAJO de los seis. Es caché de
+   sesión y bitácora de hallazgos/decisiones no derivables del código (bugs de
+   MCP, contexto de colaboración), nunca fuente de verdad sobre qué hace el
+   sistema. Si contradice cualquiera de los 5 niveles de arriba, se corrige la
+   memoria, nunca al revés — igual que con cualquier otro `.md`. (Añadido
+   21-ago-2026, auditoría de arquitectura de memoria — ver
+   `04_Segundo_Cerebro/guia_arquitectura_memoria.md` §1.7.)
 
 Regla dura: **ninguna afirmación sobre el comportamiento del código se escribe en
 memoria sin haberlo verificado en `src/` o en un test.** Si no se verificó, se

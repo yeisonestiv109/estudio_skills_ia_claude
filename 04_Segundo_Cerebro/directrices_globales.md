@@ -5,6 +5,10 @@
 > [`01_Gobernanza_EOS/00_vision_y_principios.md`](../01_Gobernanza_EOS/00_vision_y_principios.md)
 > (eso sigue siendo la fuente de verdad de visión/negocio) — este documento es la
 > capa operativa de CÓMO se organiza y consulta el conocimiento del día a día.
+>
+> Auditoría del sistema de memoria mismo (hallazgos, señales de salud, y el
+> índice del meta-manual reproducible para otros negocios) →
+> [`guia_arquitectura_memoria.md`](guia_arquitectura_memoria.md).
 
 ## 1. Filosofía operativa — "Lo Aburrido es Oro"
 
@@ -35,7 +39,7 @@ y Prospector, en vez de duplicarlos (regla "un concepto, un lugar").
 | `04_Segundo_Cerebro/Negocio_General/` | Operativa de negocio transversal (agenda, correo, admin) — no ligada a una línea/cliente | `PROPUESTO` — "Negocio General" |
 | `04_Segundo_Cerebro/Desarrollo_Personal/` | Resúmenes de contenido de crecimiento personal | `PROPUESTO` — "Desarrollo Personal" |
 | `01_Gobernanza_EOS/Reuniones_Audios_Negocio/` | Transcripciones de mentoría Javier/Catalina (cruza ambas líneas) | `PROPUESTO` — "Mentoría Javier/Catalina" |
-| `02_Lineas_de_Producto/Outbound_Prospector/docs/notebooklm/` | Contexto/estrategia de la línea Prospector para RAG | `PROPUESTO` — "Outbound Prospector — Contexto y Estrategia" |
+| `outbound-prospector-app/docs/notebooklm/` (repo hermano, no `02_Lineas_de_Producto/` — extraído 20-ago-2026) | Contexto/estrategia de la línea Prospector para RAG | `PROPUESTO` — "Outbound Prospector — Contexto y Estrategia". **En pausa por decisión del fundador (21-ago-2026): no crear hasta reanudar el proyecto; al reanudarlo, este notebook es el Paso 1 obligatorio antes de tocar código.** |
 | `03_Clientes_y_Casos/02_Cliente_ARTF/Reuniones_Audios/` | Transcripciones de reuniones de negocio ARTF | `IMPLEMENTADO` — "ARTF — Negocio y Reuniones" (`https://notebook.google.com/notebook/c9c609f7-cb64-4929-9273-f60a7f19857e`, 15-ago-2026) |
 | *(ya existía)* — notebook técnico ARTF | Arquitectura/DB/esquema — **no** se mezcla con reuniones de negocio | `IMPLEMENTADO` — "ARTF: Arquitectura de Software y Sistema Operativo de Negocio" (`https://notebook.google.com/notebook/ae2ca639-f8f7-48b9-b5b8-526f5ace0a95`) |
 | *(nuevo, sin carpeta de repo dedicada)* | Investigación UX/diseño (Deep Research) para el Formulario Closers | `IMPLEMENTADO` — "UX/Diseño — Deep Research" (`https://notebook.google.com/notebook/8614a750-e564-4c75-a189-af4e234ac714`) |

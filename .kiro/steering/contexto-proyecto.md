@@ -28,6 +28,9 @@ Una agencia de **AI RevOps & Automatización de Ingresos** cofundada por:
 | **Mentores** | Catalina Rúa + Javier | Catalina Rúa |
 | **Código vive en** | `02_Lineas_de_Producto/Inbound_AI_SDR/` | `02_Lineas_de_Producto/Outbound_Prospector/` |
 
+**Fotografía completa y narrativa (para compartir con otras IAs/personas)** →
+[`05_estado_del_negocio_manifiesto.md`](../../01_Gobernanza_EOS/05_estado_del_negocio_manifiesto.md).
+
 ## Mapa de memoria (a dónde ir según la tarea)
 
 ### Gobernanza y estrategia
@@ -42,9 +45,13 @@ Una agencia de **AI RevOps & Automatización de Ingresos** cofundada por:
   - Contexto y arquitectura técnica → `04-analisis-arquitectura-y-db.md`
   - EOS del cliente → `03-contexto-artf-eos.md`
 
-### Línea 2 — Outbound Prospector (incubación)
-- Código (`src/`, `tests/`) → `02_Lineas_de_Producto/Outbound_Prospector/`
-- Metodología de ventas (5 módulos) → `02_Lineas_de_Producto/Outbound_Prospector/docs/metodologia_ventas_5_modulos.md`
+### Línea 2 — Outbound Prospector (⏸️ en pausa, ver `02_backlog_y_rocas.md`)
+- Código y docs completos → repo hermano `outbound-prospector-app/` (extraído el
+  20-ago-2026; `02_Lineas_de_Producto/Outbound_Prospector/` ya no existe en este repo)
+- Metodología de ventas (5 módulos) → `outbound-prospector-app/docs/metodologia_ventas_5_modulos.md`
+- **Al reanudar:** Paso 1 obligatorio antes de tocar código es configurar su
+  notebook de NotebookLM (`PROPUESTO` → `IMPLEMENTADO`, ver
+  `directrices_globales.md`) — decisión del fundador, 21-ago-2026.
 - Cliente TBBC → `03_Clientes_y_Casos/01_Cliente_TBBC/`
   - Playbooks M4/M5 → `01-playbook-m4-entrevista.md` · `02-playbook-m5-relacion.md`
 

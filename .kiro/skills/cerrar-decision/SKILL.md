@@ -25,11 +25,12 @@ description: "Registra una decisión o validación concluida en la bitácora loc
    Para decisiones de arquitectura estructurales, considera además una entrada
    en el ledger append-only `.kiro/history/architecture_ledger.md`.
 
-3. **(Opcional) Persiste en el Knowledge-Graph** vía el MCP `memory`
-   (`create_entities` / `create_relations`) para recuperación semántica futura
-   (encadena con la skill `memory-preload`).
+3. **Confirma en el chat** el archivo/entrada escrita para trazabilidad.
 
-4. **Confirma en el chat** el archivo/entrada escrita para trazabilidad.
+> ~~Paso 3 original: persistir en el Knowledge-Graph vía MCP `memory`.~~ Retirado
+> 21-ago-2026 — ver `memory-preload/SKILL.md` (el MCP nunca se alimentó, se
+> eliminó de `mcp.json`). La trazabilidad vive 100% en este archivo append-only,
+> mismo criterio ya aplicado al retirar el `decision_ledger` de Sheets.
 
 GUARDRAILS: append-only (nunca sobrescribas). Antipsicofancia: si la decisión
 carece de fuente verificable, registra `fuentes=N/A` y márcala como supuesto.

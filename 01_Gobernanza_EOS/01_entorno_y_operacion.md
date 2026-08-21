@@ -94,6 +94,31 @@ EOS)" → `https://notebook.google.com/notebook/ae2ca639-f8f7-48b9-b5b8-526f5ace
 cerebro" de Yeisiton para arquitectura/historia de ARTF — consultarlo proactivamente ante
 preguntas de ese tipo, no solo cuando se pida explícitamente.**
 
+## Orquestación de herramientas de IA: Kiro + Antigravity + Claude Code (PROPUESTO, 21-ago-2026)
+
+> Detalle y razonamiento completos → `.kiro/history/architecture_ledger.md` Entrada
+> 007. Esto es el resumen operativo para consulta rápida.
+
+Decisión estratégica del fundador (sin ejecución técnica todavía, "en el momento
+oportuno"): `.kiro/` y `.agents/` se mantienen en el repo deliberadamente, no por
+inercia — se van a integrar y a operar en conjunto con Claude Code, cada
+herramienta usada al máximo de su fortaleza real, sin solapamientos ni uso "a
+medias":
+
+- **Kiro** — IDE de registro: specs, steering (carga automática), hooks de evento,
+  skills on-demand. Fortaleza: trabajo spec-driven nativo del repo.
+- **Antigravity CLI (`agy`)** — agente de Google. Fortaleza ya validada: auditoría
+  masiva, triage de incidentes, segunda opinión/revisión cruzada del trabajo de
+  Claude (ver memoria `antigravity_cli_adoption_decision`; el audio sigue siendo
+  de NotebookLM, no de Antigravity).
+- **Claude Code** — orquestador de la mayoría del desarrollo profundo hoy.
+
+**Regla dura:** cualquier integración futura entre estas herramientas debe pasar
+primero por `estrategia-memoria.md`/`04_Segundo_Cerebro/guia_arquitectura_memoria.md`
+para heredar la misma jerarquía de verdad — no crear una memoria/contexto paralelo
+por herramienta. No existe todavía una matriz de enrutamiento tarea→herramienta;
+no inventarla hasta que el fundador dé luz verde a la ejecución.
+
 ## Reestructuración de repos + Graphify + memoria compartida (20-ago-2026)
 
 **Problema real detectado (no solo sospechado por Yeisiton):** la memoria auto-persistente

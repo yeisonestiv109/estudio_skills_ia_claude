@@ -13,7 +13,7 @@ Según la respuesta, responde con un mensaje corto de motivación (máx. 2 líne
 ## Cómo cargar contexto (estructura numerada canónica)
 
 1. **Memoria de trabajo (EOS):** lee siempre primero [`01_Gobernanza_EOS/02_backlog_y_rocas.md`](01_Gobernanza_EOS/02_backlog_y_rocas.md) — handoff, objetivos (rocas) y bitácora de decisiones.
-2. **Neocórtex técnico (docs/arquitectura, NO el código):** Revisa `02_Lineas_de_Producto/` para docs — `Inbound_AI_SDR/docs/` (ARTF) u `Outbound_Prospector/docs/` (El Prospector). **El código real ya no vive aquí:** Inbound está en el repo hermano `artf-pipeline-app/`, Outbound en `outbound-prospector-app/` (ambos bajo el mismo padre `proyecto_negocio_doscaras/`).
+2. **Neocórtex técnico (docs/arquitectura):** Inbound (ARTF) → `02_Lineas_de_Producto/Inbound_AI_SDR/docs/` aquí mismo; su código real vive en el repo hermano `artf-pipeline-app/`. Outbound (El Prospector) → **código y docs completos** en el repo hermano `outbound-prospector-app/docs/` — `02_Lineas_de_Producto/Outbound_Prospector/` ya no existe en este repo, se extrajo entero el 20-ago-2026 (ambos hermanos bajo el mismo padre `proyecto_negocio_doscaras/`).
 3. **ADN / estrategia:** [`01_Gobernanza_EOS/00_vision_y_principios.md`](01_Gobernanza_EOS/00_vision_y_principios.md) (incluye la visión, las 3 reglas de oro y el perfil híbrido).
 4. **Clientes y Laboratorios:** Revisa [`03_Clientes_y_Casos/`](03_Clientes_y_Casos/) para entender el contexto particular de la oportunidad comercial activa (ej. ARTF).
 5. **Grafo de código:** si existe `graphify-out/graph.json`, usa `graphify query "<pregunta>"` antes de leer archivos de `src/` sueltos.

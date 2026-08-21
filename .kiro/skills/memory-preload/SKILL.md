@@ -1,31 +1,36 @@
 ---
 name: memory-preload
-description: "Antes de una tarea de alta complejidad arquitectónica (diseñar/auditar un módulo, tomar una decisión estratégica), recupera del Knowledge-Graph del MCP 'memory' el subgrafo pertinente para no trabajar a ciegas. Úsala cuando el fundador diga 'precarga memoria', 'qué sabemos de X', o antes de empezar un diseño complejo."
+description: "RETIRADA (21-ago-2026). No usar. Ver nota de cierre abajo — el MCP `memory` que esta skill requería fue removido de mcp.json."
 ---
 
-# Precarga de Memoria — El Prospector
+# Precarga de Memoria — El Prospector (RETIRADA)
 
-> Reclasificado de hook a skill (24-jul-2026): es un procedimiento on-demand
-> previo a tareas complejas, no una reacción a un evento.
+> **Nota de cierre (21-ago-2026, decisión del fundador, auditoría de arquitectura
+> de memoria):** el MCP `memory` (`@modelcontextprotocol/server-memory`, grafo en
+> `.kiro/memory/prospector-knowledge-graph.json`) se retiró de `mcp.json` — el
+> archivo llevaba semanas configurado y documentado sin una sola entidad escrita
+> (`{}` vacío), sin problema de negocio real detrás (viola "Lo Aburrido es Oro" de
+> `04_Segundo_Cerebro/directrices_globales.md`), y solapado con lo que ya cubren
+> Graphify (relaciones de código) y la memoria auto-persistente de Claude Code
+> (decisiones, contexto). Mismo criterio que ya se aplicó una vez en este proyecto
+> al retirar el `decision_ledger` de Google Sheets (24-jul-2026, ver
+> `.kiro/skills/cerrar-decision/SKILL.md`): la trazabilidad vive 100% en el repo.
+>
+> Detalle completo → `04_Segundo_Cerebro/guia_arquitectura_memoria.md` §1.2.
+>
+> **Si en el futuro aparece un caso de uso real** que ni Graphify ni los `.md`
+> del repo cubran (ej. relaciones humanas/negocio no versionables), reevaluar
+> activarlo de nuevo — no reescribir esta skill de memoria, crear una nueva con
+> el caso de uso concreto documentado primero.
 
-Requiere el MCP `memory` activo (config en `.kiro/settings/mcp.json`,
-`MEMORY_FILE_PATH` absoluto a `.kiro/memory/prospector-knowledge-graph.json`).
+Contenido original conservado abajo solo como referencia histórica de qué hacía.
 
-1. **Deriva 2-4 entidades ancla** del pedido actual (ej. Motor 2, Negative ICP,
-   descubrimiento, ScoreTriggerPolicy, reglas de oro).
+<details>
+<summary>Procedimiento original (no ejecutable, el MCP ya no está registrado)</summary>
 
-2. **Lee el Knowledge-Graph** vía el MCP `memory` (`search_nodes` / `open_nodes`
-   / `read_graph`) sobre esas claves para traer decisiones previas, riesgos ya
-   identificados y contratos de puertos relacionados.
+1. Deriva 2-4 entidades ancla del pedido actual.
+2. Lee el Knowledge-Graph vía el MCP `memory` (`search_nodes`/`open_nodes`/`read_graph`).
+3. Inyección selectiva: carga solo el subgrafo pertinente.
+4. Al terminar, persiste nuevas entidades/relaciones y encadena con `cerrar-decision`.
 
-3. **Inyección selectiva:** carga SOLO el subgrafo pertinente al contexto, nunca
-   el grafo completo (anti context-bloat, disciplina de tokens).
-
-4. **Al terminar la tarea**, persiste las nuevas entidades/relaciones
-   (`create_entities` / `create_relations` / `add_observations`) y encadena con
-   la skill `cerrar-decision`.
-
-GUARDRAILS: cargar solo lo pertinente; no sobrescribir memoria con datos no
-validados (marca supuestos como tales). Usa el MCP `memory`, NO context7.
-Complementa —no reemplaza— la jerarquía de verdad de `estrategia-memoria.md`
-(el código ejecutable siempre le gana a la memoria). Respeta `AGENTS.md`.
+</details>

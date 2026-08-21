@@ -6,8 +6,9 @@
 > **Nota de cierre (24-jul-2026):** este spec fue el MVP inicial de 3 tareas. El
 > proyecto ya lo rebasó: los Motores 1-4 están implementados y blindados (v6.2+,
 > 476/480 tests verdes) bajo arquitectura hexagonal. La fuente de verdad técnica
-> viva es `02_Lineas_de_Producto/Outbound_Prospector/docs/` (contratos en
-> `modelos_dominio_core.md`, flujos en `flujos_motor_1_y_2.md`) y el estado en
+> viva es `outbound-prospector-app/docs/` (contratos en `modelos_dominio_core.md`,
+> flujos en `flujos_motor_1_y_2.md` — repo hermano extraído el 20-ago-2026, ya no
+> vive en `02_Lineas_de_Producto/`) y el estado en
 > `01_Gobernanza_EOS/02_backlog_y_rocas.md`. Este documento se conserva solo como
 > registro histórico del alcance original; **no usarlo como plan de trabajo actual.**
 

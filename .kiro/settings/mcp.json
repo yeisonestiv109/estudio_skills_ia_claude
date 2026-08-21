@@ -1,21 +1,3 @@
 {
-  "mcpServers": {
-    "memory": {
-      "command": "wsl.exe",
-      "args": [
-        "bash",
-        "-lc",
-        "MEMORY_FILE_PATH=/home/estiv12/proyecto_negocio_doscaras/estudio_skills_ia_claude/.kiro/memory/prospector-knowledge-graph.json exec npx -y @modelcontextprotocol/server-memory"
-      ],
-      "disabled": false,
-      "autoApprove": [
-        "search_nodes",
-        "open_nodes",
-        "read_graph",
-        "create_entities",
-        "create_relations",
-        "add_observations"
-      ]
-    }
-  }
+  "mcpServers": {}
 }

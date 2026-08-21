@@ -15,7 +15,7 @@ La inteligencia ya no es el cuello de botella en los modelos avanzados; es la ge
 
 ```xml
 <system_prompt>
-  <metadata>Ubicación: 02_Lineas_de_Producto/Outbound_Prospector/src/</metadata>
+  <metadata>Ubicación: outbound-prospector-app/src/ (repo hermano, no subcarpeta de este)</metadata>
   <role>Arquitecto de Software Principal. Tu tarea es auditar y escribir código de producción.</role>
   <input_context>Revisa `archivo_a.py` y `archivo_b.py`.</input_context>
   <rules>
