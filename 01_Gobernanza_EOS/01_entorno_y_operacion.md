@@ -106,22 +106,55 @@ migración) que ninguna sesión posterior — incluida toda la ronda de trabajo 
 llegó a ver. Rescatados y fusionados a la memoria activa el 20-ago.
 
 **Fix aplicado — `autoMemoryDirectory` en `.claude/settings.local.json`** (mecanismo nativo
-de Claude Code, no un workaround manual): tanto `estudio_skills_ia_claude/`,
-`artf-pipeline-app/` como `ai_lead_prospector/ia_lead_prospector/` apuntan ahora al mismo
-directorio compartido (`~/.claude/projects/-home-estiv12-proyecto-cliente-catalina/memory`)
-— cualquier sesión futura, sin importar en cuál de estas carpetas se abra, lee y escribe la
-MISMA memoria. Archivo gitignored en los 3 repos (config personal, no de equipo).
+de Claude Code, no un workaround manual): `estudio_skills_ia_claude/`, `artf-pipeline-app/`,
+`outbound-prospector-app/` y la carpeta padre misma apuntan ahora al mismo directorio
+compartido (`~/.claude/projects/-home-estiv12-proyecto-cliente-catalina/memory`) — cualquier
+sesión futura, sin importar en cuál de estas carpetas se abra, lee y escribe la MISMA
+memoria. Archivo gitignored en los repos (config personal, no de equipo). (Ver corrección más
+abajo: el tercer proyecto real es `outbound-prospector-app`, no `ai_lead_prospector` — ese es
+un proyecto completamente distinto, sin relación con esta agencia.)
 
-**`artf-pipeline-app` movido a `/home/estiv12/proyecto_cliente_catalina/artf-pipeline-app/`**
+**`artf-pipeline-app` movido a `/home/estiv12/proyecto_negocio_doscaras/artf-pipeline-app/`**
 (antes vivía separado en `/home/estiv12/artf-pipeline-app`, sin relación de carpetas con el
 resto) — al mismo nivel que `estudio_skills_ia_claude/`, para que ambos proyectos conectados
 (el código real y la base de conocimiento/gobernanza) se gestionen juntos. Movido excluyendo
 `node_modules`/`.next` (regenerados con `npm install`/`next build` en el destino, no tenía
 sentido copiar/mover ~1.4GB regenerable) — verificado con diff de archivos idéntico,
-`git log`/remote intactos, y `npm run type-check` limpio tras el movimiento. `ai_lead_prospector/ia_lead_prospector`
-**no se movió** (tenía cambios reales sin commitear en el momento de esta sesión) — queda
-pendiente esa misma reubicación cuando se retome El Prospector, decisión de Yeisiton, no
-técnica.
+`git log`/remote intactos, y `npm run type-check` limpio tras el movimiento.
+
+**CORRECCIÓN REAL (misma sesión, confirmada por Yeisiton, no asumida): `/home/estiv12/ai_lead_prospector`
+NO es El Prospector de la agencia.** Es un proyecto totalmente distinto ("AI LEAD PROSPECTOR"
+v3.14.0, branding "Glovar", autoría "Antigravity AI", historia de git real propia hasta el
+3-jul-2026) — se había tocado por error ahí un `autoMemoryDirectory` asumiendo que era el
+mismo proyecto; revertido por completo (`.claude/` borrado, `.gitignore` restaurado con
+`git checkout`) en cuanto Yeisiton corrigió el error. **El Prospector real** siempre vivió
+anidado dentro de este mismo repo, en `02_Lineas_de_Producto/Outbound_Prospector/` (antes,
+antes de la reestructuración EOS del 13-ago, en una estructura plana `src/`/`tests/` en la
+raíz) — 8.957 líneas reales en `src/` + 7.440 en `tests/`, nada de scaffold.
+
+**Extraído a su propio repo hermano `outbound-prospector-app/`, preservando su historia real
+de git** (`git filter-repo`, no un simple `mv`/copia — habría perdido la historia): 16 commits
+reales recuperados desde `chore: consolidacion de memoria y arquitectura base Motores 1 y 2`
+(22-jul-2026). Verificado standalone tras la extracción: 476/480 tests pasan (los 4 fallos
+son de calibración de tiers/aging de TheirStack ya documentada como en curso, no una
+regresión de la extracción). `pyproject.toml` propio creado (dependencias reales inferidas de
+los imports: `pydantic[email]`, `requests`, `tenacity`, `feedparser`, `groq`, `bs4`, dev:
+`pytest`+`ruff`+`playwright` — antes dependía del `pyproject.toml` compartido del repo padre).
+
+**Carpeta padre renombrada de `proyecto_cliente_catalina/` a `proyecto_negocio_doscaras/`**
+(decisión de Yeisiton, "las dos caras de la moneda" — Inbound/Outbound) — corregidas todas las
+rutas absolutas que la referenciaban (`.claude/settings.json` del padre, hooks de Kiro
+`.kiro/hooks/*.json`, MCP `.kiro/settings/mcp.json`). Estructura final, 3 repos hermanos, cada
+uno con su propio `graphify`: `estudio_skills_ia_claude/` (base de conocimiento/gobernanza,
+sin código de producto), `artf-pipeline-app/` (Inbound, ARTF), `outbound-prospector-app/`
+(Outbound, TBBC/El Prospector).
+
+**Vault de Obsidian también movido al padre** (`proyecto_negocio_doscaras/.obsidian/`, antes
+solo `estudio_skills_ia_claude/.obsidian/`) — Obsidian no le importan los límites de repos git,
+un vault es solo un árbol de carpetas, así que ahora el grafo visual/backlinks abarca los 3
+repos en vez de solo uno. Plugin de comunidad **Dataview** recomendado (no instalado por
+Claude — instalar desde el navegador de plugins de Obsidian mismo) para un dashboard en vivo
+consultando frontmatter YAML entre proyectos.
 
 **Graphify instalado en ambos repos** (`estudio_skills_ia_claude/` y `artf-pipeline-app/`,
 vía `uv tool install graphifyy[sql]` — incluye soporte de parseo SQL, relevante por el
