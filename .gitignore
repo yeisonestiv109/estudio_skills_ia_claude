@@ -94,3 +94,7 @@ graphify-out/
 
 # Claude Code local settings (personal, not team-shared)
 .claude/settings.local.json
+
+# Vault de Obsidian -- ahora vive en el padre (proyecto_negocio_doscaras/.obsidian),
+# abarca los 3 repos hermanos, no solo este.
+.obsidian/
