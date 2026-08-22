@@ -1,0 +1,239 @@
+// ============================================================================
+// ARTF — Vista de Datos (DBML)
+// Fuente de verdad versionada del modelo de datos real, complementaria al
+// erDiagram de Mermaid ya existente en "Planos ARTF" §06 (overview ligero,
+// solo relaciones). Este archivo sí expresa tipos, defaults, constraints e
+// índices — actualícese a mano junto con cada migración que cambie el
+// esquema de estas tablas (ver 06-arquitectura-objetivo-diagrams-as-code.md
+// §"Por qué Mermaid + DBML" para el porqué de esta división).
+//
+// Alcance: las 6 tablas pedidas (clientes, gestion_leads, reuniones, ventas,
+// venta_ajustes, activity_log) — el núcleo del ciclo Lead→Venta. NO incluye
+// tablas de catálogo (estados_lead, fuentes, productos, usuarios, monedas,
+// usuario_roles, estado_transiciones) ni las de mecanismos aún en 0 filas en
+// producción (enlaces_agenda, depositos_reserva, disponibilidad_closer) —
+// están en el erDiagram de Mermaid §06, no duplicadas aquí a propósito.
+//
+// RLS / security_invoker: DBML no tiene sintaxis nativa para políticas RLS
+// ni para el flag security_invoker de las vistas (vw_pipeline,
+// vw_scorecard_check, vw_embudo_diario, etc.) — ambos viven a nivel de
+// Postgres, no de columna/tabla en el sentido que DBML modela. Esa capa de
+// seguridad ya está documentada y verificada en vivo en Planos ARTF §07 y en
+// fn_diagnostico_seguridad() (solo service_role); no se repite aquí para no
+// generar una segunda fuente de verdad que pueda desincronizarse.
+//
+// Todo verificado en vivo el 21-ago-2026 contra el proyecto real
+// (lrdtjsxtaadpgrzkchlw) vía information_schema, pg_constraint y pg_enum —
+// no reconstruido de memoria ni del PDF de arquitectura.
+// ============================================================================
+
+Enum origen_escritura {
+  worker_ia
+  formulario_humano
+  importacion
+  api
+  manual_sql
+}
+
+Enum nivel_urgencia {
+  baja
+  media
+  alta
+  critica
+}
+
+Enum periodicidad {
+  mensual
+  quincenal
+  anual
+}
+
+Enum estado_reunion {
+  agendada
+  confirmada
+  realizada
+  no_show
+  cancelada
+  reprogramada
+}
+
+Enum forma_pago {
+  contado
+  cuotas
+  mixto
+  financiado_externo
+}
+
+Enum tipo_ajuste {
+  reembolso
+  chargeback
+  descuento_posventa
+  correccion
+}
+
+Enum tipo_evento {
+  creacion
+  cambio_estado
+  asignacion
+  handoff
+  mensaje_lead
+  mensaje_bot
+  agendamiento
+  show_up
+  no_show
+  oferta
+  venta
+  pago
+  ajuste
+  nota
+}
+
+Enum tipo_actor {
+  usuario
+  bot
+  sistema
+}
+
+Table clientes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  manychat_id text [unique, note: 'CHECK clientes_manychat_id_solo_digitos (solo dígitos) desde el 20/21-ago-2026 — backfill de 263 filas con sufijo .0 verificado en 0 hoy. Normalizado en cada INSERT/UPDATE por el trigger trg_normalizar_cliente (fn_normalizar_cliente).']
+  nombre text [not null, note: 'CHECK: length(btrim(nombre)) > 0']
+  ig_handle "citext" [note: 'Normalizado (quita @ inicial, minúsculas) por trg_normalizar_cliente. UNIQUE parcial donde IS NOT NULL (uq_clientes_ig, no expresable en la sintaxis pk/unique simple de DBML).']
+  whatsapp_e164 text [note: 'CHECK formato E.164: ^\\+[1-9][0-9]{7,14}$. UNIQUE parcial donde IS NOT NULL (uq_clientes_whatsapp).']
+  correo "citext" [note: 'CHECK formato email básico vía regex sobre citext.']
+  profesion text
+  salario_monto numeric [note: 'CHECK >= 0. Si no es null, salario_currency y salario_periodicidad son obligatorios (ck_salario_completo).']
+  salario_currency char(3) [ref: > monedas.code]
+  salario_periodicidad periodicidad
+  pais_iso2 char(2) [note: 'CHECK: ^[A-Z]{2}$']
+  notas text
+  version integer [not null, default: 1, note: 'OPTIMISTIC LOCKING — mismo mecanismo que gestion_leads.version, ver esa tabla para el detalle completo del trigger/protocolo.']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'Identidad estable de la persona, 1:N histórico con gestion_leads (una fila por persona real, sobrevive a múltiples procesos comerciales a lo largo del tiempo).'
+}
+
+Table gestion_leads {
+  id uuid [pk, default: `gen_random_uuid()`]
+  cliente_id uuid [not null, ref: > clientes.id, note: 'UNIQUE PARCIAL real: uq_gestion_abierta_por_cliente WHERE cerrado_at IS NULL — un cliente puede tener N filas históricas cerradas, pero SOLO UNA abierta a la vez. No es un 1:1 de esquema, es un invariante de negocio impuesto por índice filtrado (no expresable como FK 1:1 en DBML).']
+  setter_id uuid [ref: > usuarios.id, note: 'Entra como el bot "Andrew" por diseño (fn_sync_bot_turn); un setter humano lo reclama vía fn_reclamar_lead(). RLS: setter ve/edita donde setter_id = su propio id.']
+  closer_id uuid [ref: > usuarios.id, note: 'CHECK ck_gl_handoff_closer: si fecha_handoff no es null, closer_id es obligatorio. RLS: closer ve/edita donde closer_id = su propio id.']
+  fuente_id integer [not null, ref: > fuentes.id]
+  estado_id integer [not null, ref: > estados_lead.id, note: 'NO se actualiza con un UPDATE libre — el trigger fn_motor_etapas (BEFORE) valida cada transición contra la whitelist estado_transiciones y RAISE EXCEPTION si no está permitida. El helper fn_avanzar_estado es la vía programática correcta (usado por fn_reunion_mueve_etapa, fn_venta_cierra_lead).']
+  producto_interes_id integer [ref: > productos.id]
+  palabra_clave_ad text [note: 'Derivada por fn_derivar_palabra_clave() — antes de la fecha del fix (18-ago-2026) nunca se calculaba pese a tener el dato fuente en activity_log.ultimo_msg_lead.']
+  campana text
+  utm_source text
+  utm_campaign text
+  fecha_contacto timestamptz [not null, default: `now()`]
+  fecha_atendido timestamptz [note: 'CHECK ck_gl_fechas_orden: >= fecha_contacto si no es null.']
+  fecha_calificacion timestamptz [note: 'CHECK ck_gl_fechas_orden: >= fecha_contacto si no es null.']
+  fecha_handoff timestamptz [note: 'CHECK ck_gl_fechas_orden: >= fecha_contacto si no es null. Ver ck_gl_handoff_closer.']
+  dolor text
+  urgencia nivel_urgencia
+  califica boolean
+  handoff_razon text [note: 'NULL en el 100% de leads worker_ia por diseño deliberado del Worker (documentado en su propia cabecera) — no es un bug, decisión pendiente de revisar con Andrés.']
+  notas text [note: 'Único campo donde vive el mecanismo INCIDENTE_REVISION: (prefijo de texto libre, no un flag estructurado) — surge en vw_scorecard_check como requiere_revision_manual.']
+  cerrado_at timestamptz [note: 'CHECK ck_gl_fechas_orden: >= fecha_contacto si no es null. Controla la unicidad parcial de cliente_id (ver arriba).']
+  origen_escritura origen_escritura [not null, default: 'formulario_humano']
+  updated_by uuid [ref: > usuarios.id]
+  version integer [not null, default: 1, note: 'OPTIMISTIC LOCKING real (no un lock de aplicación tipo LockService de Apps Script). Trigger trg_touch (fn_touch_versioned, BEFORE UPDATE) compara new.version contra old.version; si no coinciden, RAISE EXCEPTION CONFLICTO_CONCURRENCIA con SQLSTATE 40001 → PostgREST lo traduce a HTTP 409. Contrato con el cliente: el UPDATE DEBE enviar la version que leyó — si la omite, PostgREST no la incluye y NEW.version = OLD.version, indistinguible de una escritura limpia (advertencia documentada en el propio SQL). Orden de triggers BEFORE UPDATE verificado en vivo 21-ago-2026: fn_columnas_por_rol → fn_motor_etapas → fn_touch_versioned (alfabético por nombre de trigger).']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  estado_desde timestamptz
+
+  Note: 'El proceso comercial (pipeline). 1 cliente puede tener N filas históricas, solo 1 abierta a la vez (ver nota de cliente_id).'
+}
+
+Table reuniones {
+  id uuid [pk, default: `gen_random_uuid()`]
+  gestion_lead_id uuid [not null, ref: > gestion_leads.id]
+  closer_id uuid [ref: > usuarios.id]
+  estado estado_reunion [not null, default: 'agendada', note: 'AFTER INSERT/UPDATE dispara fn_reunion_mueve_etapa → fn_avanzar_estado sobre gestion_leads.estado_id (agendada/confirmada/reprogramada→agendado, realizada→show_up, no_show→no_show), sujeto a la misma whitelist estado_transiciones.']
+  fecha_agendamiento timestamptz [not null, default: `now()`]
+  fecha_programada timestamptz [not null]
+  fecha_realizada timestamptz [note: 'CHECK ck_re_realizada_tiene_fecha: obligatoria si estado=realizada. CHECK ck_re_fecha_realizada_orden: >= fecha_agendamiento.']
+  numero_intento smallint [not null, default: 1, note: 'CHECK: entre 1 y 20.']
+  reprograma_a uuid [ref: > reuniones.id, note: 'Auto-referencia — encadena reprogramaciones sin perder el historial de la reunión original (antes del ERD v2 una reprogramación sobrescribía la fecha, perdiendo el rastro).']
+  oferta_presentada boolean [not null, default: false, note: 'CHECK ck_re_oferta_requiere_show: solo puede ser true si estado=realizada. CHECK ck_re_oferta_monto: si es true, monto_ofertado y oferta_currency son obligatorios.']
+  monto_ofertado numeric [note: 'CHECK >= 0.']
+  oferta_currency char(3) [ref: > monedas.code]
+  motivo_no_show text
+  notas text
+  origen_escritura origen_escritura [not null, default: 'formulario_humano']
+  updated_by uuid [ref: > usuarios.id]
+  version integer [not null, default: 1, note: 'Mismo mecanismo de optimistic locking que gestion_leads.version.']
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+  google_event_id text [note: 'NULL para toda reunión mientras Calendar siga bloqueado por permisos de organización (Planos ARTF §09, pausada) — fn_marcar_incidente_calendar flaggea el fallback vía gestion_leads.notas.']
+
+  Note: 'Cada llamada diagnóstica agendada. N:1 con gestion_leads (un lead puede tener varias reuniones a lo largo del proceso, ej. reprogramaciones).'
+}
+
+Table ventas {
+  id uuid [pk, default: `gen_random_uuid()`]
+  gestion_lead_id uuid [not null, ref: > gestion_leads.id]
+  reunion_id uuid [ref: > reuniones.id]
+  cliente_id uuid [not null, ref: > clientes.id, note: 'Denormalizado a propósito (SNAPSHOT) junto con closer_id/setter_id/producto — una venta es un hecho histórico, no debe cambiar si el lead se reasigna después.']
+  closer_id uuid [not null, ref: > usuarios.id]
+  setter_id uuid [ref: > usuarios.id]
+  fuente_id integer [not null, ref: > fuentes.id]
+  producto_id integer [not null, ref: > productos.id]
+  producto_nombre_snap text [not null, note: 'SNAPSHOT del nombre — no un JOIN en vivo a productos, para que un rename de producto no reescriba el historial de ventas ya cerradas.']
+  comision_closer_pct numeric [not null, default: 0, note: 'CHECK individual: 0–100. CHECK ck_ve_comision_total: comision_closer_pct + comision_setter_pct <= 100.']
+  comision_setter_pct numeric [not null, default: 0, note: 'CHECK individual: 0–100. Ver ck_ve_comision_total arriba.']
+  fecha_venta timestamptz [not null, default: `now()`]
+  monto_total numeric [not null, note: 'CHECK: > 0.']
+  currency_code char(3) [not null, ref: > monedas.code]
+  fx_rate_usd numeric [note: 'CHECK: > 0 si no es null.']
+  monto_total_usd numeric
+  forma_pago forma_pago [not null]
+  num_cuotas_pactadas smallint [not null, default: 1, note: 'CHECK: entre 1 y 60.']
+  fecha_inicio_programa date
+  fecha_fin_programa date [note: 'CHECK ck_ve_programa_orden: >= fecha_inicio_programa si ambas existen.']
+  contrato_url text
+  notas text
+  origen_escritura origen_escritura [not null, default: 'formulario_humano']
+  created_by uuid [ref: > usuarios.id]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: 'FUENTE DE VERDAD HISTÓRICA INMUTABLE. Trigger trg_ventas_inmutable (fn_append_only, BEFORE DELETE OR UPDATE) bloquea toda modificación con SQLSTATE 42501 — "ventas es inmutable/append-only". Toda corrección real (reembolso, chargeback, descuento posventa, corrección de datos) se registra como fila NUEVA con signo en venta_ajustes, nunca como UPDATE. trg_no_truncate bloquea también TRUNCATE. AFTER INSERT dispara fn_venta_cierra_lead (avanza gestion_leads.estado_id a estado terminal) y fn_log_venta (activity_log). Constraint trigger trg_ve_plan (DEFERRED) valida el plan de cuotas contra pagos_cuotas al COMMIT, no al INSERT.'
+}
+
+Table venta_ajustes {
+  id uuid [pk, default: `gen_random_uuid()`]
+  venta_id uuid [not null, ref: > ventas.id]
+  tipo tipo_ajuste [not null]
+  monto numeric [not null, note: 'CHECK: <> 0. CHECK ck_aj_signo: si tipo IN (reembolso, chargeback, descuento_posventa) → monto DEBE ser negativo; si tipo = correccion → sin restricción de signo. Este es el único mecanismo real para "modificar" el efecto económico de una venta ya cerrada — partida doble, el registro original de ventas nunca se toca.']
+  currency_code char(3) [not null, ref: > monedas.code]
+  fecha_efecto timestamptz [not null, default: `now()`]
+  motivo text [not null, note: 'CHECK: length(btrim(motivo)) > 0 — obligatorio, no texto vacío.']
+  autorizado_por uuid [ref: > usuarios.id]
+  created_at timestamptz [not null, default: `now()`]
+  updated_at timestamptz [not null, default: `now()`]
+
+  Note: '0 filas en producción al 21-ago-2026 (verificado en Planos ARTF §06) — el mecanismo existe y está probado, pero ningún reembolso/chargeback/corrección real se ha registrado todavía. N:1 con ventas.'
+}
+
+Table activity_log {
+  id bigint [pk, increment]
+  cliente_id uuid [ref: > clientes.id]
+  gestion_lead_id uuid [ref: > gestion_leads.id]
+  reunion_id uuid [ref: > reuniones.id]
+  venta_id uuid [ref: > ventas.id]
+  evento tipo_evento [not null, note: 'CHECK ck_al_cambio_estado: si evento = cambio_estado, estado_nuevo_id es obligatorio.']
+  estado_anterior_id integer [ref: > estados_lead.id]
+  estado_nuevo_id integer [ref: > estados_lead.id]
+  actor_tipo tipo_actor [not null, default: 'usuario']
+  actor_usuario_id uuid [ref: > usuarios.id]
+  origen_escritura origen_escritura [not null, default: 'formulario_humano']
+  ultimo_msg_lead text [note: 'Fuente real del texto del lead — palabra_clave_ad en gestion_leads se DERIVA de este campo, no al revés.']
+  ultimo_msg_bot text
+  summary text
+  payload jsonb [not null, default: `'{}'::jsonb`]
+  created_at timestamptz [not null, default: `now()`]
+
+  Note: 'Bitácora append-only del sistema (14.062 filas al 19-ago-2026, ~1.8x el volumen del Sheet legado — el bridge en vivo escribe más granularmente). Igual que ventas: trg_log_inmutable (fn_append_only, BEFORE DELETE OR UPDATE) bloquea toda modificación con SQLSTATE 42501, trg_no_truncate bloquea TRUNCATE. CHECK ck_al_ancla: al menos una de cliente_id/gestion_lead_id/venta_id debe existir — ninguna fila queda "flotando" sin ancla al negocio real.'
+}
