@@ -29,6 +29,38 @@
 - **Contexto compartido:** memoria (`01_Gobernanza_EOS/`, `02_Lineas_de_Producto/*/docs/`, `03_Clientes_y_Casos/`), hooks, skills, specs y steering — son del proyecto, no de una persona.
 - **Entorno técnico NO compartido:** cualquier hook o comando que asuma una ruta de venv, un shell o un runtime específico debe declarar para qué colaborador es válido, o escribirse de forma portable (ej. `uv run` en vez de rutas fijas `.venv\Scripts\python.exe`).
 
+## Workflow Git multi-desarrollador — `artf-pipeline-app` (desde 21-ago-2026)
+
+> Gabyota entra a codificar directamente en `artf-pipeline-app`, en paralelo
+> con Yeisiton, cada uno en su propia máquina (Gaby clona el repo en la
+> suya, no comparte el entorno WSL2 de Yeisiton — ver su perfil arriba).
+
+**Regla dura, no negociable: prohibido el commit directo a `master`.** Todo
+cambio nace en una rama de feature y solo se integra a `master` después de
+validarse ahí.
+
+- **Convención de nombres de rama:** `feat/<funcionalidad>` (funcionalidad
+  nueva, ej. `feat/ui-pipeline-agenda`), `fix/<qué-corrige>` (bug fix, ej.
+  `fix/errores-visuales`). Nombre corto, en inglés/español mixto está bien,
+  lo que importa es que describa el alcance real, no la persona que la abrió.
+- **Ciclo:** crear rama desde `master` actualizado → commits normales
+  (mismos hooks de pre-commit/lint/type-check que ya corren en `master`,
+  no se desactivan por estar en una rama) → validar de verdad (type-check +
+  lint + la suite E2E real si se tocó algo sensible, mismo criterio de la
+  sección 4 de `CLAUDE.md`/`AGENTS.md`) → mergear a `master` → push.
+- **Por qué ahora y no antes:** con un solo desarrollador (Yeisiton, con
+  Claude Code como colaborador de código) commitear directo a `master` no
+  tenía el riesgo real de choques de trabajo en paralelo. Con 2 personas
+  escribiendo código de verdad al mismo tiempo, ese riesgo es real desde
+  hoy — la regla se adopta en el momento en que el problema que resuelve
+  empieza a existir, no antes (mismo criterio anti-bazuca del resto del
+  proyecto).
+- **Qué NO cambia:** la política de migraciones versionadas
+  (`artf-pipeline-app/supabase/migrations/`, cada migración real aplicada se
+  guarda también como `.sql`, decisión del 19-ago-2026) sigue igual — una
+  migración se aplica y se commitea dentro de la rama de feature que la
+  necesita, no aparte.
+
 ## MCP — NotebookLM ("cerebro de información") — bugs conocidos y protocolo (14-ago-2026)
 
 > Servidor no oficial (Google no tiene MCP propio para NotebookLM). Elegido tras comparar
