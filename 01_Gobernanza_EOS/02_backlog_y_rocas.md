@@ -3985,3 +3985,77 @@ service role), `type-check`/`lint`/suite E2E oficial en verde.
 `.env.local`/Vercel -- no es parte de este commit.
 
 ---
+
+## 🧠 Sesión 27-ago-2026 — Auditoría: por qué el Pipeline del Setter solo mostraba 739 de 7.065 leads reales
+
+**Fecha:** 2026-08-27
+**Módulo:** ARTF / `artf-pipeline-app` (sobre `master`)
+**Tipo:** auditoría de bug real (diagnóstico primero, código después, ambos
+pedidos explícitos en turnos separados) + refactor del data layer del Setter
+
+**Reporte inicial (Yuli, vía el fundador):** el Pipeline del Setter mostraba
+"56 de 739 leads" cuando la base real tiene 7.065 (6.346 solo en "nuevo").
+Leads viejos que reengancharon no aparecían, o aparecían con la fecha de su
+primer contacto de hace meses.
+
+**Diagnóstico (verificado en vivo antes de proponer nada):**
+1. `getPipelineLeads()` trae los leads de `vw_pipeline` ordenando por
+   `estado_desde` antes de cortar a 300 por estado (`CAP_POR_ESTADO`, del
+   22-ago). `fn_sync_bot_turn` (leída completa) confirma que un lead que
+   reengancha mientras sigue en "nuevo" solo actualiza `fecha_atendido` --
+   nunca `estado_id`/`estado_desde` ni `fecha_contacto`. Un lead que
+   escribió hace 6 meses y reengancha hoy queda ordenado como si tuviera 6
+   meses de antigüedad, enterrado fuera del cap de 300.
+2. El mismo defecto estaba duplicado client-side: `pasaRango` (filtro
+   "Últimas 24h") y el `sort()` de `visible` en `SetterPipelineBoard.tsx`
+   también usaban `fecha_contacto`/`estado_desde`.
+3. El buscador de texto solo filtraba el array ya recortado a 300 -- un
+   lead fuera de esa ventana era invisible para la búsqueda aunque
+   existiera en la base.
+4. Hallazgo colateral, no el bug reportado: RLS (`pol_gl_select`) sí deja
+   ver a cualquier Setter los leads del bot o sin dueño -- correcto según
+   la regla de negocio ("se asigna al enviar el calendario"). 53 de 6.346
+   leads "nuevo" pertenecen a otros setters reales, pero todos con
+   `origen_escritura='importacion'` -- artefacto de la migración vieja de
+   la base, no un bug de la app actual.
+
+**Fix:** `horas_sin_actividad` (ya expuesto en `vw_pipeline`, ya usado en
+la insignia "Xh" de cada tarjeta) SÍ se recalcula en cada turno del bot
+(confirmado: `fn_sync_bot_turn` inserta en `activity_log` sin excepción) --
+se convirtió en la clave de orden y de filtro en 3 lugares (cap del
+servidor, `pasaRango`, sort de `visible`). Buscador global nuevo
+(`fn_buscar_leads_pipeline`, RPC sin `security definer` -- RLS se aplica
+igual que un select directo) que ignora el cap por completo, con
+`unaccent` (extensión nueva) para paridad exacta con
+`normalizarParaComparar` del cliente. "Cargar más" pasó de revelar más de
+un array ya recortado a pedir una página real nueva al servidor
+(`getPipelineLeadsPagina`) cuando se agota lo cargado. Nuevo conteo real
+por estado (`getConteosRealesPorEstado`, `count:"exact", head:true`, sin
+traer filas) para que el header del Setter muestre el total real, no el
+del array recortado.
+
+**Desviación real del plan escrito, encontrada implementando:** el diseño
+original sincronizaba el estado local `leads` con el prop `initialLeads`
+vía un `useEffect`. El linter (`react-hooks/set-state-in-effect`, la regla
+del compilador de React) lo marcó como el antipatrón "derivar estado de un
+prop dentro de un efecto" -- se resolvió con el patrón que React
+recomienda para esto (ajustar el estado durante el render cuando el prop
+cambia de referencia, sin efecto), no ignorando el error.
+
+**Fuentes:** conteo real por estado contra la base antes de proponer nada
+(6.346/423/151/96/23/16/6/4), lectura completa de `fn_sync_bot_turn` (no
+solo grep) para confirmar exactamente qué campos toca y cuáles no en un
+reengagement, verificación de extensiones disponibles (`unaccent`) antes
+de asumir que existía, reproducción en vivo del fixture del bug (lead con
+`fecha_contacto` de hace 6 meses + `activity_log` de hace 0 horas) y
+confirmación en navegador real de que aparece en "Nuevo/Todos" y en el
+buscador global, comparación en vivo de página 1 vs. offset=300 sin
+duplicados, `type-check`/`lint`/suite E2E oficial en verde.
+
+**Estado:** implementado, commiteado. Pendiente de confirmación de push a
+`origin/master`. El fixture de prueba (`TEST-Reenganche QA`) no se pudo
+borrar -- `activity_log` es append-only (mismo diseño protector que
+`ventas`) -- se dejó en estado terminal `descalificado`, renombrado para
+dejar rastro de por qué existe.
+
+---
