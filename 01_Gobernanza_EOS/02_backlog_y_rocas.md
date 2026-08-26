@@ -3334,3 +3334,654 @@ aplicada. Próximo paso en la ronda de arquitectura "Planos ARTF": sección 13.
 
 ---
 
+## 🧠 Sesión 22-ago-2026 — 5 correcciones UX/rendimiento reales, encontradas probando `master` en navegador
+
+**Fecha:** 2026-08-22
+**Módulo:** ARTF / `artf-pipeline-app` (commit `8933e5e`, sobre `master`)
+**Tipo:** corrección de bugs reales (no visibles en `type-check`/`lint`)
+**Conclusión:** El fundador probó `master` (commit `3146272`) en el navegador real y
+reportó 5 problemas de uso; los 5 se corrigieron, verificaron en vivo y quedaron
+pusheados a `origin/master`:
+1. **Token de `/agendar/[token]` de un solo uso (bug real):** `canjearTokenAgenda`
+   marcaba `usado_en` en el primer GET -- un lead que abría el link en el celular y
+   luego en el computador se encontraba con "link no disponible" sin haber
+   agendado nada. Corregido a lectura pura: solo invalida si `expira_en` venció o
+   si ya existe una fila real en `reuniones` (`agendada/confirmada/realizada`) para
+   ese lead -- la reserva ya completada, no un flag de "abierto una vez". Migración
+   `20260823021619_...` documenta el cambio de significado de `usado_en` (histórico,
+   sin uso en la validación). Verificado en vivo: mismo token abierto 3 veces vía
+   curl, las 3 con 307 real hacia Google.
+2. **Pipeline cargaba 6.163+ leads de `nuevo` en memoria, congelaba el navegador:**
+   `getPipelineLeads()` paginaba con `.range()` hasta traer TODO `vw_pipeline`. Un
+   límite global habría dejado a `calificado`/`agendado` (2/152 filas reales) sin
+   nada si `nuevo` acaparaba las primeras posiciones -- se cambió a un cap de 300
+   leads más recientes POR ESTADO, en N consultas paralelas (una por
+   `estados_lead.activo`), más rápido en reloj de pared que la paginación
+   secuencial anterior.
+3. **"Generar Enlace" pedía 2 clics:** `GenerarEnlaceModal` tenía un modal
+   intermedio con checkbox "¿es reagendamiento?". Rediseñado a botón de acción
+   directa -- 1 clic genera el token, copia al portapapeles y muestra toast. El TTL
+   (24h/48h) ahora lo decide quien monta el componente vía prop `ttlHoras`, no una
+   interacción del usuario.
+4. **"Agendado" se podía devolver a "Nuevo" por error:** se quitó el botón "Volver
+   a Nuevo" del tablero del Setter (`SETTER_BOTONES.agendado`) -- candado de UI,
+   igual que el resto de restricciones de rol de este proyecto; `estado_transiciones`
+   en la base sigue permitiendo `agendado→nuevo` a propósito (no se tocó).
+5. **Percepción de "flicker" en el redirect:** investigado con medición real
+   (`curl -w`) -- `/agendar/[token]` YA emitía un 307 HTTP genuino desde el Server
+   Component (~400-500ms en dev con Turbopack, sin recompilar sería más rápido aún
+   en producción), no una navegación cliente con HTML intermedio visible. No hizo
+   falta ningún cambio de código; la percepción es explicable por overhead de dev
+   más la carga de la propia landing de Google, fuera de control de este repo.
+**Fuentes:** `execute_sql`/`apply_migration` en vivo contra `lrdtjsxtaadpgrzkchlw`
+(token real con `reuniones.estado='agendada'` para confirmar el caso "ya
+completó la reserva", inserción/borrado de un `enlaces_agenda` desechable para
+medir timing), `curl -w` contra el dev server real, `npx playwright test` (suite
+existente + una prueba temporal contra la cuenta fixture `setter.qa@artf.test`
+para los fixes 3/4, borrada tras confirmar -- ver commit `8933e5e`).
+**Estado:** cerrado y pusheado a `origin/master`. Los 3 bugs de test-selector
+encontrados armando la prueba temporal (clic interceptado por el botón "Copiar"
+anidado, overlay `z-40` de otro modal, `has-text("Nuevo")` ambiguo con "+ Nuevo
+lead") eran de la prueba, no de la app -- documentado por si se reintroduce un
+test similar más adelante.
+
+---
+
+## 🧠 Sesión 22-ago-2026 (continuación) — drawer del Setter 100% automático, limpieza de código muerto, 3 leads QA permanentes
+
+**Fecha:** 2026-08-22
+**Módulo:** ARTF / `artf-pipeline-app` (commit `5b17dd5`, sobre `master`)
+**Tipo:** refactor operativo + auditoría proactiva + fixtures de QA
+**Conclusión:** El fundador pidió una reestructuración del drawer del Setter para
+que la fecha/hora de la llamada y la transición a "Agendado" dejen de ser
+manuales -- responsabilidad exclusiva del Puente de Google Calendar -- más una
+auditoría proactiva del código y 3 leads de prueba permanentes.
+1. **Drawer simplificado por estado:** `Calificado` perdió su formulario
+   (Nombre/WhatsApp/Correo/fechas) y el botón manual "Agendar" -- ahora solo
+   muestra Identificación + "Esperando reserva en Google Calendar" (mensaje
+   pasivo). `Agendado` perdió los `datetime-local` y los inputs de
+   WhatsApp/Correo -- ahora son badges de solo lectura (WhatsApp/Correo desde
+   `clientes`, fecha desde `reuniones.fecha_programada` vía
+   `vw_pipeline.proxima_llamada`, NO `reunion_fecha_agendamiento` que es un
+   campo distinto -- verificado contra `pg_get_viewdef`). `SETTER_BOTONES` se
+   eliminó por completo de `estados.ts` -- sin consumidor real tras quitar los
+   2 botones que le quedaban.
+2. **⚠️ Caveat real encontrado, no corregido (fuera del alcance pedido):** "Datos
+   sincronizados por Google" es el rótulo correcto para la fecha de la
+   llamada, pero NO para WhatsApp/Correo -- `src/lib/google/sync.ts`
+   (`procesarEvento`) usa el correo/teléfono parseados de la descripción del
+   evento SOLO para hacer MATCH contra un cliente existente, nunca los
+   escribe de vuelta en `clientes.whatsapp_e164`/`correo`. El badge muestra
+   lo que ya hubiera en `clientes` antes del booking, no necesariamente lo
+   último que el lead escribió en el Appointment Schedule de Google. Si se
+   quiere que el badge refleje literalmente el dato de la reserva, hace falta
+   un cambio aparte en `sync.ts` (decisión de arquitectura, no ejecutada sin
+   confirmación).
+3. **Auditoría proactiva:** cero `useEffect`/`any` en todo el frontend (nada
+   que corregir ahí). Eliminado código 100% muerto del flujo de formulario
+   propio pre-pivote (`AgendarForm.tsx`, `actions.ts`, y los exports
+   huérfanos `getLeadParaAgendar`/`getEspaciosAbiertosPublico` en
+   `agendar-publico.ts`) -- confirmado sin importador real desde
+   `/agendar/[token]/page.tsx` (la ruta vigente desde el pivote a Google
+   Calendar nativo). Corregido `BotonCopiar` en `SetterPipelineBoard.tsx`:
+   `navigator.clipboard.writeText()` no estaba `await`ado ni con `.catch()`
+   -- una promesa rechazada (permiso denegado) quedaba sin manejar mientras
+   el toast decía "copiado" de todas formas.
+4. **3 leads QA permanentes creados** (vía `fn_crear_lead_manual`, dueños de
+   QA Setter): `TEST-Lead QA 1 (Nuevo)`, `TEST-Lead QA 2 (Multi-Tab)`,
+   `TEST-Lead QA 3 (Bridge Sync)`, los 3 en estado `nuevo`. **Contradice
+   directamente [[feedback_activity_log_blocks_test_data_purge]]** (decisión
+   ya tomada esta misma sesión: reutilizar cuentas QA fixture, no crear más
+   leads `TEST-` porque quedan indeletables para siempre en cuanto tocan
+   cualquier flujo real) -- se le presentó la contradicción al fundador vía
+   `AskUserQuestion` y confirmó explícitamente crearlos igual, aceptando que
+   queden permanentes. Documentado para que quede claro que no fue un olvido
+   de la restricción, sino una decisión consciente tomada con el trade-off
+   sobre la mesa.
+**Fuentes:** lectura completa de `SetterPipelineBoard.tsx`/`estados.ts`/
+`sync.ts`/`agenda.ts`/`AgendaBoard.tsx`, `pg_get_viewdef('vw_pipeline')` en
+vivo, `grep` de `useEffect`/`: any`/importadores de los archivos eliminados,
+`fn_crear_lead_manual` vía `execute_sql` (rol `authenticated` + JWT claims de
+QA Setter), 2 pruebas Playwright temporales contra `setter.qa@artf.test`
+(Calificado sin formulario; Agendado con badges reales usando una reunión de
+prueba insertada y borrada solo para la verificación), `type-check`/`lint`/
+suite E2E existente -- todas en verde.
+**Estado:** cerrado y pusheado a `origin/master`. Los 3 leads QA quedan
+disponibles para pruebas en vivo del fundador, todos en `nuevo`.
+
+---
+
+## 🧠 Sesión 22-ago-2026 (continuación) — enriquecimiento de contacto desde Google Calendar, sin fusión frágil de nombre
+
+**Fecha:** 2026-08-22
+**Módulo:** ARTF / `artf-pipeline-app` (commit `9d5f86c`, sobre `master`)
+**Tipo:** feature aprobada + decisión de diseño
+**Conclusión:** El fundador aprobó explícitamente el caveat señalado en la sesión
+anterior (WhatsApp/Correo del badge de Agendado no se actualizaban desde el
+booking real) y pidió además resolver el cruce de nombre Instagram vs. Calendar
+sin un simple `==` frágil.
+1. **`sync.ts` ahora enriquece `clientes.correo`/`whatsapp_e164`** al matchear un
+   booking real -- el campo usado como llave de match nunca se pisa (ya es
+   igual por definición); el otro campo se llena si estaba vacío o se
+   actualiza si cambió, con un `console.warn` cuando pisa un valor existente
+   (auditable, nunca silencioso).
+2. **Nombre: decisión de diseño explícita, NO fuzzy-matching.** Se descartó
+   cualquier heurística de similitud (Levenshtein, umbral, etc.) porque es
+   exactamente el tipo de comparación frágil que el fundador pidió evitar --
+   un apodo/emoji de IG puede diferir arbitrariamente del nombre real
+   tecleado en Calendar sin dejar de ser la misma persona (el match real ya
+   lo resuelve correo/teléfono, nunca el nombre). Se guardan AMBOS como
+   hechos independientes en vez de fusionar: nueva columna
+   `reuniones.nombre_google` (booking-scoped, no se concilia contra
+   `clientes.nombre`), expuesta en `vw_pipeline` como `reunion_nombre_google`
+   y mostrada en el drawer de Agendado como "Nombre en Calendar" solo cuando
+   difiere de verdad del nombre de Instagram (comparación normalizada
+   puramente de UI, nunca de integridad de datos -- el peor caso de un falso
+   negativo es una línea de más, no una corrupción).
+**Fuentes:** migración `reuniones_nombre_google_y_vw_pipeline` aplicada en vivo,
+`type-check`/`lint`/suite E2E existente en verde, smoke test real de
+`/api/cron/sync-calendar` (200 OK, `procesados:0` -- sin eventos nuevos, pero
+confirma que el código nuevo no rompe el endpoint real).
+**Estado:** cerrado y pusheado a `origin/master`. Pendiente: el fundador probará
+en vivo con los 3 leads QA de la sesión anterior.
+
+---
+
+## 🧠 Sesión 23-ago-2026 — auditoría E2E real con cuenta de staff (Yuli), 403 diagnosticado, badges duplicados de Agenda corregidos
+
+**Fecha:** 2026-08-23
+**Módulo:** ARTF / `artf-pipeline-app` (commit `ef99ffd`, sobre `master`)
+**Tipo:** diagnóstico + corrección real, verificado con Playwright contra la
+cuenta real de Yuli (`gaby318jaramillo@gmail.com`, rol setter) -- credenciales
+pasadas por variable de entorno en la corrida, nunca escritas a ningún archivo
+commiteado (regla de `AGENTS.md`).
+1. **403 en `fn_reclamar_lead`: NO era un problema de permisos.**
+   `has_function_privilege` confirmó que `authenticated` YA podía ejecutar la
+   función. La causa real: los 3 leads QA (creados la sesión anterior) tenían
+   `setter_id` = QA Setter -- cuando Yuli (setter real, distinto usuario)
+   intentaba reclamarlos, la función correctamente bloqueaba con "ya fue
+   reclamado por otro setter" (42501/403 real, no un bug). Se reseteó
+   `setter_id = null` en los 3 leads QA. Además, confirmado que la
+   arquitectura que el fundador proponía ("generar enlace = reclamar +
+   mover a Calificado automáticamente") YA estaba implementada desde la
+   sesión anterior (`SetterPipelineBoard.tsx`, `onAntesDeGenerar`/
+   `onGenerado`) -- no hizo falta ningún cambio de código, solo el reset de
+   datos. Verificado en vivo con Yuli: RPC 2xx, toast, lead pasa a
+   Calificado con `setter_id` = Yuli.
+2. **Badges duplicados en `/agenda` (hallazgo real, encontrado con datos en
+   vivo):** 186 reuniones `realizada` + 26 `no_show` (todas de antes del
+   puente de Google Calendar) nunca tuvieron `google_event_id` -- el badge
+   "Pendiente" solo miraba esa columna, mostrándose junto al badge de
+   estado ya resuelto. Corregido en `AgendaBoard.tsx` (Pendiente solo si
+   `estado === 'agendada'`) y en `agenda.ts` (`getReunionesProximas` ya no
+   trae las 276 reuniones no-canceladas sin filtro/límite ordenadas por
+   fecha ascendente -- ahora solo `estado IN (agendada, confirmada)`,
+   excluyendo también `reprogramada` a propósito por estar superada).
+3. **Redirección de `/agendar/[token]` re-verificada:** 307 real,
+   300-450ms, multi-apertura confirmada con la cuenta real de Yuli
+   (incluida navegación en pestañas nuevas simulando incógnito).
+4. **Pendiente de decisión (NO ejecutado, solo diagnosticado):** el
+   fundador señaló que el link generado "se ve extraño" para compartir --
+   confirmado que el token es un UUID completo de 36 caracteres
+   (`gen_random_uuid()` por defecto en `enlaces_agenda.token`). Acortarlo a
+   un slug corto tipo base62 es una opción real pero implica cambiar el
+   default de la columna y la generación -- no se ejecutó sin confirmación
+   explícita, queda como recomendación pendiente de aprobar.
+**Fuentes:** `has_function_privilege`/`pg_get_functiondef` en vivo, reset de
+`setter_id` vía SQL, 3 pruebas Playwright temporales contra la cuenta real de
+Yuli (flujo completo Nuevo→Generar enlace→Calificado→TTL multi-apertura;
+badges de Agendado con una reserva simulada por SQL fiel a `procesarEvento()`
+de `sync.ts`; `/agenda` sin duplicados), las 3 borradas tras confirmar (una
+quedó momentáneamente sin borrar por error propio, corregido antes de
+cualquier commit -- nunca contenía credenciales literales, solo
+`process.env`), `type-check`/`lint`/suite E2E oficial en verde.
+**Estado:** cerrado y pusheado a `origin/master`. `TEST-Lead QA 1` queda en
+`Agendado` como evidencia visual del flujo completo funcionando (badges
+reales incluidos); `TEST-Lead QA 2`/`QA 3` quedan limpios en `nuevo` para que
+el fundador corra su propia prueba de punta a punta.
+
+---
+
+## 🧠 Sesión 23-ago-2026 (continuación) — pivote a link directo de Google (sin token propio), riesgo real de baneo de Instagram
+
+**Fecha:** 2026-08-23
+**Módulo:** ARTF / `artf-pipeline-app` (commit `dbbd37b`, sobre `master`)
+**Tipo:** pivote arquitectónico aprobado, decisión de negocio explícita
+**Conclusión:** El fundador reportó que el link generado (`/agendar/[token]`,
+nuestro dominio + UUID de 36 caracteres) se veía como spam/phishing al
+compartirlo por DM de Instagram -- riesgo real de baneo de la cuenta de
+Instagram del negocio. Decisión: `GenerarEnlaceModal` ya no crea ningún token
+propio -- copia directo `NEXT_PUBLIC_GOOGLE_APPOINTMENT_URL`
+(`calendar.app.google/...`, el mismo dominio corto y confiable de Google que
+ya usaba el redirect del lado del servidor).
+- Se agregó `NEXT_PUBLIC_GOOGLE_APPOINTMENT_URL` a `.env.local` (mismo valor
+  que `GOOGLE_APPOINTMENT_SCHEDULE_URL`) -- **pendiente agregarla también a
+  las variables de entorno de producción**, el fundador debe hacerlo (no
+  soy yo quien administra ese panel).
+- `sync.ts` NO necesitó cambios: el match real de un booking siempre fue por
+  correo/teléfono que el lead escribe en el propio formulario de Google, no
+  por el token -- se confirmó explícitamente que sigue intacto.
+- **Decisión consultada y confirmada por el fundador vía `AskUserQuestion`:**
+  `/agendar/[token]`, `agendar-publico.ts` y la tabla `enlaces_agenda`
+  (con su TTL y el bloqueo de reapertura tras completar la reserva) quedan
+  funcionales pero sin ningún botón que las use desde este flujo -- NO se
+  borraron, por si más adelante hace falta un link con TTL para otro canal
+  (ej. email).
+- **403 en `fn_reclamar_lead` de la sesión anterior: causa raíz confirmada.**
+  No era un problema de permisos (`has_function_privilege` ya daba `true`
+  para `authenticated`) -- eran los leads QA con `setter_id` de otra cuenta
+  (mío, de crearlos) bloqueando correctamente a Yuli. Los 4 leads de prueba
+  (`TEST-Lead QA 1/2/3` + `TEST-Yeisiton Bridge Verify`) quedaron en `nuevo`
+  con `setter_id = NULL`.
+**Fuentes:** lectura de `.env.local` (valor público, no sensible -- es el
+link de reserva que se comparte con leads), edición de `GenerarEnlaceModal.tsx`
+(quitado el INSERT a `enlaces_agenda` y el prop `leadId`/`ttlHoras` sin uso),
+prueba Playwright temporal contra la cuenta fixture QA Setter confirmando que
+el portapapeles recibe la URL exacta de Google y que ya no se inserta en
+`enlaces_agenda`, `type-check`/`lint`/suite E2E oficial en verde.
+**Estado:** cerrado y pusheado a `origin/master`. Pendiente del fundador:
+agregar la variable de entorno en producción antes del próximo deploy.
+
+---
+
+## 🧠 Sesión 23-ago-2026 (continuación) — Candado de Validación de Reservas: vinculación manual determinística, cierra la brecha de datos investigada
+
+**Fecha:** 2026-08-23/24
+**Módulo:** ARTF / `artf-pipeline-app` (commit `ce4e6e4`, sobre `master`)
+**Tipo:** pivote de arquitectura aprobado, implementación completa
+**Conclusión:** Respuesta directa a la brecha investigada la sesión anterior
+([[artf_formulario_dashboard_status]]-adjacente, ver informe de investigación):
+casi ningún lead de Instagram tiene correo/teléfono antes de agendar, así que
+el match automático de `sync.ts` fallaba para la mayoría de bookings reales.
+El fundador diseñó "el Candado": en vez de adivinar (prohibido
+explícitamente -- ni ventanas de tiempo, ni similitud de nombre), la
+reunión que no matchea se guarda "flotante" y el Setter la reconoce y
+vincula a mano al mover Calificado -> Agendado (el mismo empujón obligatorio
+que ya se usaba para "Generar Enlace" -- "dos pájaros de un tiro").
+1. **Esquema:** `reuniones.gestion_lead_id` pasa a nullable (una reserva
+   flotante no tiene lead todavía); nuevas columnas
+   `correo_google`/`telefono_google` (datos crudos del booking, solo
+   relevantes mientras sigue flotante).
+2. **RLS:** `pol_re_select` se reescribió para exponer reuniones sin dueño
+   a cualquier setter/closer/admin -- un sandbox test confirmó que la
+   política vieja las escondía por completo (el `EXISTS` contra
+   `gestion_leads` nunca matchea `NULL`), lo habría dejado el modal vacío
+   en producción si no se hubiera probado antes.
+3. **`fn_vincular_reserva_flotante`** (RPC transaccional, todo o nada): liga
+   la reserva, actualiza `clientes.correo`/`whatsapp_e164` con los datos
+   reales de Google, avanza el lead a `agendado`. Exige `calificado` y
+   ownership (setter dueño o admin).
+4. **Bug real encontrado en desarrollo, antes de tocar frontend:** la
+   función declaraba `v_estado_agendado_id` como `uuid` --
+   `estados_lead.id`/`gestion_leads.estado_id` son `integer`. Atrapado por
+   el sandbox test (`SET LOCAL ROLE` + `SAVEPOINT`/`ROLLBACK`,
+   `"invalid input syntax for type uuid: '4'"`), corregido en una segunda
+   migración antes de escribir una sola línea de frontend.
+5. **`VincularReservaModal.tsx`:** reemplaza el mensaje pasivo de
+   Calificado -- lista corta de reservas sin vincular (Nombre/Correo/
+   WhatsApp/Fecha reales de Google), selección en 2 pasos (elegir +
+   confirmar, no 1 clic como "Generar Enlace" -- vincular la reserva
+   equivocada mezcla la identidad de 2 leads reales y no hay deshacer).
+**Nota de entorno:** el plugin `chrome-devtools-mcp` recién instalado no
+tiene binario de Chrome disponible en este sandbox Linux (WSL sin GUI) --
+la verificación real se hizo con Playwright (Chromium embebido, ya probado
+toda la sesión), no con chrome-devtools. Vale la pena confirmarlo en un
+entorno con Chrome real antes de asumir que chrome-devtools funciona acá.
+**Fuentes:** investigación previa de la sesión (playbook del bot, esquema
+real vía `information_schema`/`pg_policies`/`pg_trigger`/
+`pg_get_functiondef`), sandbox SQL con `SAVEPOINT`/`ROLLBACK` (happy path +
+guard de ownership + el bug de tipos), prueba Playwright temporal contra
+`setter.qa@artf.test` cubriendo el flujo completo end-to-end, `type-check`/
+`lint`/suite E2E oficial en verde.
+**Estado:** cerrado y pusheado a `origin/master`. `TEST-Lead QA 1` queda en
+`Agendado` con datos reales de la vinculación (prueba visual); `TEST-Lead QA
+2` queda en `Calificado` con 1 reserva flotante sin vincular
+("Andres Multi Tab") lista para que el fundador pruebe el modal él mismo.
+
+---
+
+
+## 🧠 Sesión 24-ago-2026 — hipótesis de crash de teléfono descartada, cron real encontrado ausente, auditoría de Pipeline
+
+**Fecha:** 2026-08-24
+**Módulo:** ARTF / `artf-pipeline-app` (commits `2ade053`, `96d3048`, sobre `master`)
+**Tipo:** investigación + corrección real, 3 issues pedidos
+**Conclusión:** El fundador confirmó en vivo que el Candado de Validación de
+Reservas de la sesión anterior YA funciona -- probó él mismo con su cuenta
+real y con QA Setter (evidencia: `TEST-Lead QA 1`/`QA 2` y
+`TEST-Yeisiton Bridge Verify` aparecieron movidos por la sesión anterior sin
+que yo los tocara). Pidió 3 correcciones más:
+1. **Hipótesis de "crash por teléfono" descartada con evidencia, no
+   aceptada de entrada** (pedido explícito: "no la tomes como la fuente de
+   la verdad"). Verificado en vivo con `node -e` directo contra
+   `parsePhoneNumberFromString`: nunca lanza excepción para ningún input.
+   **Causa real, mucho más simple: no existía `vercel.json`** -- cero cron
+   configurado disparando `/api/cron/sync-calendar` en producción, pese a
+   que la ruta ya estaba escrita esperando exactamente eso. La reserva del
+   fundador estaba sentada sin sincronizar hasta que alguien la disparara a
+   mano -- confirmado corriendo el sync manualmente: apareció de inmediato,
+   incluida una reserva real con teléfono no parseable
+   (`telefono_google=null`, sin ningún error). Agregado `vercel.json` con
+   cron cada 15 min -- **pendiente confirmar el plan de Vercel real** (Hobby
+   limita cron a 1 vez/día, lo cual seguiría dejando el mismo problema
+   percibido aunque ya no sea un bug).
+2. **Corrección real aparte, sí necesaria:** cuando el teléfono no se podía
+   normalizar a E.164, se guardaba `null` en la reserva flotante -- se
+   perdía el dato sin que hubiera ningún error. Ahora se guarda el texto
+   crudo como respaldo.
+3. **Paginación:** `PipelineBoard.tsx` (Closer/Admin, 8 columnas
+   simultáneas) podía renderizar hasta 2400 tarjetas de golpe con "Todos" --
+   `SetterPipelineBoard.tsx` hasta 300 (confirmado en vivo: 473 leads
+   reales en "Nuevo" para una sola cuenta). Ambos ahora cargan de a 100 con
+   "Cargar más".
+4. **Búsqueda insensible a tildes** (hallazgo real de la auditoría, no
+   pedido explícitamente): "maria" no encontraba a "María" -- volumen alto
+   real dado el ICP colombiano. Nueva función compartida `@/lib/texto.ts`.
+5. **Bug real encontrado proactivamente, no reportado por el fundador:**
+   `PipelineBoard.tsx` todavía tenía su PROPIA implementación vieja de
+   "Generar link de agenda" (`/agendar/[token]`, el link con riesgo de
+   baneo de Instagram eliminado el 23-ago en `GenerarEnlaceModal.tsx`) --
+   nunca se actualizó porque vive en un componente distinto. Un Admin/Closer
+   que lo usara desde el tablero compartido seguía generando el link
+   sospechoso. Corregido reusando el mismo componente.
+**Fuentes:** `node -e` directo contra libphonenumber-js, lectura completa de
+`PipelineBoard.tsx` (no se había vuelto a leer desde antes del rediseño de
+Agenda), consulta real a `google_calendar_sync_state` (última sync:
+23-ago 16:54 UTC) y corrida manual del cron confirmando la hipótesis
+correcta, prueba Playwright temporal contra QA Setter con datos reales
+(lead con tilde, 473 leads reales activando "Cargar más", reserva flotante
+sintética con teléfono no parseable), `type-check`/`lint`/suite E2E oficial
+en verde.
+**Estado:** cerrado y pusheado a `origin/master`. Los 4 leads QA quedan
+limpios en `nuevo`/sin dueño. Pendiente del fundador: confirmar plan de
+Vercel para saber si el cron de 15 min realmente aplica.
+
+---
+
+## 🧠 Sesión 24-ago-2026 (continuación) — Módulo Closer diseñado e implementado, RLS de `reuniones` desincronizada con `gestion_leads.closer_id`
+
+**Fecha:** 2026-08-24
+**Módulo:** ARTF / `artf-pipeline-app` (commit `4fc3038` sobre `master`, más el
+fix de RLS de este bloque)
+**Tipo:** diseño + implementación de feature nueva + bug real encontrado
+probándola en vivo
+
+**Módulo Closer:** el fundador propuso 5 piezas (campos nuevos en
+clientes/leads para precio/anticipo/plan de pagos jsonb, peajes obligatorios
+para Seguimiento y Perdido, Modal de Cierre con Oferta de Valientes,
+reagendamiento). Evaluación crítica antes de programar: los campos nuevos
+duplicaban infraestructura ya existente (`ventas`/`pagos_cuotas`/
+`fn_registrar_venta`, que ya calcula cuotas, redondeo, forma de pago y tasa
+de cambio) -- se implementó solo lo que faltaba (`es_oferta_valientes` +
+parámetro nuevo en `fn_registrar_venta`) en vez de un jsonb paralelo. El
+resto se construyó tal cual: `CloserPipelineBoard.tsx` dedicado (7 estados),
+`fn_mover_a_seguimiento`/`fn_marcar_perdido` como peajes reales (no solo
+UI), catálogo `motivos_perdida`, "Reagendar" reusando `GenerarEnlaceModal`
+sin crear reuniones a mano.
+
+**Bug real encontrado en la misma sesión, probando el cierre de venta en
+vivo:** `fn_registrar_venta` recibía `p_comision_closer_pct`/
+`p_comision_setter_pct` en `null` en AMBOS tableros (Closer y el compartido)
+-- esas columnas son `NOT NULL DEFAULT 0`, pero Postgres solo aplica el
+default cuando el valor se OMITE, nunca cuando se manda `null` explícito.
+Todo intento real de "Registrar venta" fallaba con 400 desde antes de esta
+sesión -- el botón de cierre llevaba tiempo roto en producción sin que nadie
+lo notara (invisible en `type-check`/`lint`). Corregido a `0` en los dos
+tableros.
+
+**Fix de hidratación (Next.js), pedido aparte el mismo día:**
+`SetterPipelineBoard.tsx` (filtro "Nuevo" 24h/168h) y `PipelineBoard.tsx`
+(badge de reunión vencida) llamaban `Date.now()` en el cuerpo del render --
+servidor y cliente lo calculan en instantes distintos, un lote de leads en
+el borde cambiaba de lado entre el HTML del servidor y el primer render del
+cliente. Se descartó el enfoque `useEffect`/`isMounted` propuesto (habría
+causado el parpadeo que se quería evitar) -- se calcula una sola vez en el
+Server Component (`getAhoraMs()` en `pipeline.ts`, usando `io()` de
+`next/cache`, la forma oficial de esta versión de Next.js) y baja como prop.
+
+**Segundo bug real, encontrado por el fundador probando el Módulo Closer:**
+reportó que `TEST-Lead QA 1` "no respondía" al intentar marcar Show
+Up/Seguimiento, con la hipótesis de que el sistema bloqueaba a propósito
+reuniones futuras (la suya estaba agendada para el 26-ago). **Hipótesis
+descartada con evidencia:** no existe ninguna validación de fecha en
+`fn_motor_etapas`, `fn_registrar_venta`, `fn_mover_a_seguimiento`,
+`fn_marcar_perdido`, ni en los `CHECK` de `reuniones`. **Causa real, más
+seria:** la política `pol_re_update` sobre `reuniones` (creada el
+22-ago-2026 junto con el resto del rediseño Setter) exigía
+`reuniones.closer_id = auth.uid()` -- pero el Closer se asigna a un lead
+escribiendo SOLO `gestion_leads.closer_id` (`PipelineBoard.tsx
+asignarCloser()`), nunca `reuniones.closer_id`. Un UPDATE bloqueado por RLS
+no lanza error (PostgREST no reporta 0 filas afectadas como fallo) -- el
+botón "no hacía nada", ni error ni éxito. Verificado en vivo: **de 58
+reuniones activas con lead vinculado, 10 tenían closer asignado en
+`gestion_leads` pero `reuniones.closer_id` null** -- no fue un caso aislado
+de un solo lead de prueba. Fix: la rama de Closer de `pol_re_update` ahora
+también resuelve la pertenencia vía `gestion_leads.closer_id`, igual que ya
+hacía la rama de Setter (inconsistencia que quedó desde el 22-ago). Ver
+`supabase/migrations/20260824210000_fix_pol_re_update_reconoce_closer_via_gestion_lead.sql`.
+Se agregó test permanente `e2e/closer-reuniones-rls.spec.ts` (con reset de
+fixture vía service role en `beforeEach`, para que sea repetible) --
+convención de "bug de clase nueva = test permanente, no solo corrección
+puntual".
+
+**Fuentes:** lectura de `pg_proc`/`pg_constraint`/`pg_policy` en vivo antes
+de tocar nada (se descartó la hipótesis del fundador con evidencia, no se
+aceptó de entrada), conteo real de reuniones desincronizadas, Playwright
+contra QA Closer confirmando el fix, `type-check`/`lint`/suite E2E oficial
+en verde.
+
+**Estado:** Módulo Closer y fix de hidratación pusheados (`4fc3038`). Fix de
+RLS aplicado directo a la base (migración pendiente de commit/push en la
+próxima vuelta de esta sesión). `TEST-Lead QA 1` quedó con su reunión movida
+al pasado (hoy en la mañana) para que el fundador pruebe el flujo completo
+sin el bloqueo de fecha futura que él mismo ya no tiene, porque nunca
+existió.
+
+---
+
+## 🧠 Sesión 25-ago-2026 — Wizard del Drawer del Closer, bloqueo real de reuniones futuras, limpieza de "nutrición"
+
+**Fecha:** 2026-08-25
+**Módulo:** ARTF / `artf-pipeline-app` (sobre `master`, continuación directa
+de la sesión anterior)
+**Tipo:** refinamiento UX (feature) + limpieza de estado fantasma, clasificado
+como tarea Bounded (brainstorming skill) -- diseño aprobado en chat antes de
+tocar código
+
+**Bloqueo de reuniones futuras:** pedido explícito del fundador -- un Closer
+no debería poder marcar Show Up/No Show de una reunión que aún no ocurrió.
+Implementado en `CloserPipelineBoard.tsx` (`reunionEsFutura()`): si
+`proxima_llamada` es posterior al `ahoraMs` que baja del Server Component
+(mismo patrón del fix de hidratación de la sesión anterior -- se le agregó
+esa prop al tablero del Closer, que no la tenía), los botones se ocultan y
+se muestra el mensaje real ("La reunión es el [fecha] — aún no ha
+ocurrido"). El caso de reprogramación que el fundador dejó a criterio propio
+no necesitó código nuevo: `proxima_llamada` siempre refleja la reunión
+ACTIVA del lead (`uq_reunion_activa_por_lead`), así que tras un
+reagendamiento real el chequeo ya mira la fecha nueva sola.
+
+**Wizard del Drawer:** el fundador reportó fricción real -- marcar Show Up
+movía la tarjeta a otra columna y obligaba a cerrar el drawer, buscarla y
+reabrirla para registrar el cierre ("chasing cards"). Ahora el drawer es un
+flujo de 3 pasos (asistencia -> resultado -> detalle, estado local
+`wizardStep`) que no se cierra entre Show Up y el cierre final. Un lead que
+ya está en Show Up/Oferta al abrir el drawer entra directo en el paso 2 (no
+repite la pregunta de asistencia). Ajuste sobre la propuesta original,
+explicado y aprobado antes de programar: solo el paso 3 (detalle) difiere la
+escritura real a un botón de Confirmar -- el paso 1 (Show Up) sigue
+escribiendo de inmediato, porque `show_up` ya es un estado real e
+independiente en el motor de etapas (un Closer puede marcar asistencia y
+decidir el cierre horas después, comportamiento de negocio que ya existía).
+Los formularios de Perdido/Seguimiento se extrajeron de sus modales
+(`PerdidoForm`/`SeguimientoForm` en los mismos archivos, sin overlay propio)
+para reusar la misma lógica de validación/RPC tanto en el wizard como en los
+modales flotantes que siguen usando las pestañas No Show/Seguimiento y
+`PipelineBoard.tsx` -- cero lógica de negocio duplicada. Botones "Atrás" en
+los pasos 2 y 3 (paso 2 solo si el wizard arrancó en el paso 1).
+
+**Limpieza de "nutrición":** el fundador notó (correctamente) que era un
+estado fantasma. Verificado antes de tocar nada: existía activo en la base,
+con transiciones reales funcionando, pero **0 leads lo habían usado jamás**
+y no hay ningún sistema de nutrición/drip real detrás. Se desactivó sin
+borrar la fila de `estados_lead` (`activo=false` + se borraron las 11 filas
+de `estado_transiciones` que lo referenciaban) -- reversible sin fricción si
+se retoma más adelante. Se sacó de `estados.ts`
+(tipo/ESTADOS/TRANSICIONES/COLUMNAS), del botón "Enviar a Nutrición" del
+Drawer y de `MOTIVO_LABEL` en `PipelineBoard.tsx`.
+
+**Fuentes:** lectura completa de `estados_lead`/`estado_transiciones` antes
+de decidir el mecanismo de baja, Playwright contra QA Closer confirmando
+bloqueo por fecha futura (sin escritura en la base cuando está bloqueado,
+verificado) + reentrada directa en paso 2 + Atrás + cierre completo del
+wizard con venta registrada, `type-check`/`lint`/suite E2E oficial en verde.
+
+**Estado:** implementado y verificado en vivo. Pendiente en esta misma
+sesión: commit + push a `origin/master` (con aprobación previa del
+fundador, patrón ya establecido) y aviso para que pruebe el flujo en el
+navegador.
+
+---
+
+## 🧠 Sesión 25-ago-2026 (continuación) — Acciones rápidas en reunión futura, leads QA4/QA5, auditoría real: reunión huérfana al cancelar antes de la llamada
+
+**Fecha:** 2026-08-25
+**Módulo:** ARTF / `artf-pipeline-app` (sobre `master`, misma sesión que el
+Wizard del Drawer)
+**Tipo:** feature (acciones rápidas) + datos QA + auditoría de casos borde
+con hallazgo real corregido a nivel de RPC
+
+**Acciones rápidas en reunión futura:** el fundador pidió que un Closer no
+quede atado de manos si el lead escribe a cancelar/reagendar antes de que
+la reunión ocurra. Se agregaron 2 botones dentro del mismo contenedor de
+aviso ("La reunión es el... aún no ha ocurrido"):
+1. **"Cancelar reunión antes de la llamada"** -- salta directo al paso 3
+   del wizard (Perdido) con el motivo "Canceló antes de la llamada"
+   preseleccionado (catálogo `motivos_perdida`, no texto libre). Su "Atrás"
+   vuelve al paso 1, no a un paso "resultado" que nunca se mostró (estado
+   nuevo `origenDetalle`).
+2. **"Reagendar cita"** -- reusa `GenerarEnlaceModal` como los demás
+   puntos de reagendamiento del Módulo Closer.
+
+**Hallazgo real de la auditoría (el más importante de este bloque):**
+`uq_reunion_activa_por_lead` es un índice único PARCIAL sobre
+`estado IN ('agendada','confirmada')` -- verificado en `pg_indexes` antes de
+tocar nada. Los 2 caminos previos hacia "Perdido" (No Show, o desde Show
+Up/Oferta) nunca chocaban con esto porque la reunión ya estaba fuera de ese
+par de estados cuando `fn_marcar_perdido` podía llamarse. Pero el nuevo
+botón "Cancelar reunión antes de la llamada" introduce el PRIMER camino
+real hacia Perdido con la reunión todavía 'agendada' -- sin fix, esa
+reunión quedaba huérfana en ese estado para siempre, bloqueando cualquier
+reagendamiento futuro real de ese lead (sync.ts no podría insertar la
+reunión nueva sin violar el único). Corregido a nivel de RPC, no solo en la
+UI: `fn_marcar_perdido` ahora cancela cualquier reunión que siga
+'agendada'/'confirmada' del lead antes de marcarlo Perdido -- protege la
+invariante sin importar desde dónde se llame en el futuro. Migración:
+`20260825150000_fn_marcar_perdido_cancela_reunion_activa.sql`. Mismo
+razonamiento aplicado a "Reagendar cita": a diferencia de los reagendamientos
+existentes (donde la reunión vieja ya estaba fuera del índice parcial antes
+del botón existir), acá la reunión SIGUE activa -- se marca 'reprogramada'
+(no 'cancelada' -- la cita se mueve, no se cae) vía `onAntesDeGenerar` de
+`GenerarEnlaceModal`, antes de copiar el link, para que un error ahí
+cancele todo el flujo en vez de mentir "copiado".
+
+**Efecto colateral encontrado y corregido:** probar el flujo de "Cancelar"
+dejó `TEST-Lead QA 1` en `perdido`, y el test permanente
+`closer-reuniones-rls.spec.ts` intentaba resetearlo directo a `agendado` --
+transición que `perdido` no permite (`TRANSICIONES.perdido = ["contactado"]`).
+Su propio `UPDATE` de reseteo no revisaba el error, así que fallaba en
+silencio y el síntoma real aparecía minutos después como un timeout de
+locator sin relación aparente. Se endureció ese `beforeEach` para lanzar un
+error claro apuntando a la causa real si esto vuelve a pasar.
+
+**Leads QA4/QA5:** creados con reunión en el pasado (`TEST-Lead QA 4`,
+hoy en la mañana; `TEST-Lead QA 5`, ayer) para que el fundador pueda probar
+el wizard completo sin el bloqueo de fecha futura, sin gastar QA1/QA2/QA3
+(ya usados como prueba de otros flujos).
+
+**Fuentes:** lectura de `pg_indexes`/`pg_get_functiondef` antes de decidir
+el mecanismo del fix (no se asumió, se verificó que era un índice parcial y
+exactamente qué estados cubre), Playwright contra QA Closer confirmando
+tanto el motivo preseleccionado como que `fn_marcar_perdido` efectivamente
+cancela la reunión huérfana (verificado consultando la base después del
+click, no solo el toast de éxito), `type-check`/`lint`/suite E2E oficial en
+verde.
+
+**Estado:** implementado y verificado en vivo. `TEST-Lead QA 1` quedó de
+nuevo en `agendado` con reunión futura (27-ago) para que el fundador pruebe
+los 2 botones nuevos él mismo. El fundador pidió explícitamente "commiteado"
+(no push) esta vez -- push queda pendiente de una confirmación aparte,
+siguiendo el patrón ya establecido de no pushear sin pedirlo cada vez.
+
+---
+
+## 🧠 Sesión 26-ago-2026 — Integración ManyChat (Setter): Enviar Calendario, Vincular con notificación, fix real de reunión huérfana
+
+**Fecha:** 2026-08-26
+**Módulo:** ARTF / `artf-pipeline-app` (sobre `master`, brainstorming
+arquitectónico completo: exploración -> preguntas -> spec -> plan ->
+ejecución, ver `docs/superpowers/specs/2026-08-26-manychat-integracion-setter-design.md`
+y `docs/superpowers/plans/2026-08-26-manychat-integracion-setter.md`)
+**Tipo:** integración nueva (primera vez que este repo habla con ManyChat)
++ bug real encontrado y reproducido en vivo antes de programar nada
+
+**Regla de negocio confirmada:** cero correo/WhatsApp/IG handle pedidos en
+la conversación de Instagram -- el lead los escribe recién al agendar en
+Google Calendar.
+
+**Enviar Calendario:** nuevo botón principal en el tab "Nuevo" del Setter
+(reemplaza el copiar-y-pegar manual como camino principal; "Generar
+enlace" queda de respaldo si ManyChat falla o el lead no tiene
+`manychat_id`). Dispara un Flow YA CONFIGURADO en ManyChat vía
+`POST /fb/sending/sendFlow` (verificado contra documentación real de
+ManyChat, no asumido) -- se prefirió sobre armar el mensaje a mano
+(`sendContent`) porque Meta exige un `message_tag` válido para mensajes
+fuera de la ventana de 24h y ninguno de los tags documentados encaja limpio
+con este caso; el Flow ya vive configurado en ManyChat con eso resuelto.
+
+**Vincular como "Super Botón":** al vincular una reserva flotante manualmente,
+ahora también notifica a ManyChat (quita el tag `PENDIENTE_AGENDA` vía
+`removeTagByName`, dispara un segundo Flow de confirmación) -- pero
+**Supabase manda**: si el RPC de vinculación falla, no se toca ManyChat; si
+tiene éxito, un fallo de ManyChat (timeout, ventana de 24h, lo que sea)
+NUNCA revierte la vinculación ya confirmada -- el toast lo dice honesto
+("Vinculado con éxito. (Nota: No se pudo actualizar ManyChat)").
+
+**Bug real encontrado y reproducido en vivo antes de programar** (no solo
+leído en código): `fn_vincular_reserva_flotante` escribía
+`clientes.whatsapp_e164 = coalesce(telefono_google, whatsapp_e164)` sin
+validar contra el CHECK real de la tabla (`^\+[1-9][0-9]{7,14}$`).
+`sync.ts` preserva a propósito el texto crudo del teléfono cuando no logra
+normalizarlo a E.164 (ej. "3011234567 (este es el de mi mamá)") -- ese
+texto real revienta la transacción completa con
+`violates check constraint clientes_whatsapp_e164_check`, dejando al
+Setter sin poder vincular jamás ese lead. No es un caso raro -- es
+exactamente el tipo de dato que un lead real escribe en un formulario.
+Corregido: si el teléfono crudo no pasa el regex, no se sobreescribe
+`whatsapp_e164` (nunca se bloquea la vinculación por esto).
+
+**Mejora de UX pedida explícitamente:** `VincularReservaModal` mostraba
+TODAS las reservas flotantes sin filtrar ("buscar en un pajar"). Ahora
+tiene filtro de fecha (Hoy / Esta semana -- default -- / Todos) y buscador
+de texto libre.
+
+**Decisión técnica evaluada, no asumida:** Server Action de Next.js
+(`'use server'`) en vez de una Edge Function de Supabase -- este repo tiene
+CERO edge functions hoy, y el patrón ya establecido
+(`src/app/api/cron/sync-calendar/route.ts`) ya prueba que un secreto
+server-side + Next.js alcanza sin infraestructura nueva.
+
+**Fuentes:** lectura completa de `sync.ts` (mecanismo de "cita huérfana"),
+verificación en vivo contra documentación real de ManyChat (`sendFlow`,
+`removeTagByName`, autenticación Bearer, restricción real de ventana de
+24h) vía WebSearch/WebFetch -- no se asumió ningún endpoint de memoria,
+reproducción en vivo del bug de `whatsapp_e164` contra la base ANTES de
+escribir el fix (rollback limpio confirmado, sin corrupción), 3 leads de
+prueba creados (`TEST-Setter QA 1/2/3`), test permanente agregado
+(`e2e/vincular-reserva-telefono-crudo.spec.ts`, con reset de fixture vía
+service role), `type-check`/`lint`/suite E2E oficial en verde.
+
+**Estado:** implementado, commiteado, pendiente de confirmación de push a
+`origin/master`. El fundador gestiona `MANYCHAT_API_TOKEN` en su propio
+`.env.local`/Vercel -- no es parte de este commit.
+
+---
