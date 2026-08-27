@@ -1570,7 +1570,93 @@ zona horaria (requisito real para el dashboard, no un bug de datos):**
     si formalizarlo como oferta/producto propio. Agregado como pregunta 4 al
     mensaje para Javier/Catalina.
 
+**Sesiones 22 a 27-ago-2026 (resumen) — Dashboards por rol + Super Botones
+ManyChat + investigación Feature 2 (extracción LLM):**
+- **22-ago:** Dashboard dedicado del Setter (`SetterPipelineBoard`, 5 estados
+  propios) — Yeisiton (setter+admin) hace dogfooding deliberado del rol.
+- **24-ago:** Módulo Closer (`CloserPipelineBoard`, 7 estados propios).
+- **26-ago:** "Enviar Calendario" y "Vincular Reserva" como Super Botones —
+  disparan flows reales de ManyChat (`/fb/sending/sendFlow`,
+  `/fb/subscriber/removeTagByName`) desde Server Actions con contrato de
+  resiliencia fijo: el `UPDATE`/RPC de Supabase manda siempre primero, un
+  fallo de ManyChat nunca revierte la escritura ya hecha, la UI muestra
+  toasts honestos (no éxito falso) vía discriminated unions.
+- **27-ago:** "Devolver a Nuevo" (red de seguridad para un "Enviar
+  Calendario" hecho por error) — mismo contrato de resiliencia, quita el tag
+  `PENDIENTE_AGENDA` para apagar los Smart Delays. Verificado con
+  Playwright + SQL directo, commit `1222ff7`, pusheado a `origin/master`
+  con confirmación explícita.
+- **27-ago — Investigación Feature 2 (extracción LLM antes de "Enviar
+  Calendario"): BLOQUEADA, no se escribió código.** Petición original:
+  usar un LLM para extraer profesión/salario/dolor de la conversación del
+  lead antes de mandarle el calendario. Tres hallazgos cambiaron el
+  diseño:
+  1. **ManyChat no tiene endpoint para leer historial de conversación**
+     (confirmado por investigación web, limitación documentada de la
+     plataforma) — descarta llamarla en vivo desde el Server Action.
+  2. **`activity_log` tampoco sirve hoy como fuente — causa raíz
+     encontrada en el código real, no solo en los datos.** `fn_sync_bot_turn`
+     sí tiene el parámetro `p_ultimo_msg_bot` (la tabla está diseñada para
+     guardar ambos lados), pero al auditar `activity_log` completa (no solo
+     el lead de prueba): de 1.050 turnos escritos en vivo por `worker_ia`,
+     **0 tienen `ultimo_msg_bot` con contenido**, y `ultimo_msg_lead` solo
+     en la mitad. Se leyó el Worker real que escribe esos turnos —
+     `estudio_skills_ia_claude/03_Clientes_y_Casos/02_Cliente_ARTF/
+     Scrips_Worker_and_AppScript/worker_bridge_supabase_NUEVO_paralelo.js`,
+     desplegado como `setter-bridge-supabase` — y el `rpcPayload` que arma
+     (líneas 120-130) **nunca incluye `p_ultimo_msg_bot`, ni tiene de dónde
+     sacarlo**: es deliberado, no un bug — el bot conversacional está
+     apagado (`JAVIT_ACTIVO=false`, ya documentado en la sesión 19-ago de
+     este mismo archivo), este Worker solo hace "captura pasiva" del
+     último mensaje del LEAD (`last_text` → `p_ultimo_msg_lead`); no existe
+     ninguna respuesta de bot que reenviar porque hoy nadie (ni un bot
+     propio ni Claude) le contesta al lead desde este pipeline — la
+     conversación real ocurre dentro del flow nativo de ManyChat, fuera de
+     cualquier código que controlemos. El único contenido real de
+     conversación que existe en `activity_log` (5.259 `ultimo_msg_lead` /
+     667 `ultimo_msg_bot`, origen `importacion`) viene del import histórico
+     único del Sheet (`migrate_activity_log.py`, sección 19-ago arriba), no
+     del pipeline en vivo. Verificado también contra el lead de prueba real
+     de Yeisiton (IG personal, manychat_id `845096996`): solo 5 filas desde
+     el 18-ago, ninguna con texto real (un `"Control"` suelto) —
+     consistente con que esa cuenta solo tuvo conversaciones al azar, no
+     siguiendo el playbook.
+  3. **Modelo:** se descartó `openai/gpt-oss-120b` en Groq — bug
+     documentado y sin resolver donde ignora `json_schema`/`strict:true`
+     (foro oficial de Groq + issue abierto en `langchain-ai/langchain`).
+     Recomendado en su lugar `qwen/qwen3.6-27b` en Groq (sí soporta
+     `json_schema` estricto de forma confiable).
+  - **Decisión de Yeisiton:** arreglar primero la tubería del bot antes de
+    construir Feature 2, en otra sesión. **No es un fix de código simple**
+    (el Worker no tiene de dónde sacar el mensaje del bot porque no hay
+    bot conversacional corriendo hoy) — la pregunta arquitectónica real a
+    resolver primero es si el flow nativo de ManyChat puede exponer el
+    texto de su propia respuesta como variable hacia una acción "External
+    Request" (investigar en la plataforma de ManyChat, no en este repo);
+    solo si eso es posible tiene sentido extender
+    `worker_bridge_supabase_NUEVO_paralelo.js` + `fn_sync_bot_turn` para
+    capturarlo. Alcance de campos a extraer se mantiene en el pedido
+    original (profesión, salario_mensual, dolor_principal) — NO se expande
+    a endeudamiento %/Datacrédito del playbook V4.0
+    (`03_Clientes_y_Casos/02_Cliente_ARTF/SOP Setter DM en Instagram
+    V4.0.pdf`) por ahora.
+
 ## Próximos pasos — Inbound AI SDR
+
+- [x] ~~Feature 2 (extracción LLM en "Enviar Calendario"): bloqueada~~ —
+      desbloqueada e implementada 27-ago-2026 (Modal de Revisión IA,
+      commit `65aad35`). Ver sesión "Feature 2 destrabada" arriba.
+- [ ] **Aplicar en ManyChat: agregar la Solicitud externa hacia
+      `setter-bridge-supabase` también en "Acciones #5"** del Flow único
+      (rama del kill switch para leads existentes) — cambio de
+      configuración en el dashboard de ManyChat, no de código, el fundador
+      ya tiene acceso admin. Sin esto, `activity_log` sigue con 1 solo turno
+      por lead y el Modal de Revisión IA abrirá vacío casi siempre. Ver
+      sesión 27-ago-2026 (continuación) arriba para el detalle completo del
+      Flow real (captura del fundador) y por qué este es el mecanismo.
+- [ ] **Confirmar push de `artf-pipeline-app` a `origin/master`**
+      (commit `65aad35`, Modal de Revisión IA + creación manual de leads
+      con profesión/salario).
 
 - [x] ~~Presentar análisis de BD a Javier y Catalina~~ — superado: la migración a
       Supabase ya se ejecutó y validó en staging con datos reales (dos veces).
@@ -4057,5 +4143,141 @@ duplicados, `type-check`/`lint`/suite E2E oficial en verde.
 borrar -- `activity_log` es append-only (mismo diseño protector que
 `ventas`) -- se dejó en estado terminal `descalificado`, renombrado para
 dejar rastro de por qué existe.
+
+---
+
+## 🧠 Sesión 27-ago-2026 (continuación) — Feature 2 destrabada: arquitectura real de ManyChat encontrada, Modal de Revisión IA implementado y commiteado
+
+**Fecha:** 2026-08-27
+**Módulo:** ARTF / `artf-pipeline-app` (commit `65aad35` sobre `master`, sin
+push todavía) + hallazgo de arquitectura en `estudio_skills_ia_claude`
+**Tipo:** investigación de plataforma (corrige la sesión anterior) + spec +
+implementación completa, con luz verde explícita del fundador en cada paso
+
+**Corrección real sobre la investigación de la sesión anterior (misma
+27-ago):** se había concluido que ManyChat no puede exponer ningún mensaje
+fuera de un Flow automatizado. Al leer completo el Worker viejo
+(`worker_cloudflare.md`, 1300 líneas -- antes solo resumido) se encontró que
+**"Javit" no era captura pasiva: era un bot conversacional completo con
+Claude Sonnet 4.6 que ejecutaba TODO el Playbook V4.0** (M1→M5.C),
+extrayendo profesión/ingreso/dolor_opcion/urgencia en cada turno vía
+`conversation_summary` acumulado -- apagado (`JAVIT_ACTIVO=false`), no
+borrado. El fundador aportó una captura real del Flow de ManyChat (un solo
+Flow, 7 reglas de trigger ya amplias -- incluye 2 de reconocimiento de
+intención con IA de ManyChat sobre "dinero/finanzas/frustraciones" y
+"quiere avanzar") con un nodo filtro **"Kill switch-leads existentes"**:
+si el contacto ya tiene el tag `EXISTENTE_CONVERSACION`, la rama verde
+("Acciones #5") solo pone/quita tags y NUNCA llama a ningún worker; solo la
+rama roja (leads nuevos, primera vez) llama a `setter-ia-bridge` +
+`setter-bridge-supabase`. Esto explica con evidencia real (no solo el patrón
+de la base) por qué el 100% de los 518 leads reales con texto en
+`activity_log` tiene exactamente 1 turno -- no es límite de la plataforma,
+es una condición de este Flow específico.
+
+**Idea del fundador, validada con fuentes oficiales antes de aceptarla:**
+agregar la misma "Solicitud externa" hacia `setter-bridge-supabase` TAMBIÉN
+en "Acciones #5" -- reusa las 7 reglas de trigger ya existentes (varias ya
+cubren las respuestas reales de profesión/salario/dolor/urgencia) sin tocar
+el kill switch de Javit (da igual, sigue apagado). Confirmado contra la
+documentación oficial de ManyChat que el patrón "Default Reply + External
+Request + Last Text Input" es exactamente esto. **Pendiente: este es un
+cambio de CONFIGURACIÓN dentro de ManyChat (agregar 1 acción en el Flow ya
+existente) -- el fundador ya tiene acceso admin, pero no se aplicó todavía
+en esta sesión.** Hasta que se aplique, `activity_log` seguirá teniendo solo
+1 turno por lead casi siempre, así que el Modal de Revisión IA (ver abajo)
+va a abrir "vacío" para la mayoría de leads por ahora -- comportamiento
+esperado, no un bug del LLM.
+
+**Decisión de diseño explícita del fundador: cero botones manuales de IA
+-- extracción "Just In Time".** Al pulsar "Enviar Calendario" (no un botón
+aparte), en background se concatenan los `activity_log.ultimo_msg_lead` del
+lead y se le piden a Groq. Se abre un Modal de Revisión con el formulario ya
+pre-rellenado (o vacío con aviso explícito si no hay nada) -- el Setter
+revisa/edita y confirma con un solo clic que guarda y envía.
+
+**Verificado antes de programar (mismo código, no supuesto), 2 correcciones
+reales al alcance pedido:**
+1. **"Añadir nuevo lead" y el flujo sin `manychat_id`ya estaban 100%
+   construidos** (`NuevoLeadModal.tsx` con botón visible + RPC real
+   `fn_crear_lead_manual`; "Enviar Calendario" ya se deshabilita sin
+   `manychat_id` con `GenerarEnlaceModal` como respaldo que ya mueve a
+   Calificado). Solo faltaban los campos profesión/salario en el modal y en
+   la RPC -- se evitó reconstruir algo que ya existía.
+2. **`fn_vincular_reserva_flotante` no hace match automático por
+   teléfono/correo -- es 100% manual** (el Setter elige de una lista). El
+   pedido de "identidad por teléfono para leads sin manychat_id" no
+   aplicaba: el camino ya es genérico para cualquier lead, con o sin
+   manychat_id.
+3. **Corrección de modelo:** se descartó `openai/gpt-oss-120b` (pedido
+   inicialmente) a favor de `qwen/qwen3.8-27b` -- reverificado en esta
+   sesión (no de memoria): los docs oficiales de Groq ya listan a
+   `gpt-oss-120b` como soportado en modo estricto, pero el hilo de la
+   comunidad y el issue de `langchain-ai/langchain#34155` siguen activos
+   con el mismo bug reportado recientemente. Se usa además
+   `response_format: json_object` (modo básico, no el `json_schema`
+   estricto problemático) + limpieza defensiva de fences markdown antes de
+   `JSON.parse`, pedida explícitamente por el fundador.
+4. **Corrección de formato de dato:** el schema de extracción pide
+   `dolor_opcion` (A-D) + `dolor_detalle` en vez de un resumen de texto
+   libre -- `gestion_leads.dolor` tiene un formato de almacenamiento
+   acordado (`parseDolor`/`serializeDolor` en `estados.ts`, "A,C,D|detalle")
+   que un texto libre habría roto silenciosamente la próxima vez que el
+   Setter abriera "Agendado".
+
+**Implementado y verificado en vivo, commit `65aad35`:**
+- `supabase/migrations/20260827180000_fn_crear_lead_manual_agrega_profesion_salario.sql`
+  -- `fn_crear_lead_manual` extendida con 4 parámetros nuevos al final de la
+  firma. **Bug propio encontrado y corregido en la misma sesión:** `CREATE OR
+  REPLACE` con parámetros nuevos crea un SEGUNDO overload en vez de
+  reemplazar (Postgres solo reemplaza con firma idéntica) -- se detectó
+  verificando `pg_get_function_arguments` después de aplicar, no se asumió
+  que el reemplazo fue limpio, y se corrigió con un `DROP FUNCTION` del
+  overload viejo de 7 parámetros.
+- `src/lib/ai/extraerDatosLead.ts` (nuevo, Server Action) -- lee
+  `activity_log.ultimo_msg_lead` ordenado, corta sin llamar a Groq si no hay
+  texto (determinístico), nunca lanza.
+- `src/components/ModalRevisionIA.tsx` (nuevo) -- aviso "✨ Datos sugeridos
+  por IA" o "No se detectaron datos, llena manualmente" (exigencia de
+  transparencia del fundador).
+- `src/components/SetterPipelineBoard.tsx` -- "Enviar Calendario" se parte
+  en 2 momentos: clic reclama el lead + dispara la extracción (botón
+  "Analizando chat…"); confirmar dentro del modal guarda
+  profesión/salario/dolor + mueve a Calificado + llama a ManyChat
+  best-effort (mismo contrato de siempre: Supabase manda, un fallo de
+  ManyChat nunca revierte lo ya guardado). "Reenviar" (caso raro, edge case)
+  se dejó intacto sin pasar por el modal, a propósito, para no tocar un
+  camino que no se pidió cambiar.
+- `src/components/CloserPipelineBoard.tsx` -- agrega profesión/salario al
+  panel de "Datos" (antes solo mostraba dolor) para que el Closer vea la
+  info completa antes de su llamada, pedido explícito del fundador.
+- `src/components/NuevoLeadModal.tsx` -- inputs de profesión/salario.
+- `CURRENCIES`/`PERIODICIDADES` (antes duplicados solo en
+  `SetterPipelineBoard.tsx`) movidos a `estados.ts`, compartidos entre los 3
+  componentes.
+- Test permanente `e2e/modal-revision-ia-enviar-calendario.spec.ts` --
+  fixture nuevo `TEST-Setter QA 4 (Modal Revision IA)` con `manychat_id`
+  inventado a propósito (mismo criterio que el resto de fixtures QA: nunca
+  un suscriptor real) y CERO filas en `activity_log`, para que
+  `extraerDatosLead` corte de forma determinística sin depender de una
+  llamada real a Groq -- prueba justo el contrato de resiliencia (Supabase
+  manda, ManyChat best-effort) con una consulta directa a la base después
+  del toast, no solo el mensaje de éxito.
+
+**Fuentes:** lectura completa de `worker_cloudflare.md` (1300 líneas, no
+solo resumen de memoria), captura real del Flow de ManyChat aportada por el
+fundador, documentación oficial de Groq (`console.groq.com/docs/structured-outputs`)
++ comunidad/issue de GitHub reverificados en esta sesión (no de memoria),
+lectura del código real de `enviarCalendario`/`guardarAgendado`/
+`fn_vincular_reserva_flotante`/`fn_crear_lead_manual` antes de programar
+(2 reducciones de alcance reales, no asumidas), `pg_get_function_arguments`
+después de la migración (encontró el bug del overload), `type-check`/`lint`
+(pre-commit hooks) y suite E2E completa (5/5) en verde.
+
+**Estado:** implementado y commiteado (`65aad35`), pendiente de confirmación
+de push a `origin/master`. **Pendiente real, fuera de este repo:** aplicar
+el cambio de Flow en el dashboard de ManyChat (agregar la Solicitud externa
+a "Acciones #5") -- sin eso, el Modal de Revisión IA seguirá abriendo vacío
+para la mayoría de leads nuevos, comportamiento esperado documentado arriba,
+no un bug.
 
 ---
