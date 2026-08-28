@@ -4281,3 +4281,10 @@ para la mayoría de leads nuevos, comportamiento esperado documentado arriba,
 no un bug.
 
 ---
+
+**Sesión 28-ago-2026 — Deuda Técnica "Thick Client" saldada, Pruebas E2E estabilizadas y Push final (Agent Antigravity):**
+- **Deuda Técnica "Thick Client" en Componentes React:** Identificamos y corregimos llamadas `.update()` a base de datos que residían directamente en el frontend.
+  - El `SetterPipelineBoard.tsx`, `CloserPipelineBoard.tsx` y `PipelineBoard.tsx` (Admin) fueron refactorizados completamente. Todas sus mutaciones (como re-agendar, avanzar estado o actualizar perfiles de leads) ahora están encapsuladas y aisladas en **Next.js Server Actions** transaccionales en `src/lib/data/pipeline-actions.ts`.
+  - Esta migración no solo mejora la seguridad para que RLS pueda auditar con confianza las solicitudes desde el servidor, sino que impone un patrón sólido ("use server") para las futuras ampliaciones.
+- **Fixture Collisions en Playwright E2E:** Al intentar verificar los tableros concurrentemente en 6 hilos, los tests se rompían intermitentemente ("flakiness") debido al uso compartido del fixture "TEST-Setter QA 4" entre varios archivos. Se refactorizó el script de pruebas para crear fixtures *aislados* dinámicamente con `test.beforeEach()` e `insert`, y limpiar su rastro en `test.afterEach()`.
+- **Estatus:** Completado y pusheado a `master` (`3007032`). Toda la arquitectura React Client / Server Action queda robusta para soportar el diseño pendiente del flujo final del Closer y el Dashboard de Métricas Administrativas.
