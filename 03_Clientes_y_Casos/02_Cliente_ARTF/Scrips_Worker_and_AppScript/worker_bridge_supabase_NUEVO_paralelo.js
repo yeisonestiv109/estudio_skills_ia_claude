@@ -38,6 +38,31 @@
  * ManyChat (EXISTENTE_CONVERSACION/REQUIERE_RESPUESTA_HUMANA), no el estado
  * de Supabase.
  *
+ * ============================================================================
+ * AMPLIACION 29-ago-2026 -- Captura total + validacion de agenda con Groq
+ * ============================================================================
+ * 1. Captura total: este Worker ahora se llama en CADA mensaje entrante del
+ *    lead (antes solo en el primer mensaje -- el "Kill switch-leads
+ *    existentes" del Flow de ManyChat bloqueaba el resto, ver instrucciones
+ *    de Flow entregadas al fundador la misma sesion). fn_sync_bot_turn ya
+ *    insertaba una fila nueva en activity_log en cada llamada (append-only
+ *    real, sin cambios) -- lo que SI tenia un bug real y se corrigio en la
+ *    misma sesion: sin p_etapa_bot (este Worker nunca lo manda), el destino
+ *    por default era 'nuevo' fijo, y 'agendado'->'nuevo' SI es una
+ *    transicion legal (existe para "Devolver a Nuevo") -- cualquier mensaje
+ *    de un lead ya agendado lo regresaba a 'nuevo' en silencio. Corregido en
+ *    fn_sync_bot_turn.sql: sin señal de etapa, el destino es quedarse donde
+ *    esta, nunca 'nuevo' fijo.
+ * 2. Validacion de agenda con Groq: cuando fn_sync_bot_turn devuelve
+ *    out_estado_codigo='agendado' (el lead YA tiene una cita real
+ *    confirmada contra Google Calendar -- eso no lo evalua el LLM, ya esta
+ *    verificado), se clasifica el mensaje del lead en 3 categorias
+ *    (confirmacion / reagendar_o_cancelar / otro) -- NO un booleano
+ *    confirmo/problema, ver procesarSiAgendado() para el razonamiento
+ *    completo. Enteramente fire-and-forget dentro del mismo ctx.waitUntil
+ *    que ya corria syncToSupabase -- nunca retrasa la respuesta HTTP a
+ *    ManyChat.
+ *
  * Secrets requeridos (Cloudflare Dashboard -> este Worker -> Settings -> Variables):
  * - SUPABASE_URL: URL del proyecto Supabase (staging: https://lrdtjsxtaadpgrzkchlw.supabase.co
  *   -- CAMBIAR a produccion cuando exista un proyecto de produccion separado)
@@ -45,6 +70,12 @@
  *   solo tiene GRANT a service_role, ver fn_sync_bot_turn.sql)
  * - MANYCHAT_API_TOKEN: MISMO token que ya usa el Worker actual (misma cuenta
  *   ManyChat, mismos tags) -- no hace falta uno nuevo.
+ * - GROQ_API_KEY: nueva (29-ago-2026) -- key de Groq para la clasificacion de
+ *   respuesta post-agenda. Sin esta, procesarSiAgendado() se salta entero,
+ *   sin error (mismo contrato de resiliencia de siempre).
+ * - MANYCHAT_FLOW_NS_CONFIRMACION: MISMO flow_ns que ya usa el dashboard
+ *   Next.js (src/lib/manychat/actions.ts, confirmarRespuestaLeadYNotificar)
+ *   -- reusar el mismo, no crear uno nuevo en ManyChat.
  */
 
 export default {
@@ -122,14 +153,24 @@ async function handleRequest(request, env, ctx) {
     p_nombre: full_name || null,
     p_ig_handle: ig_username || null,
     p_fuente_raw: fuente || null,
-    // Sin handoff_humano / etapa_bot: cae en 'nuevo' por diseño (ver nota de
-    // cabecera). Sin profesion/salario/dolor/urgencia: el bot nunca los
-    // pregunto en esta rama.
-    p_summary: 'Lead capturado en modo bridge (bot apagado). Pendiente de atencion manual.',
+    // Sin handoff_humano / etapa_bot: nunca se mueve el lead hacia atras ni
+    // adelante sin señal real (ver fix 29-ago-2026 en fn_sync_bot_turn.sql).
+    // Sin profesion/salario/dolor/urgencia: el bot nunca los pregunto en
+    // esta rama.
+    p_summary: 'Captura pasiva del lead via ManyChat -- sin bot conversacional activo.',
     p_ultimo_msg_lead: last_text || null,
   };
   if (ctx?.waitUntil) {
-    ctx.waitUntil(syncToSupabase(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, rpcPayload));
+    // Encadenado (29-ago-2026): antes esto era fire-and-forget puro. Ahora
+    // se necesita el resultado real de fn_sync_bot_turn (out_estado_codigo)
+    // para decidir si corre la validacion de agenda con Groq -- pero sigue
+    // siendo TODO fire-and-forget respecto a la respuesta HTTP a ManyChat,
+    // que ya se mando antes de que esta cadena empiece a resolverse.
+    ctx.waitUntil(
+      syncToSupabase(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, rpcPayload).then((resultado) =>
+        procesarSiAgendado(resultado, last_text, subId, env),
+      ),
+    );
   }
 
   return jsonResponse({ ok: true, action: 'captured', manychat_id: subId }, 200);
@@ -138,6 +179,11 @@ async function handleRequest(request, env, ctx) {
 /**
  * Llama a fn_sync_bot_turn via PostgREST RPC. Mismo espiritu que syncToCRM()
  * del Worker actual: en background, si falla solo loguea (no rompe el flujo).
+ *
+ * Devuelve el resultado parseado (29-ago-2026, antes no devolvia nada) --
+ * PostgREST entrega RETURNS TABLE como un array de filas, ej.
+ * [{ out_cliente_id, out_gestion_lead_id, out_estado_codigo, out_avanzo }].
+ * Devuelve null si falla, para que el caller lo trate igual que "sin dato".
  */
 async function syncToSupabase(supabaseUrl, serviceRoleKey, payload) {
   try {
@@ -152,13 +198,174 @@ async function syncToSupabase(supabaseUrl, serviceRoleKey, payload) {
     });
     if (!resp.ok) {
       console.error('fn_sync_bot_turn error:', resp.status, await resp.text());
-    } else {
-      const result = await resp.json();
-      console.log('Supabase sync OK:', JSON.stringify(result));
+      return null;
     }
+    const result = await resp.json();
+    console.log('Supabase sync OK:', JSON.stringify(result));
+    return result;
   } catch (e) {
     console.error('Error sincronizando a Supabase:', e?.message);
+    return null;
   }
+}
+
+// Modelo Groq (29-ago-2026): qwen/qwen3.8-27b, NO openai/gpt-oss-120b --
+// bug documentado (ignora json_schema/strict:true de forma inconsistente,
+// ver memoria artf_feature2_llm_extraction_blocked -- reverificado contra
+// docs oficiales + comunidad de Groq, reportes siguen activos pese a que
+// los docs ya lo listan soportado). Mismo modelo ya usado en
+// src/lib/ai/extraerDatosLead.ts del dashboard Next.js, por consistencia.
+const GROQ_MODEL = 'qwen/qwen3.8-27b';
+// Groq es rapido (normalmente <1s) -- este limite es una red de seguridad
+// para no dejar el ctx.waitUntil colgado, no un presupuesto de latencia real.
+const GROQ_TIMEOUT_MS = 4000;
+
+/**
+ * Clasifica la respuesta de un lead YA agendado (29-ago-2026).
+ *
+ * Decision de diseño, no la propuesta original: NO es un booleano
+ * confirmo=true/false. Razon real: out_estado_codigo='agendado' en Supabase
+ * ya es un HECHO verificado contra un evento real de Google Calendar (ver
+ * sync.ts del dashboard) -- la base de datos no necesita que el LLM le
+ * confirme que el agendamiento existe, eso ya lo sabe. La pregunta que de
+ * verdad hace falta responder es otra: dado que el lead YA esta agendado,
+ * ¿este mensaje nuevo pide cambiar/cancelar esa cita, o es solo un
+ * agradecimiento sin accion? Un booleano confirmo/problema fuerza una
+ * eleccion falsa en los casos reales mas comunes (agradecimiento simple,
+ * pregunta sin relacion, silencio) -- 3 categorias cubre esto sin adivinar.
+ *
+ * Devuelve 'confirmacion' | 'reagendar_o_cancelar' | 'otro' | null (null =
+ * Groq fallo/timeout/respuesta no parseable -- el caller debe tratarlo como
+ * "no se pudo clasificar", nunca como "confirmo").
+ */
+async function clasificarRespuestaAgendado(groqApiKey, mensajeLead) {
+  if (!groqApiKey || !mensajeLead) return null;
+
+  const systemPrompt = `Eres un clasificador. Un lead YA tiene una cita real confirmada en el calendario -- esto ya está verificado, no es algo que tengas que evaluar tú. Acaba de responder algo después de que se le envió el link para agendar. Clasifica su mensaje en UNA sola categoría:
+
+- "confirmacion": agradecimiento, confirmación simple, o cualquier mensaje neutral/positivo sin pedir cambios (ej. "listo", "gracias", "perfecto", "nos vemos", un emoji, "ya quedé agendada").
+- "reagendar_o_cancelar": el lead pide cambiar la hora, cancelar, dice que tuvo un problema con el horario, o que no puede asistir a la cita que ya tiene.
+- "otro": cualquier otra cosa -- pregunta no relacionada, mensaje ambiguo, o cualquier caso que no encaje claramente en las dos anteriores.
+
+Si tienes duda entre "confirmacion" y cualquier otra categoría, elige la otra -- nunca asumas confirmación sin que el mensaje sea claro.
+
+Devuelve ÚNICAMENTE este JSON, sin texto antes ni después, sin markdown:
+{"categoria": "confirmacion" | "reagendar_o_cancelar" | "otro"}`;
+
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), GROQ_TIMEOUT_MS);
+  try {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${groqApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: mensajeLead.slice(0, 1000) },
+        ],
+      }),
+      signal: abortController.signal,
+    });
+    if (!resp.ok) {
+      console.error('Groq error:', resp.status, await resp.text());
+      return null;
+    }
+    const data = await resp.json();
+    const raw = data?.choices?.[0]?.message?.content;
+    if (!raw || typeof raw !== 'string') return null;
+
+    // Limpieza defensiva de fences markdown residuales antes de parsear
+    // (mismo criterio que extraerDatosLead.ts del dashboard), por si el
+    // modelo los agrega pese a response_format: json_object.
+    const limpio = raw
+      .trim()
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+
+    const parsed = JSON.parse(limpio);
+    const categoriasValidas = ['confirmacion', 'reagendar_o_cancelar', 'otro'];
+    if (!categoriasValidas.includes(parsed?.categoria)) return null;
+    return parsed.categoria;
+  } catch (e) {
+    console.error('Error clasificando con Groq:', e?.message);
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Dispara un Flow de ManyChat via API -- mismo endpoint que ya usa el
+ * dashboard Next.js (enviarFlujo en src/lib/manychat/client.ts), replicado
+ * acá porque este Worker corre en un runtime separado (Cloudflare, no
+ * Vercel) y no puede importar ese modulo directo.
+ */
+async function enviarFlujoAsync(token, subscriberId, flowNs) {
+  if (!token || !subscriberId || !flowNs) return;
+  try {
+    const resp = await fetch('https://api.manychat.com/fb/sending/sendFlow', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ subscriber_id: subscriberId, flow_ns: flowNs }),
+    });
+    if (!resp.ok) {
+      console.error('sendFlow failed:', resp.status, await resp.text());
+    }
+  } catch (e) {
+    console.error('Error enviando flow:', e?.message);
+  }
+}
+
+/**
+ * Orquesta la clasificación + acción cuando fn_sync_bot_turn confirma que
+ * el lead ya está "agendado" (29-ago-2026). Se llama encadenada DESPUES de
+ * syncToSupabase, dentro del mismo ctx.waitUntil -- nunca retrasa la
+ * respuesta HTTP a ManyChat (esa ya se mandó antes).
+ *
+ * Sin GROQ_API_KEY o MANYCHAT_API_TOKEN configurados: se sale sin hacer
+ * nada, sin error -- mismo contrato de resiliencia que el resto del
+ * sistema (esto es una mejora, no un requisito para que el resto del
+ * Worker funcione).
+ *
+ * Si Groq no logra clasificar (categoria === null): tampoco se hace nada
+ * acá -- el Smart Delay de 30 min en ManyChat (ver instrucciones aparte)
+ * manda el agradecimiento de todos modos si nadie puso el tag
+ * RESPUESTA_AGENDA_PROCESADA, así que un fallo de Groq nunca deja al lead
+ * sin su mensaje final.
+ */
+async function procesarSiAgendado(resultadoSync, lastText, subId, env) {
+  const estado = resultadoSync?.[0]?.out_estado_codigo;
+  if (estado !== 'agendado') return;
+  if (!env.GROQ_API_KEY || !env.MANYCHAT_API_TOKEN) return;
+
+  const categoria = await clasificarRespuestaAgendado(env.GROQ_API_KEY, lastText);
+  const TAG_PROCESADO = 'RESPUESTA_AGENDA_PROCESADA';
+
+  if (categoria === 'confirmacion') {
+    if (env.MANYCHAT_FLOW_NS_CONFIRMACION) {
+      await enviarFlujoAsync(env.MANYCHAT_API_TOKEN, subId, env.MANYCHAT_FLOW_NS_CONFIRMACION);
+    }
+    await applyTagAsync(env.MANYCHAT_API_TOKEN, subId, TAG_PROCESADO, 'add');
+  } else if (categoria === 'reagendar_o_cancelar' || categoria === 'otro') {
+    // Deliberado: NO se manda el flow de agradecimiento acá -- seria
+    // insensible mandar "gracias, nos vemos" justo cuando el lead dijo que
+    // necesita cambiar o cancelar la cita.
+    await applyTagAsync(env.MANYCHAT_API_TOKEN, subId, 'REQUIERE_ATENCION_AGENDA', 'add');
+    await applyTagAsync(env.MANYCHAT_API_TOKEN, subId, TAG_PROCESADO, 'add');
+  }
+  // categoria === null (Groq fallo/timeout/respuesta invalida): no se toca
+  // ningun tag -- el Smart Delay de 30 min manda el agradecimiento igual.
 }
 
 /**

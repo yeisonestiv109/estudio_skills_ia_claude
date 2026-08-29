@@ -32,6 +32,21 @@
 --      vuelta a 'nuevo' en estado_transiciones, quedaba atascado sin forma
 --      de corregirse solo. Fix: comparar el codigo actual contra el destino
 --      ANTES de intentar cualquier salto; si ya coinciden, no se hace nada.
+--   6. Bug CRITICO real (29-ago-2026, encontrado ANTES de abrir la puerta de
+--      ManyChat para captura total de la conversacion -- no en produccion,
+--      pero a un paso de estarlo): el `else 'nuevo'` del paso 4 corria para
+--      CUALQUIER llamada sin p_etapa_bot -- exactamente el caso del worker
+--      pasivo nuevo (setter-bridge-supabase), que nunca lo manda. Y
+--      'agendado' -> 'nuevo' SI esta en estado_transiciones (existe a
+--      proposito para "Devolver a Nuevo" del dashboard), asi que
+--      fn_avanzar_estado(v_gestion_id, 'nuevo') tenia exito: CUALQUIER
+--      mensaje ("gracias", lo que sea) de un lead YA agendado lo regresaba a
+--      'nuevo' en silencio. Verificado el bug y el fix contra un lead
+--      agendado real (manychat_id 611122479) con BEGIN/ROLLBACK antes de
+--      aplicar. Fix: sin señal de etapa, el destino es "quedarse donde
+--      esta" (v_estado_actual_cod), nunca 'nuevo' fijo -- se reordeno el
+--      calculo de v_estado_actual_cod ANTES del CASE del paso 4 para poder
+--      usarlo como fallback seguro.
 --
 -- Fundamentado contra datos reales (sesion 15-ago-2026, NO se asumio nada):
 --   - Sheet real "Copia de CRM - Leads Campaña 1 Reconexión Financiera.xlsx"
@@ -158,6 +173,14 @@ begin
 
   -- 4. estado_codigo destino -- mapeo etapa(bot)->estado validado sesion 15-ago-2026
   --    (ver comentario de cabecera de este archivo para el detalle completo).
+  --    Se resuelve v_estado_actual_cod ANTES del CASE (bug #6, 29-ago-2026,
+  --    ver cabecera) para poder usarlo como fallback seguro: sin señal de
+  --    etapa (captura pasiva, p_etapa_bot null), el destino es "quedarse
+  --    donde esta", nunca 'nuevo' fijo -- eso regresaba leads reales
+  --    (agendado/calificado/contactado) hacia atras en cuanto mandaban
+  --    cualquier mensaje de seguimiento.
+  select codigo into v_estado_actual_cod from public.estados_lead where id = v_estado_actual_id;
+
   v_estado_destino_cod := case
     when p_handoff_humano and p_handoff_razon = 'crisis_emocional' then 'nutricion'
     when p_handoff_humano then 'calificado'
@@ -165,7 +188,7 @@ begin
     when p_etapa_bot = 'Descalificado' then 'descalificado'
     when p_etapa_bot in ('M5.B', 'M5.C') then 'agendado'
     when p_etapa_bot in ('M1', 'M2', 'M2.D', 'M3', 'M3.B', 'M4', 'M5') then 'contactado'
-    else 'nuevo'  -- Inicial, JavitOff, o cualquier valor no reconocido: nunca se asume calificacion.
+    else v_estado_actual_cod  -- sin señal reconocible: nunca se mueve el lead, ni adelante ni atras.
   end;
 
   -- 5. find-or-create gestion_leads: el intento MAS RECIENTE de este cliente.
@@ -232,8 +255,8 @@ begin
   --    pasiva nueva, destino='nuevo', recien insertado en 'nuevo'), NO se
   --    intenta ningun salto. Sin esto, un lead nuevo se empujaba a
   --    'contactado' por error y quedaba atascado ahi para siempre.
-  select codigo into v_estado_actual_cod from public.estados_lead where id = v_estado_actual_id;
-
+  --    (v_estado_actual_cod ya se calculo en el paso 4, antes del CASE --
+  --    bug #6, no se recalcula acá de nuevo.)
   if v_estado_actual_cod = v_estado_destino_cod then
     v_avanzo := false;
   else
