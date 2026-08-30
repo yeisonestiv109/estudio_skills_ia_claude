@@ -4327,3 +4327,26 @@ no un bug.
 6. **Iniciar el diseño del flujo Closer/Admin** -- próxima iniciativa grande, todavía sin discutir en ninguna sesión, sin spec ni plan escrito. Empezar con brainstorming/arquitectura antes de tocar código, mismo criterio ya establecido para todo este proyecto.
 
 **Cómo inicializar la sesión nueva:** pedirle a Claude que lea este archivo (`01_Gobernanza_EOS/02_backlog_y_rocas.md`, ya lo hace por defecto según `estudio_skills_ia_claude/CLAUDE.md`) y las memorias `artf_manychat_flow_kill_switch_arquitectura` + `artf_feature2_llm_extraction_blocked` + `artf_formulario_dashboard_status` antes de asumir el estado del proyecto.
+
+## 🧠 Sesión 30-ago-2026 — Alerta de recursos de Supabase: diagnóstico + 2 fixes reales
+
+**Disparador:** Supabase mostró "Your project is currently exhausting multiple resources" en el dashboard. Investigado a fondo con el MCP de Supabase (advisors, `pg_stat_statements`, `EXPLAIN ANALYZE` impersonando roles reales con `set_config('request.jwt.claims', ...)`, logs) antes de tocar nada — mismo criterio de este proyecto de no adivinar.
+
+**Descartado primero (evidencia, no suposición):**
+- No es disco: la base completa pesa 114 MB.
+- No son conexiones: solo ~22 abiertas, lejos de cualquier límite.
+- No es un incendio activo: los checkpoints de Postgres del día se ven sanos (sin `canceling statement`, sin OOM). `pg_stat_statements` **nunca se ha reseteado desde que se creó el proyecto (2026-08-09, 21 días acumulados)** -- las cifras de millones de buffers en las queries más caras son costo histórico acumulado (migraciones, imports, pruebas), no necesariamente la causa de la alerta de HOY. Importante tenerlo en cuenta la próxima vez que se lea `pg_stat_statements`: revisar `pg_stat_statements_info.stats_reset` primero, o los números llevan a conclusiones exageradas.
+
+**Fix 1 -- índice de cobertura en `gestion_leads(cliente_id)` (aplicado, bajo riesgo):**
+`pol_cli_select` (RLS de `clientes`) hace un `EXISTS` correlacionado contra `gestion_leads` por cada fila -- duplica el join que `vw_pipeline` ya hace. Verificado con `EXPLAIN (analyze, buffers)` impersonando un Setter real (`set_config('request.jwt.claims', ...)` con el `auth_user_id` de `QA Setter`) antes/después: el índice viejo `ix_gl_cliente` no cubría `setter_id`/`closer_id`/`califica`, forzando un heap fetch extra en ese `EXISTS`. Reemplazado por `ix_gl_cliente_covering` (`INCLUDE (setter_id, closer_id, califica)`) -- el plan pasó de `Index Scan` a `Index Only Scan`. Ganancia real (~8%), no transformadora -- el lever grande sigue siendo paginar/filtrar la pestaña "Ver Todos" (ya señalado en el handoff de Gaby del Closer, aplica igual al Setter/`PipelineBoard.tsx`), tarea de UX pendiente, no bugfix de una línea.
+
+**Fix 2 -- bug real reproducido: `fn_calificar_lead_con_datos` explota con periodicidad inválida:**
+Encontrado por accidente investigando 2 conexiones `idle in transaction (aborted)` de PostgREST. `fn_calificar_lead_con_datos` (creada 28-ago por Gaby) castea `p_salario_periodicidad::public.periodicidad` (enum: solo `mensual`/`quincenal`/`anual`). `ModalRevisionIA.tsx:42` inicializaba el `<select>` directo con la sugerencia de Groq **sin validar contra esos 3 valores** -- si el modelo devuelve otra cosa y el Setter confirma sin tocar el dropdown, la RPC lanza `invalid input value for enum` y aborta la transacción. Reproducido limpio con `BEGIN/ROLLBACK` (no se pudo confirmar por logs -- ni `postgres_logs` ni `edge_logs` capturaron el evento, la única evidencia fue `pg_stat_activity` + reproducción manual). Fix: normalizar a `"mensual"` si la sugerencia no está en `PERIODICIDADES` antes de usarla como estado inicial. `type-check` limpio. **Commiteado local (`1ef5ec9`), NO pusheado todavía.**
+
+**Hallazgo colateral importante -- posible colisión con Gaby, sin resolver:** mientras se reproducía el Fix 2 contra un lead de prueba (`TEST-RPC-debug-1788105627400`, nombre que sugiere que alguien ya estaba debuggeando esto mismo), la columna `version` de ese lead cambiaba entre transacciones propias con `ROLLBACK` limpio -- indicando una sesión concurrente real tocando la misma fila. Justo en ese momento apareció `origin/gaby` (rama nueva, sin commits todavía). **Conclusión: Gaby probablemente ya está en este mismo bug en paralelo.** Se le avisó explícitamente antes de pushear nada -- confirmar con ella si ya tiene su propio fix antes de subir `1ef5ec9` a `origin/master`.
+
+**Pendiente real de esta sesión:**
+1. Confirmar con Gaby si ya arregló `fn_calificar_lead_con_datos`/`ModalRevisionIA.tsx` en su rama -- evitar 2 fixes duplicados/conflictivos del mismo bug.
+2. Una vez confirmado, pushear `1ef5ec9` (o descartarlo si el de ella ya lo cubre).
+3. Nota de seguridad aparte (no bloqueante): la key del service account de Google (`GOOGLE_SERVICE_ACCOUNT_KEY_BASE64`) quedó impresa en texto plano en la salida de una terminal durante una exploración de código esta semana -- `.env.local` está bien gitignoreado (nunca se commiteó), pero vale la pena rotarla en algún momento por higiene, ya se imprimió más de una vez en desarrollo.
+4. Todavía sigue pendiente el plan grande de esta sesión: cerrar el flujo del Setter (Worker + Flow de ManyChat, para la noche), luego métricas del Admin. Ver la sección anterior "PRÓXIMOS PASOS EXACTOS" del 28-29-ago, que sigue vigente.
