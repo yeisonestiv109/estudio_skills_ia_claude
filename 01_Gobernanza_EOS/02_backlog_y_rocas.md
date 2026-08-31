@@ -4366,3 +4366,18 @@ Encontrado por accidente investigando 2 conexiones `idle in transaction (aborted
 3. Prueba de punta a punta del sistema conectando el calendario real de Andrés (pendiente, calendario actual en producción es el Gmail personal del desarrollador, de prueba).
 4. Remigración del Sheet con datos actualizados/limpios, una vez el sistema esté probado.
 5. Rotar `GOOGLE_SERVICE_ACCOUNT_KEY_BASE64` (higiene, no urgente).
+6. Pendiente que Javier comparta el Calendar real (`hola@conexionfinancieracol.com`) con el service account `artf-calendar-bot@artf-calendar-integration.iam.gserviceaccount.com` -- una vez hecho, actualizar `GOOGLE_CALENDAR_ID` en `.env.local`/Vercel (hoy sigue apuntando al Gmail personal de prueba).
+7. 2 correos duplicados entre clientes distintos (`cmartinezmdo@gmail.com`, `nati34.delgado@gmail.com`) -- dato menor, sin resolver, no bloqueante.
+
+## 🧠 Sesión 31-ago-2026 — Prueba en navegador real + auditoría: 1 vulnerabilidad real encontrada y corregida el mismo día
+
+**Prueba en navegador real (Playwright con el Chromium propio, sin Chrome del sistema disponible) del panel de Incidencias antes de que el fundador empiece a rellenar ~133 `manychat_id` a mano:**
+- El flujo de "Sin ManyChat ID" SÍ actualiza `clientes.manychat_id` de verdad -- verificado con un cliente real (`Erwin Bravo`), revertido después sin dejar rastro.
+- **Bug real encontrado:** al escribir un valor inválido (con letras, o duplicado), el toast mostraba el error crudo de Postgres (`clientes_manychat_id_solo_digitos`/unique) en vez de un mensaje legible. Corregido en `actualizarManychatIdAction` (commit `ab5eb42`) -- ahora dice explícitamente "debe contener solo números" o "ya existe otro cliente con ese manychat_id". Test e2e permanente agregado (`e2e/incidencias-manychat-id.spec.ts`).
+- Las otras 3 pestañas de Incidencias (Reunión sin Closer, Reuniones vencidas, Requiere Revisión Manual) se revisaron por código -- mismo patrón sólido de Server Actions/RPC con validación real, sin el mismo tipo de trampa.
+
+**Auditoría de seguridad -- hallazgo real y grave, corregido el mismo día (commit `2836d0f`):** `vw_show_ups` (creada ayer, 30-ago) quedó **sin `security_invoker=true` y sin revocar el SELECT por defecto a `anon`/`authenticated`** -- a diferencia de `vw_embudo_diario`, que sí tenía ambas protecciones. Efecto real: cualquier Setter/Closer logueado podía leer TODOS los clientes (nombre, whatsapp, correo, revenue) yendo directo a `GET /rest/v1/vw_show_ups`, saltándose por completo el chequeo de `fn_es_admin()` que la RPC `fn_show_ups()` sí aplicaba -- el gate de la función era decorativo si alguien conocía el nombre de la vista. Encontrado con `get_advisors(type=security)` (ERROR: security_definer_view), confirmado con `information_schema.role_table_grants`. Corregido: `alter view ... set (security_invoker = true)` + `revoke all ... from anon, authenticated`. Verificado antes/después impersonando admin (sigue funcionando, 190 filas) y no-admin (rechazado correctamente) + test e2e con la anon key real. **Lección: cualquier vista nueva que sirva datos sensibles vía una RPC admin-gated necesita las MISMAS 2 protecciones que ya usa `vw_embudo_diario`/`vw_pipeline` -- no asumir que el gate de la función alcanza solo.**
+
+**Datos:** estados de `gestion_leads` consistentes (`cerrado_at` siempre alineado con la categoría del estado, sin cruces raros). 2 correos duplicados entre clientes distintos, sin resolver (ver arriba).
+
+**Guía entregada al fundador para pedirle acceso del Calendar a Javier** (mensaje corto, con el email exacto del service account) -- ver arriba, punto 6 de pendientes.
