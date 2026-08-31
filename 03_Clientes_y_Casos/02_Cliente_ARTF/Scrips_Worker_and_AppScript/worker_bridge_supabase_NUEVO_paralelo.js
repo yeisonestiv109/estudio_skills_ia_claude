@@ -63,6 +63,18 @@
  *    que ya corria syncToSupabase -- nunca retrasa la respuesta HTTP a
  *    ManyChat.
  *
+ * ============================================================================
+ * PAUSA 30-ago-2026 -- la validacion de agenda con Groq (punto 2 de arriba)
+ * ============================================================================
+ * Decision del fundador: por ahora se prioriza dejar todo el sistema
+ * funcionando end-to-end (captura total en activity_log SI sigue aprobada,
+ * ver punto 1) para poder lanzarse a probarlo con trafico real, aunque
+ * ciertas cosas no sean automaticas todavia. La llamada a
+ * procesarSiAgendado() esta comentada en handleRequest() -- la funcion sigue
+ * completa e intacta en este archivo, es solo cuestion de descomentar esa
+ * linea cuando se retome (estimado: proximas semanas, una vez el sistema
+ * este probado y con datos limpios). Ver bitacora, sesion 30-ago-2026.
+ *
  * Secrets requeridos (Cloudflare Dashboard -> este Worker -> Settings -> Variables):
  * - SUPABASE_URL: URL del proyecto Supabase (staging: https://lrdtjsxtaadpgrzkchlw.supabase.co
  *   -- CAMBIAR a produccion cuando exista un proyecto de produccion separado)
@@ -161,15 +173,19 @@ async function handleRequest(request, env, ctx) {
     p_ultimo_msg_lead: last_text || null,
   };
   if (ctx?.waitUntil) {
-    // Encadenado (29-ago-2026): antes esto era fire-and-forget puro. Ahora
-    // se necesita el resultado real de fn_sync_bot_turn (out_estado_codigo)
-    // para decidir si corre la validacion de agenda con Groq -- pero sigue
-    // siendo TODO fire-and-forget respecto a la respuesta HTTP a ManyChat,
-    // que ya se mando antes de que esta cadena empiece a resolverse.
+    // PAUSADO (30-ago-2026, decision del fundador): la validacion de agenda
+    // con Groq (procesarSiAgendado) queda desconectada por ahora -- prioridad
+    // es dejar el sistema funcionando end-to-end (aunque ciertas cosas no
+    // sean automaticas) para poder lanzarse a probarlo, no agregar mas
+    // automatizacion todavia. La funcion procesarSiAgendado() sigue completa
+    // mas abajo en este archivo, lista para reconectarse en unas semanas --
+    // ver bitacora 01_Gobernanza_EOS/02_backlog_y_rocas.md, sesion 30-ago,
+    // para el detalle de la decision. Para reactivar: descomentar el
+    // .then(...) de abajo (requiere GROQ_API_KEY + MANYCHAT_FLOW_NS_CONFIRMACION
+    // configurados en este Worker).
     ctx.waitUntil(
-      syncToSupabase(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, rpcPayload).then((resultado) =>
-        procesarSiAgendado(resultado, last_text, subId, env),
-      ),
+      syncToSupabase(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, rpcPayload),
+      // .then((resultado) => procesarSiAgendado(resultado, last_text, subId, env)),
     );
   }
 
