@@ -1,8 +1,9 @@
-# Bot ARTF — Nuevo Flujo Conversacional (Diseño, sin código)
+# Bot ARTF — Nuevo Flujo Conversacional (Diseño Definitivo v1)
 
-**Estado: BORRADOR para iterar — NO es el spec final.** Ver también el tablero Miro
-"Bot ARTF: Flujo Viejo vs Propuesta Nueva" (comparación visual old/new) y el post-mortem
-verificado del bot viejo (sección 0).
+**Estado: DEFINITIVO (v1) — las 3 decisiones abiertas de la v0 ya se resolvieron
+(sección 5).** Arquitectura aprobada, lista para pasar a migraciones de base de datos.
+Ver también el tablero Miro "Bot ARTF: Flujo Viejo vs Propuesta Nueva" (comparación
+visual old/new) y el post-mortem verificado del bot viejo (sección 0).
 
 ## 0. Causa raíz confirmada (post-mortem)
 
@@ -84,36 +85,67 @@ necesitan interpretación abierta una vez que el número o la palabra clave est�
 El router determinista decide el siguiente paso comparando el dato extraído contra el
 umbral, sin llamar al LLM.
 
-### 2.2 Dónde SÍ entra el LLM — tareas acotadas, nunca "generar el mensaje"
-**Este es el punto que marco como decisión abierta (ver sección 5) frente al
-planteamiento original**, que pedía que el LLM devuelva directamente el `mensaje para el
-usuario`. Mi recomendación, consistente con lo que ya te señalé sobre el bot viejo: el
-LLM **clasifica y extrae**, nunca redacta lo que le llega al lead. Los guiones del SOP
-son copy ya optimizado con anotaciones explícitas de "por qué funciona" — dejar que un
-LLM los parafrasee es riesgo de conversión sin necesidad, y es exactamente el patrón que
-falló antes (regla "PROHIBIDO CONCATENAR" del prompt viejo, señal de que ya pasó).
+### 2.2 Dónde entra el LLM — clasificación/extracción + **empatía dinámica acotada**
+**Resuelto (sección 5): enfoque híbrido.** El LLM clasifica y extrae en JSON de esquema
+cerrado (igual que en la v0), **y además** genera un campo `oracion_empatia` — máximo
+1-2 oraciones reconociendo el dolor/lo que el lead acaba de decir, en tuteo colombiano.
+El Worker arma el mensaje final como `oracion_empatia + "\n\n" + plantilla_SOP_exacta`.
+El lead siente que lo escucharon; la pregunta/pitch real sigue siendo el copy exacto y
+probado del SOP — nunca se parafrasea.
 
-Casos concretos donde SÍ se llama a un LLM (siempre con salida JSON de esquema cerrado,
-nunca texto libre):
+**Salvaguardas necesarias para que esto no reintroduzca el riesgo que motivó la
+recomendación original** (el LLM sigue generando texto que el lead SÍ va a leer, solo
+que ahora acotado a 1-2 frases en vez de todo el mensaje):
+- **Reusar las 2 reglas innegociables del prompt viejo** para la generación de
+  `oracion_empatia` específicamente: Regla 1 (primera persona, nunca hablar de "Andrés"
+  en tercera persona) y Regla 2 (tuteo colombiano estricto, lista de regionalismos y
+  palabras prohibidas — "barato", "sacrificio", "dieta financiera", "ahorro hormiga",
+  etc.). Sin este guardrail explícito en el prompt del clasificador, la empatía dinámica
+  puede colar exactamente el tipo de desliz de marca que el playbook prohíbe.
+- **Límite duro de caracteres** en el Worker (ej. `.slice(0, 220)`), no solo confiar en
+  la instrucción del prompt — mismo criterio defensivo que ya usaba el bot viejo con
+  `msg.slice(0, 700)`.
+- **Fallback silencioso:** si la generación de `oracion_empatia` falla o se demora, el
+  Worker envía SOLO la plantilla, sin bloquear ni escalar a handoff por esto — la
+  empatía es un plus, nunca un punto único de falla del turno.
+- **Un solo llamado al LLM por turno**, no dos: cuando el paso ya requiere clasificar
+  (tabla de la sección 2.2), `oracion_empatia` se pide en el MISMO JSON de esa llamada.
+  Cuando el paso es 100% determinista (ej. confirmación de agendado, "ya agendé"), este
+  sí sería un llamado nuevo solo para la empatía — **a confirmar con el fundador si vale
+  la pena en esos pasos mecánicos, o si ahí se envía la plantilla sola** (ver nota al
+  final de esta sección).
+- **Excepción obligatoria — mensajes del calendario (M5/M8):** el SOP exige que el link
+  vaya SIEMPRE aislado, sin texto pegado en el mismo turno (Instagram puede romper el
+  link). Para estos mensajes específicos, si se genera `oracion_empatia` se envía como
+  burbuja SEPARADA antes del link — nunca concatenada en el mismo mensaje.
+
+Casos concretos donde el LLM clasifica/extrae + genera empatía (JSON de esquema
+cerrado, el campo `oracion_empatia` se suma a todos estos):
 | Paso del SOP | Qué clasifica/extrae el LLM | Salida (enum cerrado) |
 |---|---|---|
-| M1 (profesión + ingreso) | Extrae el número de ingreso y la profesión de texto libre | `{ingreso_cop_m: number\|null, profesion: string\|null}` |
-| M2 (endeudamiento) | Extrae % o monto, y clasifica el bucket | `{pct: number\|null, bucket: "≤50"\|"50-70"\|">70"\|"no_sabe"}` |
-| M2.5 (Datacrédito) | Clasifica sí/no/no sabe | `{tiene_reporte: true\|false\|null}` |
-| Objeciones (cualquier etapa) | Matchea contra las 9 objeciones conocidas | `{objecion_num: 1-9\|null, es_conocida: bool}` |
-| M3.B (beneficio propio) | ¿Nombró un beneficio concreto? | `{beneficio_concreto: bool, texto: string\|null}` |
-| Cualquier turno | Señales de crisis emocional | `{crisis: bool}` (usa 1-2 turnos de contexto, ver sección 1) |
+| M1 (profesión + ingreso) | Extrae el número de ingreso y la profesión de texto libre | `{ingreso_cop_m: number\|null, profesion: string\|null, oracion_empatia: string}` |
+| M2 (endeudamiento) | Extrae % o monto, y clasifica el bucket | `{pct: number\|null, bucket: "≤50"\|"50-70"\|">70"\|"no_sabe", oracion_empatia: string}` |
+| M2.5 (Datacrédito) | Clasifica sí/no/no sabe | `{tiene_reporte: true\|false\|null, oracion_empatia: string}` |
+| Objeciones (cualquier etapa) | Matchea contra las 9 objeciones conocidas | `{objecion_num: 1-9\|null, es_conocida: bool, oracion_empatia: string}` |
+| M3.B (beneficio propio) | ¿Nombró un beneficio concreto? | `{beneficio_concreto: bool, texto: string\|null, oracion_empatia: string}` |
+| Cualquier turno | Señales de crisis emocional | `{crisis: bool}` (sin empatía — si hay crisis, el handoff toma prioridad total, no se genera texto adicional) |
 
 Bifurcaciones simples (urgencia "ahora" vs "algún día", confirmaciones tipo "ya agendé",
 "asisto solo/acompañado") se resuelven con palabras clave — mismo criterio que ya usaba
-el bot viejo en su "PASO DETECCIÓN", que de hecho funcionaba bien para esto.
+el bot viejo en su "PASO DETECCIÓN". **Nota pendiente de tu confirmación:** en estos
+pasos puramente mecánicos, ¿vale la pena un llamado extra al LLM solo por la
+`oracion_empatia`, o se envía la plantilla sola? Mi recomendación es plantilla sola —
+son confirmaciones cortas donde la empatía agrega poco y cuesta latencia/tokens — pero
+lo dejo a tu criterio.
 
 ### 2.3 El mensaje real siempre sale de una tabla determinista
 Una vez que tenemos: `(estado_actual, clasificación_del_turno)` → una tabla de lookup
 (en código o en una tabla de Supabase editable) decide `(estado_nuevo, plantilla_id)`.
 La plantilla es el texto LITERAL del SOP V4.0 (M1-M8, las 9 objeciones, los 3 scripts de
 descalificación, los 6 bumps de recuperación), con interpolación simple de `{nombre}`.
-Cero riesgo de parafraseo, cero riesgo de concatenar 2 mensajes por error.
+El mensaje final = `oracion_empatia` (si aplica y no es M5/M8) + la plantilla exacta.
+Cero riesgo de parafraseo en la parte que importa (la pregunta/pitch), cero riesgo de
+concatenar 2 plantillas por error.
 
 ---
 
@@ -172,7 +204,7 @@ SOP o extensiones razonables que dejo marcadas como tal:
 | `agendamiento_manual_pendiente` | SOP explícito | Sub-flujo de agenda manual completado (fecha+correo+whatsapp capturados) |
 | `ambiguo` | SOP explícito | Mensaje vacío, "?", o el router no puede decidir con confianza |
 | `error_tecnico` | Nuevo (operacional) | Falla la escritura en Supabase, el LLM no devuelve JSON válido, o se agota el timeout |
-| `contenido_hostil` ⚠️ **propuesta mía, no está en el SOP original** | Nuevo | Insultos o mensajes claramente abusivos — el SOP no lo contempla explícitamente, lo agrego por sentido común operativo. **Necesito tu confirmación antes de darlo por definitivo.** |
+| `contenido_hostil` ✅ **confirmado** | Nuevo, aprobado | Insultos o mensajes claramente abusivos — no está en el SOP original, pero aprobado explícitamente: no tiene sentido gastar tiempo/créditos con trolls, el Setter decide qué hacer desde el dashboard |
 
 Mecánica de escalamiento (reusa lo que ya existe, no se inventa nada nuevo):
 - `gestion_leads.handoff_razon` (columna que YA existe) + estado pasa a `calificado`
@@ -189,21 +221,39 @@ intervención humana urgente, es simplemente fin del intento activo.
 
 ---
 
-## 5. Decisiones abiertas — necesito tu confirmación antes de dar esto por definitivo
+## 5. Decisiones resueltas (v0 → v1)
 
-1. **¿El LLM clasifica/extrae (mi recomendación) o genera el mensaje libre (como pedía
-   el planteamiento original de esta tarea)?** Mantuve mi recomendación en este
-   documento — plantillas literales, LLM nunca redacta lo que ve el lead — pero es tu
-   llamada, no la tomé por mi cuenta.
-2. **`contenido_hostil` como nueva razón de handoff** — no está en el SOP original, lo
-   propongo yo. ¿Lo agregamos, o lo mapeamos a `ambiguo`/`objecion_fuera_playbook` en
-   vez de crear una categoría nueva?
-3. **Sigue pendiente** (de la conversación anterior, sin resolver): si el kill-switch de
-   ManyChat (`EXISTENTE_CONVERSACION`) existía como nodo de Flow independiente mientras
-   el bot viejo estaba ACTIVO, o si es una pieza que se agregó después, junto con el
-   Worker de captura pasiva. Esto define si el bot nuevo necesita el mismo cambio de
-   Flow que ya dejamos pendiente para la captura pasiva, o si ya hay una vía para que
-   cada mensaje llegue al Worker.
+1. **✅ Resuelto — Enfoque híbrido:** el LLM clasifica/extrae y además genera
+   `oracion_empatia` (1-2 frases), pero la pregunta/pitch real SIEMPRE sale de la
+   plantilla literal del SOP. Ver sección 2.2 para las salvaguardas que agregué (reusar
+   las reglas de tuteo/palabras prohibidas del prompt viejo, límite de caracteres,
+   fallback si falla, excepción para los mensajes de calendario M5/M8).
+2. **✅ Resuelto — `contenido_hostil` confirmado** como razón oficial de handoff. Ver
+   sección 4.
+3. **✅ Resuelto — ManyChat pasa a ser un tubo 100% abierto.** No importa si el
+   kill-switch existía antes o después del bot viejo (ya no es relevante) — para el bot
+   nuevo, ManyChat envía TODOS los mensajes al Worker, sin ninguna regla de Flow que
+   bloquee turnos subsecuentes. La idempotencia (caché de 60s ante reintentos por
+   latencia) sigue viviendo en el Worker, tal como se planteó en la sección 3.
+
+### Hallazgo nuevo que esta resolución destapa — necesita tu confirmación
+Abrir el tubo 100% resuelve el problema de continuidad, pero crea uno que el
+kill-switch viejo resolvía sin que nadie lo pidiera explícitamente: **hoy nada impide
+que un lead en estado TERMINAL** (`ganado`, `perdido`, `descalificado`, `nutricion`)
+escriba meses después (ej. "gracias!", o un comentario viejo que dispara alguno de los 7
+triggers de nuevo) **y el router intente correr el SOP desde M1 otra vez** sobre un lead
+que ya cerró su ciclo.
+
+La caché de 60s de idempotencia NO cubre este caso — esa caché es para reintentos
+inmediatos del MISMO mensaje, no para "este lead ya terminó su recorrido hace tiempo".
+
+**Mi recomendación:** el router (sección 2.1), antes de cualquier otra cosa, revisa si
+`estado_actual` es terminal. Si lo es, el bot **no vuelve a correr el SOP** — solo
+registra el mensaje en `activity_log` (visibilidad para el equipo) y no responde nada
+automático, o responde con un acuse breve neutro y tag para que un humano decida si
+quiere reabrir la conversación. Me inclino por "no responder nada, solo loguear" como
+default más seguro (evita reabrir una venta ya cerrada de forma rara), pero es tu
+llamada — dímelo antes de que lo lleve a la migración/código.
 
 ---
 
