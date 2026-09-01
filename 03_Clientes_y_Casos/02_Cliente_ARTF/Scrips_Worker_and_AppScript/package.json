@@ -1,0 +1,10 @@
+{
+  "name": "artf-bot-setter-v42",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bot conversacional ARTF (SOP Setter DM en Instagram V4.2) -- Cloudflare Worker + router determinista.",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  }
+}

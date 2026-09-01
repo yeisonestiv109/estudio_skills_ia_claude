@@ -1,7 +1,30 @@
-# Bot ARTF — Nuevo Flujo Conversacional (Diseño Definitivo v1)
+# Bot ARTF — Nuevo Flujo Conversacional (Diseño Definitivo v2 — SOP V4.2)
 
-**Estado: DEFINITIVO (v1) — las 3 decisiones abiertas de la v0 ya se resolvieron
-(sección 5).** Arquitectura aprobada, lista para pasar a migraciones de base de datos.
+**Estado: IMPLEMENTADO (1-sep-2026).** El diseño dejó de ser solo diseño: las
+migraciones están aplicadas y el Worker está escrito y probado. Ver
+`GUIA_DESPLIEGUE_BOT_V42.md` para el paso a paso de despliegue y pruebas.
+
+> **v2 — actualizado al SOP V4.2 (1-sep-2026).** Cambios que invalidan partes de
+> la v1 de este documento:
+> - **Datacrédito sale de la precalificación.** El flujo pasa de 8 a 7 mensajes y
+>   de 4 a 3 filtros. Ya NO existe el paso "M2.5 (Datacrédito)" de la tabla 2.2,
+>   ni la columna `datacredito_negativo` de la sección 6.
+> - **Se reordena el cierre:** ahora **M6 = cierre + link** y **M7 = pregunta de
+>   asistencia** (antes era al revés). La regla de aislamiento del link aplica a
+>   M6, no a "M5/M8" como decía la v1.
+> - **Tope de endeudamiento condicional al ingreso:** ≤50% si gana ~$7M, hasta
+>   60% si gana >$9M (antes era 50% fijo).
+> - **Nuevo: glosario de ingreso colombiano + regla anti-descarte** (V4.1). Nunca
+>   se descalifica sobre un ingreso ambiguo; el descarte por ingreso es de 2
+>   pasos. Motivado por un caso real: se descartó a una lead de $22M porque dijo
+>   "gano el mínimo integral" y el bot leyó "mínimo".
+> - **Nuevo: RetornoLead.** Un lead ya descartado que se recalifica se rectifica
+>   solo, sin humano y sin revelar que es IA.
+
+**Implementación:**
+`Scrips_Worker_and_AppScript/{sop_v42_plantillas.js, bot_router_v42.js, worker_bot_setter_v42.js}`
++ 52 tests en `tests/` + migraciones `artf-pipeline-app/supabase/migrations/20260901*`.
+
 Ver también el tablero Miro "Bot ARTF: Flujo Viejo vs Propuesta Nueva" (comparación
 visual old/new) y el post-mortem verificado del bot viejo (sección 0).
 
@@ -236,6 +259,27 @@ intervención humana urgente, es simplemente fin del intento activo.
    bloquee turnos subsecuentes. La idempotencia (caché de 60s ante reintentos por
    latencia) sigue viviendo en el Worker, tal como se planteó en la sección 3.
 
+### ✅ RESUELTO en la v2 — lo resolvió el propio playbook V4.2
+
+La pregunta de abajo (¿qué hace el bot con un lead en estado terminal que vuelve
+a escribir?) quedó resuelta sin necesidad de criterio propio, porque **el SOP
+V4.2 la responde para el caso más importante**: exige que un lead ya descartado
+que se recalifica sea rescatado automáticamente, "sin humano y sin revelar que es
+IA" (RetornoLead). O sea que `descalificado` NO puede tratarse como puerta
+cerrada.
+
+Regla final implementada en `decidirSiResponder()`:
+- `ganado`, `perdido`, `nutricion` → el bot **no responde**, solo registra.
+- `agendado`, `show_up`, `oferta_presentada`, `seguimiento`, … (dominio del
+  Setter/Closer) → el bot **no responde**, solo registra.
+- `handoff_razon` no nulo → el bot **no vuelve a hablar** hasta que un humano lo
+  limpie.
+- `descalificado` → **sí escucha**, pero únicamente para el RetornoLead: si el
+  mensaje trae una cifra de ingreso que ahora califica, rectifica y retoma en M2;
+  cualquier otra cosa solo se registra.
+
+Texto original del hallazgo, que se conserva por trazabilidad:
+
 ### Hallazgo nuevo que esta resolución destapa — necesita tu confirmación
 Abrir el tubo 100% resuelve el problema de continuidad, pero crea uno que el
 kill-switch viejo resolvía sin que nadie lo pidiera explícitamente: **hoy nada impide
@@ -257,8 +301,42 @@ llamada — dímelo antes de que lo lleve a la migración/código.
 
 ---
 
-## 6. Campos nuevos que necesita `gestion_leads` (para la Fase 3)
+## 6. Campos de `gestion_leads` — APLICADO (migración `20260901120000`)
 
-No existen hoy — se agregarían en una migración cuando pasemos a código:
-`endeudamiento_pct numeric`, `datacredito_negativo boolean`, `asiste_acompanado
-boolean`, `ultima_objecion_codigo text`, `objeciones_consecutivas smallint default 0`.
+Lo que efectivamente se agregó (difiere de lo planeado en la v1):
+
+| Columna | Por qué |
+|---|---|
+| `etapa_bot text` | **La más importante, no estaba en el plan v1.** Sin ella el Worker no sabe en qué pregunta del SOP va: `estado_id` no alcanza porque `contactado` cubre de M1 a M5. Tiene CHECK con las 14 etapas válidas |
+| `endeudamiento_pct numeric` | Filtro 2 |
+| `ingreso_confirmado boolean` | **Nueva, no estaba en el plan v1.** Regla anti-descarte V4.1: distingue "aún no le pedí la cifra" de "ya se la pedí y sigue ambigua" |
+| `asiste_acompanado boolean` | M7 |
+| `ultima_objecion_codigo text` | Regla "misma objeción 2 veces" |
+| `objeciones_consecutivas smallint` | Regla "3+ objeciones consecutivas" |
+| ~~`datacredito_negativo`~~ | **NO se agregó:** V4.2 elimina Datacrédito de la precalificación |
+
+**Lo que NO hubo que crear porque ya existía** (hallazgo al revisar el esquema
+real, ahorró trabajo): `calendario_enviado_at`, `bump_tipo`, `bump_numero`,
+`motivo_perdida_id` (+ 3 motivos nuevos insertados), `ultima_actividad_at`,
+`total_interacciones`, y los estados `mensaje_enviado_espera`/`ghosteo_bump`.
+
+También se agregaron las 6 columnas nuevas a la whitelist del rol `setter` en
+`fn_columnas_por_rol()`: sin eso el Setter humano no podría corregir a mano lo
+que el bot extrajo mal — que es justo la convivencia que se busca.
+
+## 7. Funciones nuevas (aplicadas)
+
+- **`fn_bot_get_estado(manychat_id)`** — lectura del contexto completo en una
+  sola llamada. Devuelve 0 filas si el lead no existe.
+- **`fn_bot_procesar_turno(...)`** — escritura del turno. A diferencia de
+  `fn_sync_bot_turn`, el estado destino lo manda el Worker **explícito** en vez
+  de inferirse de un `CASE` en plpgsql: esa duplicación entre código y SQL fue
+  justo la que produjo el bug del 29-ago (`else 'nuevo'` regresaba leads
+  agendados a `nuevo`).
+  **Guarda dura:** rechaza `agendado` con excepción. El único dueño de ese estado
+  es la sincronización de Google Calendar — verificado con una prueba que
+  confirma que la excepción salta.
+
+Ambas con `revoke` a `public/anon/authenticated` y `grant` solo a `service_role`
+(la lección de `vw_show_ups`, 31-ago). Confirmado en los advisors: no aparecen
+como ejecutables por usuarios logueados.

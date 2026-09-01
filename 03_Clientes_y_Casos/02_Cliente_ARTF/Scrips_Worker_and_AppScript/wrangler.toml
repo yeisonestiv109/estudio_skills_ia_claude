@@ -1,0 +1,27 @@
+# Cloudflare Worker — Bot conversacional ARTF (SOP V4.2)
+#
+# Worker NUEVO y separado. No toca el Worker viejo del bot ni el de captura
+# pasiva: cada uno tiene su propio nombre, su propia URL y sus propios secrets.
+#
+# Desplegar:
+#   npm i -g wrangler        (o npx wrangler)
+#   wrangler login
+#   wrangler deploy
+#
+# Los secrets NO van en este archivo (ver guia de despliegue):
+#   wrangler secret put SUPABASE_URL
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put GROQ_API_KEY
+#   wrangler secret put MANYCHAT_API_TOKEN
+#   wrangler secret put MANYCHAT_IDS_PRUEBA
+
+name = "artf-bot-setter-v42"
+main = "worker_bot_setter_v42.js"
+compatibility_date = "2026-09-01"
+
+# nodejs_compat no hace falta: el Worker solo usa APIs estandar (fetch, crypto,
+# caches). Se deja fuera a proposito para mantener el bundle chico y el
+# arranque en frio bajo.
+
+[observability]
+enabled = true
