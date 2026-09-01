@@ -4381,3 +4381,37 @@ Encontrado por accidente investigando 2 conexiones `idle in transaction (aborted
 **Datos:** estados de `gestion_leads` consistentes (`cerrado_at` siempre alineado con la categoría del estado, sin cruces raros). 2 correos duplicados entre clientes distintos, sin resolver (ver arriba).
 
 **Guía entregada al fundador para pedirle acceso del Calendar a Javier** (mensaje corto, con el email exacto del service account) -- ver arriba, punto 6 de pendientes.
+
+---
+
+## 🤖 Sesión 1-sep-2026 — Bot conversacional nuevo: implementado sobre el SOP V4.2
+
+**Contexto:** llegó el playbook **V4.2** (reemplaza al V4.0 con el que se había hecho el diseño). Cambios que obligaron a reescribir partes del diseño:
+- **Datacrédito sale de la precalificación** → el flujo pasa de 8 a 7 mensajes y de 4 a 3 filtros. (Se evitó crear la columna `datacredito_negativo` que sí estaba planeada.)
+- **Cierre reordenado:** ahora **M6 = cierre + link** y **M7 = pregunta de asistencia** (antes al revés).
+- **Tope de endeudamiento condicional al ingreso:** ≤50% si gana ~$7M, hasta 60% si gana >$9M.
+- **Glosario de ingreso colombiano + regla anti-descarte (V4.1):** nunca se descalifica sobre un ingreso ambiguo; el descarte por ingreso es de 2 pasos. Motivado por un caso real: se descartó a una lead de **$22M** porque dijo "gano el mínimo integral" y el bot leyó "mínimo".
+- **RetornoLead:** el lead ya descartado que se recalifica se rectifica solo, sin humano y sin revelar que es IA.
+
+### Qué quedó construido y verificado
+- **3 migraciones aplicadas** (`artf-pipeline-app/supabase/migrations/20260901*`, commit `e460351`): columnas de memoria conversacional en `gestion_leads` (`etapa_bot` con CHECK de 14 etapas, `endeudamiento_pct`, `ingreso_confirmado`, `asiste_acompanado`, `ultima_objecion_codigo`, `objeciones_consecutivas`), 3 motivos de pérdida del SOP, y **`fn_bot_get_estado` + `fn_bot_procesar_turno`** (ambas `revoke` a anon/authenticated, `grant` solo a `service_role` — la lección de `vw_show_ups`; confirmado en advisors).
+- **Worker nuevo y separado** (`Scrips_Worker_and_AppScript/`, commit `a948fd1`): plantillas literales del SOP + router determinista sin red + Worker con idempotencia, LLM acotado y escritura síncrona. **52 tests con `node --test`, todos en verde.**
+- **Guía de despliegue completa** (`GUIA_DESPLIEGUE_BOT_V42.md`): Cloudflare + ManyChat paso a paso, guion de prueba, limpieza de datos y decisiones a confirmar.
+
+### Decisiones de arquitectura que conviene recordar
+- **El bot llega hasta `calificado` y se detiene.** `agendado` lo escribe **únicamente** la sincronización de Google Calendar. Además hay una **guarda dura en la base**: `fn_bot_procesar_turno` lanza excepción si le piden escribir `agendado` (verificado). Que el lead diga "ya agendé" no es prueba — el propio SOP lo exige.
+- **El estado destino lo manda el Worker explícito**, no se infiere de un `CASE` en plpgsql como hacía `fn_sync_bot_turn`. Esa duplicación entre código y SQL fue justo la que produjo el bug del 29-ago (`else 'nuevo'` regresaba leads agendados a `nuevo`).
+- **Convivencia con el Setter resuelta y cerrada:** el bot no habla en estados del Setter/Closer (`agendado`, `show_up`, …), ni en `perdido`/`nutrición`, ni tras un handoff. **La única puerta abierta en terminal es `descalificado`**, porque el SOP V4.2 exige el RetornoLead automático. Esto cierra la pregunta que quedó abierta en el documento de diseño — la respondió el propio playbook, no un criterio nuestro.
+- Se agregaron las 6 columnas nuevas a la whitelist del rol `setter` en `fn_columnas_por_rol()`: sin eso el Setter humano no podría corregir a mano lo que el bot extraiga mal.
+
+### 🐞 Bug real preexistente encontrado (y corregido) verificando con e2e
+Corriendo `e2e/setter-agendado.spec.ts` apareció una falla que **no era mía**, y resultó ser un bug real del dashboard: `asegurarReclamadoAction` **descartaba la fila que devuelve `fn_reclamar_lead`**, y esa función hace un `UPDATE` real sobre `gestion_leads`. Como `fn_touch_versioned` **incrementa `version` en CUALQUIER update**, reclamar el lead dejaba obsoleto al instante el `version` que tenía la pantalla, y la llamada siguiente a `fn_calificar_lead_con_datos(p_version)` reventaba con `CONFLICTO_CONCURRENCIA` (40001). **Efecto real para el equipo: el primer "Guardar campos" sobre cualquier lead no reclamado fallaba siempre y había que darle guardar dos veces** — se veía como "a veces no guarda", no como un error claro. `fn_reclamar_lead` ya devolvía la fila completa; solo había que usar el `version` que trae. Corregido en `pipeline-actions.ts` (commit `e460351`) y **verificado a nivel SQL**: con el version fresco la RPC guarda donde antes lanzaba 40001.
+
+**Nota de método:** la verificación en navegador quedó a medias por flakiness del entorno (el `beforeEach` del spec se colgó insertando contra Supabase en 2 corridas seguidas, con la base sana y 0 locks en espera — mismo patrón de saturación ya documentado el 30-ago). El fix está probado a nivel SQL, no con el navegador: **conviene volver a correr ese spec cuando el entorno esté estable.**
+
+### Pendientes que deja esta sesión
+1. **Los 2 commits están LOCALES, sin pushear** (`e460351` en `artf-pipeline-app`, `a948fd1` en `estudio_skills_ia_claude`) — el push quedó bloqueado por permisos en la sesión.
+2. **Bumps del SOP de Recuperación (30min/24h/72h):** plantillas escritas, falta el **Cron Trigger** de Cloudflare (no es un webhook). Fuera del alcance de la prueba inicial.
+3. **`M7_SOLO_ACK` es copy inventado** (marcado como `_extensionOperativa` en el código): el SOP, para "asisto solo", le habla al Setter humano en vez de dar script. Reemplazar por copy oficial.
+4. **Confirmar cuándo se marca `calificado`:** hoy queda al pasar los 3 filtros (antes del pitch), con `calendario_enviado_at` aparte para medir quién sí recibió el link.
+5. **4 inconsistencias de renumeración en el PDF de la V4.2** (referencias a "Mensaje 6/7" que quedaron del orden viejo) — detalladas en la guía de despliegue, sección 10.
