@@ -45,6 +45,7 @@ import {
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
   detectarUrgencia, detectarDolorLetra, detectarAceptacion,
   detectarHostilidad, detectarEndeudamientoPct,
+  detectarAgradecimiento, detectarCompromiso,
 } from './bot_router_v42.js';
 import { PLANTILLAS as P, render } from './sop_v42_plantillas.js';
 
@@ -304,6 +305,11 @@ export async function clasificar(env, estado, texto) {
     const acomp = detectarAcompanante(texto);
     if (acomp !== null) det.acompanado = acomp;
   }
+  if (etapa === 'CIERRE_PRECALL' && detectarAgradecimiento(texto)) det.agradece = true;
+  if (etapa === 'BLINDAJE_ENVIADO') {
+    const comp = detectarCompromiso(texto);
+    if (comp) det.compromiso = comp;
+  }
 
   // --- LLM: cubre lo que los deterministas no resolvieron + crisis + empatia ---
   const llm = await clasificarConLLM(env, etapa, texto, det).catch((e) => {
@@ -361,13 +367,16 @@ REGLAS DE EXTRACCION:
 - "objecion_num": 1=¿es gratis?/¿me van a vender algo? 2=no tengo tiempo 3=dejame pensarlo 4=ya probe cosas asi 5=necesito mas informacion 6=info muy sensible para DM 7=¿cuanto cuesta el PROGRAMA/mentoria? 8=¿que es el Protocolo de Reconexion? 9=¿por que resolverlo ahora?
 - OJO: "¿cuanto cuesta la CONSULTA/LLAMADA/SESION?" es objecion 1 (la llamada es gratis), NO la 7.
 - "objecion_conocida": false si el lead objeta algo que NO esta en esa lista de 9.
-- "crisis": true solo ante señales reales de crisis emocional grave (desesperacion profunda, autolesion, quiebra emocional).
+- "crisis": true SOLO ante señales reales de crisis emocional grave (duelo, crisis de pareja, ansiedad mencionada, autolesion, desesperacion profunda).
+  ⚠️ FALSO POSITIVO FRECUENTE, no lo cometas: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION, no crisis -> crisis=false. Escalar eso quema un lead bueno.
 - "ex_cliente": true si dice que ya fue cliente/alumno del programa antes.
 
 REGLAS PARA "oracion_empatia" (1-2 oraciones, maximo 200 caracteres):
-- Hablas en PRIMERA PERSONA como Andres. NUNCA menciones a "Andres" en tercera persona.
-- Tuteo colombiano estricto ("tienes", "puedes"). Prohibido el voseo ("tenes", "podes") y el usted.
-- PROHIBIDO usar: "barato", "sacrificio", "dieta financiera", "ahorro hormiga".
+- Hablas en PRIMERA PERSONA como Andres: TU ERES Andres. NUNCA lo menciones en tercera persona ("Andres te espera" esta MAL; "te espero" esta bien). Esto rompio en produccion y costo leads reales.
+- Tuteo colombiano estricto ("tienes", "puedes", "sabes", "quieres"). PROHIBIDO el voseo/argentinismos ("tenes", "podes", "sabes" con vos, "queres", "vos") y el usted. Aunque el lead te escriba en voseo, TU mantienes tuteo colombiano.
+- PALABRAS PROHIBIDAS (refuerzan que ahorrar = sufrir, y eso contradice la promesa del programa): "barato", "sacrificio", "tacaño", "restriccion", "sobrevivir", "dieta financiera", "ahorro hormiga", "recortar gastos".
+- PROHIBIDO tambien el lexico de otras regiones: "che", "boludo" (rioplatense), "tio", "guay", "mola" (España), "wey", "orale", "chido" (Mexico).
+- Nada de hype: ni "mentalidad de abundancia", ni "el dinero es energia", ni "manifiestalo".
 - No hagas preguntas ahi (la pregunta va aparte). Solo reconoce lo que el lead acaba de decir.
 - Si no hay nada que valga la pena reconocer, devuelve "".
 

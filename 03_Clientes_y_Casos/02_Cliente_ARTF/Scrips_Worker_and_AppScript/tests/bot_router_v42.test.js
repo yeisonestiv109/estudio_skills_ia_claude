@@ -21,6 +21,7 @@ import {
   decidirSiResponder, decidirTurno,
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
   detectarUrgencia, detectarDolorLetra, detectarHostilidad, detectarEndeudamientoPct,
+  pareceRemanente, detectarAgradecimiento, detectarCompromiso,
 } from '../bot_router_v42.js';
 import { CALENDAR_LINK, UMBRALES } from '../sop_v42_plantillas.js';
 
@@ -146,8 +147,12 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.equal(r.razon, 'posible_retorno_lead');
   });
 
-  test('ya se entregaron las preguntas pre-llamada: el bot no sigue hablando', () => {
-    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).responder, false);
+  test('tras el cierre el bot sigue escuchando SOLO para el blindaje del show-up', () => {
+    // Cambio deliberado (1-sep-2026): antes CIERRE_PRECALL cerraba la puerta.
+    // Ahora falta un paso -- el blindaje (M5.5.d) se dispara con el
+    // agradecimiento posterior. La puerta se cierra en BLINDAJE_CERRADO.
+    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).responder, true);
+    assert.equal(decidirSiResponder(estadoEn('BLINDAJE_CERRADO')).responder, false);
   });
 });
 
@@ -192,18 +197,34 @@ describe('Camino feliz completo M1 -> M7', () => {
     assert.match(p.mensajes[0], /¿Agendamos\?/);
   });
 
-  test('M5 -> acepta: link aislado + confirmame + M7, y NUNCA "agendado"', () => {
+  /**
+   * REGRESION del bug mas grave encontrado (1-sep-2026, revisando el proyecto
+   * original del Setter IA de Javier): la version anterior mandaba el link y
+   * DESPUES dos mensajes mas en el mismo turno. Ellos lo tienen documentado
+   * como bug confirmado en produccion -- Instagram concatena el link con el
+   * texto siguiente y lo deja invalido ("Dynamic Link Not Found"), rompiendo
+   * el agendamiento, que es lo unico que este bot existe para lograr.
+   */
+  test('M5 -> acepta: el LINK ES LA ULTIMA BURBUJA, nada despues', () => {
     const p = decidirTurno(estadoEn('M5_ENVIADO'), { acepta: true });
-    assert.equal(p.mensajes.length, 3);
-    // REGLA CRITICA: el link va en su propia burbuja, sin texto pegado despues.
-    assert.ok(p.mensajes[0].includes(CALENDAR_LINK));
-    assert.ok(!p.mensajes[1].includes(CALENDAR_LINK));
-    assert.match(p.mensajes[1], /Confirmame cuando te hayas agendado/);
-    assert.match(p.mensajes[2], /solo tú o consideras importante que participe alguien más/);
+    assert.equal(p.mensajes.length, 2, 'exactamente 2 burbujas: saludo + link');
+    assert.ok(!p.mensajes[0].includes(CALENDAR_LINK), 'el saludo no lleva el link');
+    assert.equal(p.mensajes[1].trim(), CALENDAR_LINK, 'la ultima burbuja es SOLO el link');
+    assert.equal(p.mensajes[p.mensajes.length - 1].trim(), CALENDAR_LINK,
+      'REGLA DURA: el link es el ULTIMO elemento del turno');
+    assert.equal(p.etapaNueva, 'M6_ENVIADO');
     assert.equal(p.campos.calendario_enviado, true);
     assert.equal(p.estadoDestino, 'calificado');
     assert.notEqual(p.estadoDestino, 'agendado', 'el bot jamas escribe agendado');
     assert.equal(p.permitirEmpatia, false, 'nada de texto generado junto al link');
+  });
+
+  test('turno siguiente al link: ahi SI van M7 + confirmame (ya sin link)', () => {
+    const p = decidirTurno(estadoEn('M6_ENVIADO', { estado_codigo: 'calificado' }), {});
+    assert.equal(p.etapaNueva, 'M7_ENVIADO');
+    assert.match(p.mensajes[0], /solo tú o consideras importante que participe alguien más/);
+    assert.match(p.mensajes[1], /Confirmame cuando te hayas agendado/);
+    assert.ok(p.mensajes.every((m) => !m.includes(CALENDAR_LINK)), 'sin link en este turno');
   });
 
   test('M7 -> confirma que agendo: preguntas pre-llamada, sigue en calificado', () => {
@@ -211,6 +232,13 @@ describe('Camino feliz completo M1 -> M7', () => {
     assert.equal(p.etapaNueva, 'CIERRE_PRECALL');
     assert.equal(p.estadoDestino, 'calificado');
     assert.match(p.mensajes[0], /estimado total de créditos/);
+  });
+
+  test('M7 -> asiste solo: acuse corto aprobado, sin abrir hilos nuevos', () => {
+    const p = decidirTurno(estadoEn('M7_ENVIADO'), { acompanado: false });
+    assert.equal(p.campos.asiste_acompanado, false);
+    assert.equal(p.mensajes.length, 1);
+    assert.match(p.mensajes[0], /Quedo pendiente de tu confirmación/);
   });
 
   test('M7 -> va acompañado', () => {
@@ -378,5 +406,63 @@ describe('Detectores deterministas', () => {
   test('hostilidad', () => {
     assert.equal(detectarHostilidad('esto es una estafa'), true);
     assert.equal(detectarHostilidad('gracias, me interesa'), false);
+  });
+});
+
+// ===========================================================================
+// Aprendizajes de produccion incorporados del proyecto original de Javier
+// (Setter-IA-Claude-Code-Project). Cada uno viene de un caso REAL que ya
+// paso en operacion -- no son casos hipoteticos.
+// ===========================================================================
+describe('Aprendizajes de produccion (proyecto Setter IA de Javier)', () => {
+  test('SOP-05 #2: "me quedan $5M" NO descalifica -- primero se aclara', () => {
+    const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 5_000_000 }, 'me quedan como 5 millones libres');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.equal(p.etapaNueva, 'M1_ACLARAR_REMANENTE');
+    assert.match(p.mensajes[0], /ingreso total al mes, o lo que te queda/);
+  });
+
+  test('SOP-05 #2: si tras aclarar sigue bajo, ahi si descalifica', () => {
+    const p = decidirTurno(estadoEn('M1_ACLARAR_REMANENTE'), { ingreso_cop: 5_000_000 }, 'no, es mi total');
+    assert.equal(p.estadoDestino, 'descalificado');
+  });
+
+  test('un ingreso bajo SIN marca de remanente descalifica de una', () => {
+    const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 3_000_000 }, 'gano 3 millones');
+    assert.equal(p.estadoDestino, 'descalificado');
+  });
+
+  test('M5.5.d: agradecer tras el cierre dispara el blindaje del show-up', () => {
+    const p = decidirTurno(estadoEn('CIERRE_PRECALL'), { agradece: true }, 'muchas gracias!');
+    assert.equal(p.etapaNueva, 'BLINDAJE_ENVIADO');
+    assert.match(p.mensajes[0], /puede pasar algo que haga que no asistas, o estamos súper firmes/);
+  });
+
+  test('blindaje: "firme" cierra la conversacion', () => {
+    const p = decidirTurno(estadoEn('BLINDAJE_ENVIADO'), { compromiso: 'firme' });
+    assert.equal(p.etapaNueva, 'BLINDAJE_CERRADO');
+    assert.match(p.mensajes[0], /Nos vemos/);
+  });
+
+  test('blindaje: "puede que" ofrece reagendar y el link vuelve a ir aislado al final', () => {
+    const p = decidirTurno(estadoEn('BLINDAJE_ENVIADO'), { compromiso: 'dudoso' });
+    assert.equal(p.etapaNueva, 'M6_ENVIADO');
+    assert.equal(p.mensajes[p.mensajes.length - 1].trim(), CALENDAR_LINK);
+    assert.ok(!p.mensajes[0].includes(CALENDAR_LINK));
+  });
+
+  test('la conversacion solo se cierra de verdad tras el blindaje', () => {
+    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).responder, true,
+      'CIERRE_PRECALL sigue abierto: falta el blindaje');
+    assert.equal(decidirSiResponder(estadoEn('BLINDAJE_CERRADO')).responder, false);
+  });
+
+  test('detectores nuevos', () => {
+    assert.equal(pareceRemanente('me quedan 5 millones'), true);
+    assert.equal(pareceRemanente('gano 5 millones'), false);
+    assert.equal(detectarAgradecimiento('muchas gracias!'), true);
+    assert.equal(detectarCompromiso('ahi estare firme'), 'firme');
+    assert.equal(detectarCompromiso('puede que me toque viajar'), 'dudoso');
+    assert.equal(detectarCompromiso('bueno'), null);
   });
 });

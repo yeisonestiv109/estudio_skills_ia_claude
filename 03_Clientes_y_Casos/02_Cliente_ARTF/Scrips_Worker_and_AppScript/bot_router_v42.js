@@ -171,8 +171,11 @@ export function decidirSiResponder(estado) {
   if (estado.handoff_razon) {
     return { responder: false, razon: 'handoff_activo' };
   }
-  if (estado.etapa_bot === 'CIERRE_PRECALL') {
-    return { responder: false, razon: 'cierre_ya_entregado' };
+  // CIERRE_PRECALL ya NO cierra la puerta: falta el blindaje del show-up
+  // (M5.5.d), que se dispara con el agradecimiento posterior. La puerta se
+  // cierra una vez el blindaje termina.
+  if (estado.etapa_bot === 'BLINDAJE_CERRADO') {
+    return { responder: false, razon: 'conversacion_cerrada' };
   }
   // Dominio del Setter/Closer: el bot no vuelve a hablar.
   const estadosDeHumano = ['agendado', 'no_show', 'show_up', 'oferta_presentada',
@@ -261,7 +264,8 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
   switch (etapa) {
     // =====================================================================
     case 'M1_ENVIADO':
-    case 'M1_INGRESO_AMBIGUO': {
+    case 'M1_INGRESO_AMBIGUO':
+    case 'M1_ACLARAR_REMANENTE': {
       const ing = c.ingreso_cop ?? null;
       const veredicto = evaluarIngreso(ing);
 
@@ -287,6 +291,20 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       }
 
       if (veredicto === 'descalifica') {
+        // Aprendizaje de produccion (SOP-05 #2 del proyecto de Javier): el lead
+        // que dice "me quedan $5M" o "menos de $7M" a veces habla del dinero
+        // que le SOBRA despues de gastos, no de su ingreso total. Descalificar
+        // ahi quema un lead bueno. Se aclara UNA vez antes de decidir.
+        if (etapa !== 'M1_ACLARAR_REMANENTE' && pareceRemanente(textoLead)) {
+          return {
+            mensajes: [render(P.M1_ACLARAR_REMANENTE, nombre)],
+            etapaNueva: 'M1_ACLARAR_REMANENTE', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null,
+            campos: { profesion: c.profesion ?? null },
+            permitirEmpatia: false,
+            summary: `Ingreso ${ing} bajo el umbral PERO el texto sugiere que es remanente, no ingreso total. Se aclara antes de descalificar.`,
+          };
+        }
         return {
           mensajes: [render(P.DESC_INGRESO, nombre)],
           etapaNueva: 'DESCALIFICADO',
@@ -464,22 +482,23 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // =====================================================================
     case 'M5_ENVIADO': {
       if (c.acepta) {
-        // M6 (link) + M7 (asistencia) en el mismo turno, en burbujas separadas:
-        // asi lo ordena el flujo V4.2 y M7 dice "antes de que separes tu
-        // espacio". El link queda aislado en su propia burbuja -- nada de texto
-        // pegado despues en la MISMA burbuja (Instagram lo rompe).
+        // ⚠️ EXACTAMENTE 2 burbujas, y el LINK ES LA ULTIMA. Nada despues.
+        // Bug confirmado en produccion por el equipo de Javier: si va texto
+        // despues del link en el mismo turno, Instagram los concatena y deja
+        // el link invalido ("Dynamic Link Not Found") -- se rompe el
+        // agendamiento, que es lo unico que este bot existe para lograr.
+        // El "Confirmame..." y M7 (asistencia) se envian en el TURNO SIGUIENTE.
         return {
           mensajes: [
-            render(P.M6_LINK, nombre),
-            render(P.M6_CONFIRMAME, nombre),
-            render(P.M7, nombre),
+            render(P.M6_SALUDO, nombre),
+            P.M6_LINK,
           ],
-          etapaNueva: 'M7_ENVIADO',
+          etapaNueva: 'M6_ENVIADO',
           estadoDestino: 'calificado',
           handoffRazon: null, motivoPerdida: null,
           campos: { calendario_enviado: true },
           permitirEmpatia: false, // REGLA CRITICA DEL LINK
-          summary: 'Acepta agendar. Se envia link (M6) + pregunta de asistencia (M7).',
+          summary: 'Acepta agendar. Se envia el link aislado (M6). M7 va en el turno siguiente.',
         };
       }
       if (c.objecion_num || c.objecion_detectada) {
@@ -489,7 +508,31 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     }
 
     // =====================================================================
-    case 'M6_ENVIADO': // por compatibilidad si algun turno quedo en M6
+    // Turno siguiente al link: aca SI se puede mandar texto, porque el link
+    // ya salio solo en su propio turno.
+    case 'M6_ENVIADO': {
+      if (c.confirmo_agendo) {
+        return {
+          mensajes: [render(P.CIERRE_PRECALL, nombre)],
+          etapaNueva: 'CIERRE_PRECALL', estadoDestino: 'calificado',
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Confirma agendamiento apenas recibe el link. Se envian las preguntas pre-llamada. OJO: "agendado" lo confirma la sync de Calendar, no esto.',
+        };
+      }
+      if (c.objecion_num || c.objecion_detectada) {
+        return manejarObjecion(estado, c, nombre, 'Objecion despues de enviar el link.');
+      }
+      return {
+        mensajes: [render(P.M7, nombre), render(P.M6_CONFIRMAME, nombre)],
+        etapaNueva: 'M7_ENVIADO', estadoDestino: 'calificado',
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Se envia la pregunta de asistencia (M7) + el CTA de confirmacion, ya sin link en el turno.',
+      };
+    }
+
+    // =====================================================================
     case 'M7_ENVIADO': {
       if (c.confirmo_agendo) {
         return {
@@ -532,7 +575,59 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     }
 
     // =====================================================================
-    case 'CIERRE_PRECALL':
+    // Blindaje del show-up (M5.5.d). Copy literal del proyecto de Javier,
+    // validado en produccion: sube el % de asistencia pre-comprometiendo al
+    // lead. Se dispara con el agradecimiento posterior al cierre.
+    case 'CIERRE_PRECALL': {
+      if (c.agradece) {
+        return {
+          mensajes: [render(P.BLINDAJE_SHOWUP, nombre)],
+          etapaNueva: 'BLINDAJE_ENVIADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Agradece tras el cierre. Se envia la pregunta de blindaje del show-up (M5.5.d).',
+        };
+      }
+      return {
+        mensajes: [], etapaNueva: null, estadoDestino: null,
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Mensaje tras el cierre sin agradecimiento claro. Solo se registra.',
+      };
+    }
+
+    // =====================================================================
+    case 'BLINDAJE_ENVIADO': {
+      if (c.compromiso === 'firme') {
+        return {
+          mensajes: [render(P.BLINDAJE_FIRME, nombre)],
+          etapaNueva: 'BLINDAJE_CERRADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Se compromete a asistir. Conversacion cerrada.',
+        };
+      }
+      if (c.compromiso === 'dudoso') {
+        // No se pega el link aca: si hay que reenviarlo va en su propia
+        // burbuja al final, nunca con texto despues (misma regla critica).
+        return {
+          mensajes: [render(P.BLINDAJE_REAGENDAR, nombre), P.M6_LINK],
+          etapaNueva: 'M6_ENVIADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Duda de poder asistir. Se ofrece reagendar y se reenvia el link aislado.',
+        };
+      }
+      return {
+        mensajes: [], etapaNueva: 'BLINDAJE_CERRADO', estadoDestino: null,
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Respuesta al blindaje no clasificable. Se cierra sin insistir.',
+      };
+    }
+
+    // =====================================================================
+    case 'BLINDAJE_CERRADO':
     case 'DESCALIFICADO':
     case 'HANDOFF':
     default:
@@ -648,6 +743,39 @@ export function detectarAceptacion(texto) {
   const t = String(texto || '').toLowerCase();
   return /\b(dale|listo|s[ií]|claro|dele|dal[eé]|dalee|dalé|dsl|dsp|dele|de\s*una|dale\s*pues|agendemos|agendamos|me\s*sirve|dale\s*ah[ií]|perfecto|obvio|por\s*supuesto|hag[aá]moslo|vamos)\b/.test(t)
       && !/\b(no|pero|aunque)\b/.test(t.slice(0, 12));
+}
+
+/**
+ * ¿La cifra que dio el lead suena a "lo que me queda" y no a su ingreso total?
+ *
+ * Aprendizaje de produccion del equipo de Javier (SOP-05 #2): descalificar a
+ * alguien que dijo "me quedan $5M" sin aclarar es perder un lead que puede
+ * estar ganando $12M brutos. Solo dispara la aclaracion cuando el texto trae
+ * una marca explicita de remanente -- no en cualquier ingreso bajo, para no
+ * agregarle friccion al lead que de verdad no califica.
+ */
+export function pareceRemanente(texto) {
+  const t = String(texto || '').toLowerCase();
+  return /\b(me\s*qued|queda[nr]?\b|me\s*sobra|sobran|libre[s]?\b|despu[eé]s\s*de\s*(gastos|pagar)|neto|limpio|disponible|para\s*gastar|menos\s*de)\b/.test(t);
+}
+
+/** Agradecimiento tras el cierre -> dispara el blindaje del show-up. */
+export function detectarAgradecimiento(texto) {
+  const t = String(texto || '').toLowerCase();
+  return /\b(gracias|grac|mil\s*gracias|te\s*agradezco|muy\s*amable|excelente|perfecto|listo)\b/.test(t)
+      || /^\s*(🙏|👍|🙌|💪|😊)+\s*$/u.test(String(texto || '').trim());
+}
+
+/** Respuesta a la pregunta de blindaje: 'firme' | 'dudoso' | null. */
+export function detectarCompromiso(texto) {
+  const t = String(texto || '').toLowerCase();
+  if (/\b(puede\s*(que|pasar)|tal\s*vez|quiz[aá]s?|no\s*estoy\s*segur|depende|capaz|probablemente\s*no|creo\s*que\s*no|no\s*podr[ií]a)\b/.test(t)) {
+    return 'dudoso';
+  }
+  if (/\b(firme|firmes|s[ií]\s*firme|segur[oa]|100|ah[ií]\s*estar[eé]|claro\s*que\s*s[ií]|por\s*supuesto|confirmad|ah[ií]\s*nos\s*vemos|nada\s*(me\s*)?lo\s*impide|todo\s*bien)\b/.test(t)) {
+    return 'firme';
+  }
+  return null;
 }
 
 /** Hostilidad -- red deterministas basica, el LLM afina. */

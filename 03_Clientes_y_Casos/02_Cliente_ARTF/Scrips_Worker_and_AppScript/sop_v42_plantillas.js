@@ -129,13 +129,28 @@ Y ojo: no trabajo con todo el mundo. Solo con personas que:
 // ---------------------------------------------------------------------------
 // MENSAJE 6 — Cierre del agendamiento (★ reordenado en V4.2)
 // ---------------------------------------------------------------------------
-// REGLA CRITICA DEL LINK: va SIEMPRE aislado -- nada de texto pegado
-// inmediatamente DESPUES en la misma burbuja (Instagram puede romperlo). Por
-// eso el "Confirmame..." es una burbuja SEPARADA.
-P.M6_LINK = `¡Perfecto! 🙌
+// ⚠️ REGLA CRITICA DEL LINK -- bug CONFIRMADO EN PRODUCCION por el equipo de
+// Javier (ver Setter-IA-Claude-Code-Project/knowledge-base/04-voz-y-tono.md y
+// scripts/m5-cierre-agendamiento.md):
+//
+//   "cuando un link de Calendly se envia y luego viene otro texto en chunks
+//    rapidos, Instagram puede concatenar el link con el texto siguiente y
+//    dejar el link INVALIDO ('Dynamic Link Not Found'). Esto rompe el
+//    agendamiento."
+//
+// Reglas duras que salen de ahi:
+//   1. Todo el contexto que acompaña al link va ANTES del link.
+//   2. El link es SIEMPRE el ULTIMO elemento del turno.
+//   3. NUNCA se manda texto despues del link en el MISMO turno.
+//
+// Por eso el turno del link son exactamente 2 burbujas (saludo, link) y el
+// "Confirmame..." + M7 se van al turno SIGUIENTE. Su propio documento
+// recomienda justo esto: "prioriza dividir en 2 turnos".
+P.M6_SALUDO = `¡Perfecto! 🙌
+Acá te dejo el link para que elijas el día y hora que mejor te quede:`;
 
-Acá te dejo el link para que elijas el día y hora que mejor te quede:
-${CALENDAR_LINK}`;
+/** Va SOLO en su burbuja, y es lo ultimo del turno. Nada despues. */
+P.M6_LINK = CALENDAR_LINK;
 
 P.M6_CONFIRMAME = `Confirmame cuando te hayas agendado, así te envío un par de puntos clave para que lleves a nuestra llamada.`;
 
@@ -151,13 +166,15 @@ Te lo pregunto porque hay personas que prefieren tener presente a alguien con qu
 P.M7_ACOMPANADO = `Perfecto {nombre}, entonces cuando vayas a agendar asegúrate de que esa persona también pueda estar ese día ¿Lo pueden cuadrar?`;
 
 /**
- * EXTENSION OPERATIVA — no sale del playbook.
- * El SOP, para "asistira solo/a", le dice al Setter "Perfecto, espera a que
- * agende" (una instruccion, no un script). Un bot no puede quedarse mudo, asi
- * que se usa este acuse minimo. Marcado para revision del fundador.
+ * Acuse cuando el lead dice que asiste solo.
+ *
+ * El SOP aca le habla al Setter humano ("Perfecto, esperar a que agende") en
+ * vez de dar un script, asi que este texto no es copy literal del playbook.
+ * Aprobado por el fundador (1-sep-2026) y escrito siguiendo la voz del
+ * proyecto de Javier: linea corta y calida, sin abrir hilos nuevos y sin
+ * volver a vender ("el lead ya dijo que si en M5").
  */
-P.M7_SOLO_ACK = `¡Perfecto! Entonces te espero por acá cuando separes tu espacio 🙌`;
-P.M7_SOLO_ACK_esExtension = true;
+P.M7_SOLO_ACK = `¡Listo, {nombre}! 🙌 Quedo pendiente de tu confirmación cuando separes tu espacio.`;
 
 /** Cuando confirma que agendo -> preguntas pre-llamada. */
 P.CIERRE_PRECALL = `Genial, para nuestra sesión ten listo:
@@ -166,6 +183,36 @@ P.CIERRE_PRECALL = `Genial, para nuestra sesión ten listo:
 2. ¿Hay algo específico que quisieras que yo entienda sobre tus objetivos o expectativas de esta mentoría?
 
 Nos vemos en la llamada.`;
+
+// ---------------------------------------------------------------------------
+// BLINDAJE DEL SHOW-UP (M5.5.d) — aprobado por el fundador 1-sep-2026
+// ---------------------------------------------------------------------------
+// Copy LITERAL del proyecto de Javier
+// (Setter-IA-Claude-Code-Project/scripts/m5-5-confirmacion-post-calendly.md).
+// Validado en produccion: pre-compromete al lead con la asistencia (efecto
+// consistencia) y ataca directo el KPI "% Show Up > 70%" del Scorecard.
+// Se dispara cuando el lead agradece DESPUES de confirmar que agendo.
+P.BLINDAJE_SHOWUP = `Buenísimo. A ti, gracias {nombre}.
+
+Permíteme hacerte la última pregunta: ¿de aquí al día de la sesión puede pasar algo que haga que no asistas, o estamos súper firmes?`;
+
+/** Responde "firme/seguro" -> se cierra la conversacion. */
+P.BLINDAJE_FIRME = `¡Perfecto! Nos vemos entonces. 💪`;
+
+/**
+ * Responde "puede que pase X" -> mejor reagendar antes de quemar el slot.
+ * Ojo: este mensaje NO lleva el link pegado. Si hay que reenviarlo, va en su
+ * propia burbuja al final (misma regla critica del link).
+ */
+P.BLINDAJE_REAGENDAR = `Entiendo. Mejor reagendamos a un momento donde estés 100% seguro, así no perdemos el espacio.`;
+
+// ---------------------------------------------------------------------------
+// ACLARACION DE INGRESO REMANENTE — aprendizaje de produccion (SOP-05 #2)
+// ---------------------------------------------------------------------------
+// Patron real: el lead responde "me quedan $5M" o "menos de $7M" refiriendose
+// al dinero que le SOBRA despues de gastos, no a su ingreso total. Descalificar
+// ahi es perder un lead bueno. Copy literal del proyecto de Javier.
+P.M1_ACLARAR_REMANENTE = `Solo para que estemos en la misma página: ¿esos que mencionas son tu ingreso total al mes, o lo que te queda después de cubrir gastos? Te pregunto porque cambia mucho el análisis.`;
 
 // ---------------------------------------------------------------------------
 // RETORNO LEAD (★ NUEVO V4.1) — descartado que se recalifica

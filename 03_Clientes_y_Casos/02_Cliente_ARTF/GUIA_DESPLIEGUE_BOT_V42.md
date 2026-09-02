@@ -199,15 +199,21 @@ Prueba estos caminos. Después de cada uno revisa el lead en el dashboard
 | 3 | `como el 30%` | Llega M3 (dolor A/B/C/D) |
 | 4 | `B` | Llega M4 (urgencia) |
 | 5 | `es prioridad ahora` | Llega M5 (pitch). **Estado pasa a `calificado`** |
-| 6 | `dale, agendemos` | Llegan 3 mensajes: link solo, "confirmame", y la pregunta de acompañante. `calendario_enviado_at` se llena. **El estado NO pasa a `agendado`** |
-| 7 | `voy solo` | Acuse corto. `asiste_acompanado=false` |
-| 8 | `ya agendé` | Llegan las 2 preguntas pre-llamada. `etapa_bot=CIERRE_PRECALL` |
+| 6 | `dale, agendemos` | Llegan **exactamente 2 mensajes**: el saludo y **el link SOLO, de último**. `calendario_enviado_at` se llena. **El estado NO pasa a `agendado`**. `etapa_bot=M6_ENVIADO` |
+| 7 | (cualquier cosa, ej. `listo`) | Recién ahora llegan la pregunta de acompañante y el "Confirmame…". `etapa_bot=M7_ENVIADO` |
+| 8 | `voy solo` | Acuse corto. `asiste_acompanado=false` |
+| 9 | `ya agendé` | Llegan las 2 preguntas pre-llamada. `etapa_bot=CIERRE_PRECALL` |
+| 10 | `muchas gracias!` | Llega la **pregunta de blindaje del show-up**. `etapa_bot=BLINDAJE_ENVIADO` |
+| 11 | `ahí estaré firme` | Cierre corto. `etapa_bot=BLINDAJE_CERRADO` — el bot ya no responde más |
+
+> **⚠️ Verificación crítica en el paso 6:** mira el chat de Instagram y confirma que **el link quedó como último mensaje, solo, y que es clickeable**. Si le llega texto pegado después, Instagram lo rompe (*"Dynamic Link Not Found"*) y se cae el agendamiento. Esto es un bug confirmado en producción por el equipo de Javier, y es la razón por la que el "Confirmame…" y la pregunta de acompañante se envían hasta el turno siguiente.
 
 ### Caminos que también hay que probar (con la segunda cuenta)
 
 | Escribe | Debe pasar |
 |---|---|
 | `gano el mínimo integral` (en M1) | **NO descalifica.** Pide la cifra exacta |
+| `me quedan como 5 millones libres` | **NO descalifica.** Pregunta si es ingreso total o lo que le queda (aprendizaje de producción de Javier) |
 | `gano 2 millones` | Descalifica con valor (script de ingresos), motivo de pérdida registrado |
 | `¿cuánto cuesta el programa?` (tras el pitch) | Responde la Objeción 7 |
 | Repetir `¿cuánto cuesta?` | Handoff `pregunta_precio` + tag. **El bot deja de responder** |
@@ -276,7 +282,14 @@ operación destructiva sobre la base compartida: **no la hagas sin avisar.**
 
 ---
 
-## 9. Decisiones que tomé y conviene que confirmes
+## 9. Decisiones — ✅ TODAS CERRADAS (1-sep-2026)
+
+1. **`calificado` se marca al pasar los 3 filtros** (urgencia="ahora", antes del pitch). Confirmado. El envío del link se mide aparte en `calendario_enviado_at`. Encaja con el Scorecard de Javier, que ya trata `% Calificación` y `% Conversión a Agenda` como KPIs separados.
+2. **Cuando el lead dice que asiste solo**, el bot responde un acuse corto y cálido: *"¡Listo, {nombre}! 🙌 Quedo pendiente de tu confirmación cuando separes tu espacio."* Aprobado.
+3. **Se incorpora la pregunta de blindaje del show-up** (M5.5.d, copy literal del proyecto de Javier, validado en producción). Ataca el KPI `% Show Up > 70%`.
+4. **Las inconsistencias del PDF V4.2 quedan solo documentadas** (sección 10). El código implementa el orden correcto; que las corrijan ellos en su documento.
+
+### Texto histórico de cuando estaban abiertas
 
 1. **Cuándo se marca `calificado`.** Lo puse cuando pasa los **3 filtros**
    (urgencia = "ahora", justo antes del pitch), no cuando se manda el link.
