@@ -62,6 +62,11 @@ npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 npx wrangler secret put GROQ_API_KEY
 npx wrangler secret put MANYCHAT_API_TOKEN
 
+# OBLIGATORIO -- sin esto el Worker se niega a arrancar (responde 500).
+# Genera uno largo y aleatorio, por ejemplo con:
+#   openssl rand -hex 32
+npx wrangler secret put WEBHOOK_SECRET
+
 # Opcional pero MUY recomendado para esta prueba:
 npx wrangler secret put MANYCHAT_IDS_PRUEBA
 # pega los 2 subscriber_id de prueba separados por coma, ej: 123456,789012
@@ -76,8 +81,24 @@ el dashboard, y al final los borras filtrando por ese prefijo.
 ```bash
 curl -X POST https://TU-WORKER.workers.dev \
   -H "Content-Type: application/json" \
+  -H "X-Bot-Secret: EL-SECRETO-QUE-PUSISTE" \
   -d '{"manychat_subscriber_id":"999888777","last_text":"CONTROL","first_name":"Prueba","fuente":"comentario"}'
 ```
+
+Y comprueba que **sin** el header te rechaza (debe dar `401`, no una respuesta del bot):
+
+```bash
+curl -i -X POST https://TU-WORKER.workers.dev \
+  -H "Content-Type: application/json" \
+  -d '{"manychat_subscriber_id":"999888777","last_text":"CONTROL"}'
+# HTTP/2 401 ... {"ok":false,"responder":false,"error":"no_autorizado"}
+```
+
+> **Por qué esto importa:** la URL de un Worker no es un secreto (queda en la
+> config de ManyChat, en logs, en tu historial de terminal). Sin el header,
+> cualquiera que la conozca podría escribir en la base de datos **real** con el
+> `manychat_id` de un lead ajeno: cambiarle el salario, avanzarlo en el embudo,
+> descalificarlo, o quemarte los créditos del LLM.
 
 Debe responder algo así:
 
@@ -122,7 +143,9 @@ contestaría el primer mensaje — que fue exactamente lo que rompió al bot vie
 
 - **Method:** POST
 - **URL:** la URL de tu Worker
-- **Headers:** `Content-Type: application/json`
+- **Headers:** (los dos, el segundo es obligatorio)
+  - `Content-Type: application/json`
+  - `X-Bot-Secret: <el mismo valor que pusiste en WEBHOOK_SECRET>`
 - **Body (JSON):**
 
 ```json
