@@ -369,6 +369,41 @@ export const OBJECIONES = {
 };
 
 /**
+ * Parte una plantilla que trae un link embebido en DOS burbujas: todo el texto
+ * primero, el link solo al final.
+ *
+ * Por que existe: varias plantillas del SOP (Objeciones 2/3/6, las 3
+ * descalificaciones, los bumps) traen el link en medio del parrafo, con texto
+ * DESPUES. Eso es exactamente el bug que el equipo de Javier documento como
+ * confirmado en produccion: Instagram concatena el link con el texto siguiente
+ * y lo deja invalido. Su regla es explicita -- "todo el contexto que acompaña
+ * al link va ANTES del link" y "aplica a cualquier link futuro".
+ *
+ * Se hace por codigo y no reescribiendo cada plantilla a mano para que NINGUNA
+ * frase aprobada se pierda ni se reescriba: se conservan todas, en su orden, y
+ * solo se mueve el link al final en su propia burbuja.
+ *
+ * @returns {string[]} 1 burbuja si no habia link, 2 si lo habia.
+ */
+export function partirEnBurbujas(plantilla) {
+  const texto = String(plantilla || '');
+  const urls = texto.match(/https?:\/\/\S+/g);
+  if (!urls || urls.length === 0) return [texto];
+
+  const link = urls[urls.length - 1];
+  const sinLink = texto
+    .split(/https?:\/\/\S+/)
+    .join(' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s+([,.:;!?])/g, '$1')
+    .trim();
+
+  return sinLink ? [sinLink, link] : [link];
+}
+
+/**
  * Interpolacion simple. Solo {nombre} -- a proposito: cuanto menos dinamico
  * sea el copy, menos formas hay de romperlo.
  * Si no hay nombre usable cae a un saludo neutro en vez de dejar "{nombre}"

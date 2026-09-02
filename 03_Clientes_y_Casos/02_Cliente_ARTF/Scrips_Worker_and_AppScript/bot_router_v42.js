@@ -12,7 +12,7 @@
  * de objeciones, transiciones -- es codigo determinista.
  */
 
-import { PLANTILLAS as P, OBJECIONES, UMBRALES, render } from './sop_v42_plantillas.js';
+import { PLANTILLAS as P, OBJECIONES, UMBRALES, render, partirEnBurbujas } from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
 // 1. Glosario de ingreso colombiano (★ NUEVO V4.1)
@@ -306,7 +306,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           };
         }
         return {
-          mensajes: [render(P.DESC_INGRESO, nombre)],
+          mensajes: partirEnBurbujas(render(P.DESC_INGRESO, nombre)),
           etapaNueva: 'DESCALIFICADO',
           estadoDestino: 'descalificado',
           handoffRazon: null,
@@ -361,7 +361,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       }
       if (veredicto === 'descalifica') {
         return {
-          mensajes: [render(P.DESC_ENDEUDAMIENTO, nombre)],
+          mensajes: partirEnBurbujas(render(P.DESC_ENDEUDAMIENTO, nombre)),
           etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
           handoffRazon: null,
           motivoPerdida: 'Descalificado - Endeudamiento sobre su tope',
@@ -393,7 +393,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         };
       }
       return {
-        mensajes: [render(P.DESC_ENDEUDAMIENTO, nombre)],
+        mensajes: partirEnBurbujas(render(P.DESC_ENDEUDAMIENTO, nombre)),
         etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
         handoffRazon: null,
         motivoPerdida: 'Descalificado - Endeudamiento sobre su tope',
@@ -454,7 +454,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       }
       if (c.urgencia === 'algun_dia') {
         return {
-          mensajes: [render(P.DESC_URGENCIA, nombre)],
+          mensajes: partirEnBurbujas(render(P.DESC_URGENCIA, nombre)),
           etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
           handoffRazon: null,
           motivoPerdida: 'Descalificado - Sin urgencia',
@@ -679,7 +679,7 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
   }
 
   return {
-    mensajes: [render(OBJECIONES[c.objecion_num], nombre)],
+    mensajes: partirEnBurbujas(render(OBJECIONES[c.objecion_num], nombre)),
     // Se queda en la misma etapa: tras manejar la objecion se vuelve a pedir
     // el agendamiento, no se avanza el guion.
     etapaNueva: estado?.etapa_bot || null,
