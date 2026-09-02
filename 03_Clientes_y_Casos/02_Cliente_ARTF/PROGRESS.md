@@ -33,6 +33,14 @@ Se construyó el verificador **antes** que nada más, como manda la guía.
 
 **Cómo se arregló el link:** no reescribiendo 9 plantillas a mano (habría cambiado copy aprobado), sino con `partirEnBurbujas()`, que saca el link del texto y lo manda solo al final **conservando todas las frases en su orden**. R1 del verificador pasó a chequear *cualquier* URL, no solo la del calendario.
 
+### It. 1b — Alcance de la v1 y copy del link (hecho)
+Decisiones del fundador (2-sep-2026), que **él puede aprobar como Setter actual** — no hay que escalar a Catalina/Javier salvo algo que ninguno de los dos pueda resolver:
+
+- **Copy reordenado:** la frase que anuncia el link se movió al final en la Objeción 3 y en las 3 descalificaciones, para que no quede anunciando algo que llega en la burbuja siguiente. Mismas frases del SOP, distinto orden. (Las Objeciones 2 y 6 ya quedaban bien.)
+- **Alcance v1 de objeciones:** el bot contesta solo la **1, 2 y 3** (las mecánicas de agendamiento). Las otras 6 van a handoff con razón `objecion_no_habilitada`. Se controla con `OBJECIONES_HABILITADAS` en `sop_v42_plantillas.js`: **ampliar es agregar un número al Set**, el copy y el ruteo de las 9 ya existen y están probados.
+
+**⚠️ Consecuencia que hay que vigilar en la prueba:** la **Objeción 9** ("¿por qué resolverlo ahora?") es la única que el SOP predice como parte del flujo normal — dice literal *"aparece en Mensaje 4 (urgencia)"*. Con el alcance actual, ese lead va a handoff en vez de recibir el reframe. Si en la prueba aparece seguido, el arreglo es agregar `9` al Set. El invariante crítico sí se mantiene: preguntar "¿por qué ahora?" **nunca** se lee como falta de urgencia.
+
 ### It. 2 — Corpus y simulador (pendiente)
 Convertir `Setter-IA-Claude-Code-Project/examples/` (4 conversaciones modelo reales) en fixtures y reproducirlas turno por turno contra el router, con la compuerta corriendo en cada turno.
 

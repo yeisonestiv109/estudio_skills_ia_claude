@@ -236,14 +236,17 @@ Piénsalo así: si en 30 minutos pudieras identificar dónde se te están yendo 
 Revisa el calendario, seguro encuentras un hueco:
 ${CALENDAR_LINK}`;
 
+// Reordenada (aprobado por el fundador, 2-sep-2026): el link va obligatoriamente
+// en burbuja aparte, asi que la frase que lo anuncia se movio al final para que
+// no quede colgando. Mismas frases del SOP, distinto orden.
 P.OBJ_3 = `Dale, sin problema.
-
-Igual te dejo el link por acá por si te decides:
-${CALENDAR_LINK}
 
 Los espacios se llenan rápido porque solo tomo un número limitado de llamadas por semana. Si te interesa, mejor reservar el espacio ahora y si pasa algo lo reagendas.
 
-¿Listo?`;
+¿Listo?
+
+Igual te dejo el link por acá por si te decides:
+${CALENDAR_LINK}`;
 
 P.OBJ_4 = `Te entiendo completamente. Hay mucho vendedor de humo por ahí.
 
@@ -298,36 +301,35 @@ Y la trampa empeora con el tiempo, porque los hábitos se cementan.
 // ---------------------------------------------------------------------------
 // DESCALIFICACION CON VALOR
 // ---------------------------------------------------------------------------
+// Las 3 reordenadas igual que la Objecion 3 (aprobado por el fundador,
+// 2-sep-2026): la frase que presenta el recurso queda de ultima, pegada al
+// link, para que no quede anunciando algo que todavia no llega.
 P.DESC_INGRESO = `Gracias por la sinceridad, {nombre}.
 
 Con lo que me cuentas, creo que mi programa todavía no es el mejor fit para ti porque está diseñado para personas que ya están ganando más de $7M al mes — el método funciona ahí. Por debajo, la prioridad es subir el ingreso primero.
 
-Igual, no quiero que te vayas sin nada. Te recomiendo este recurso sobre cómo enfocarte en aumentar tu ingreso antes de optimizar gastos:
-${REELS.ingresos_bajos}
+Igual, no quiero que te vayas sin nada. Cualquier cosa, acá estoy. ¡Éxitos! 💪
 
-Te va a dar claridad sobre por dónde empezar. Impleméntalo y va a hacer una diferencia enorme.
-
-Cualquier cosa, acá estoy. ¡Éxitos! 💪`;
+Te recomiendo este recurso sobre cómo enfocarte en aumentar tu ingreso antes de optimizar gastos. Te va a dar claridad sobre por dónde empezar, impleméntalo y va a hacer una diferencia enorme:
+${REELS.ingresos_bajos}`;
 
 P.DESC_ENDEUDAMIENTO = `Gracias por la sinceridad, {nombre}.
 
 Con el nivel de endeudamiento que me cuentas, creo que mi programa todavía no es el mejor fit para ti porque está diseñado para liberar entre el 10% y 15% de tus ingresos para ahorro e inversión. Cuando la mayor parte se va en deudas, la prioridad #1 es bajar esa carga primero.
 
-Igual, no quiero que te vayas sin nada. Te recomiendo este recurso sobre estrategia para salir de deudas:
-${REELS.salir_de_deudas}
+Igual, no quiero que te vayas sin nada. Cuando tu endeudamiento esté en un nivel manejable, acá estoy para ayudarte a construir patrimonio. ¡Éxitos! 💪
 
-Te va a dar un mapa claro de por dónde empezar. Cuando tu endeudamiento esté en un nivel manejable, acá estoy para ayudarte a construir patrimonio.
-
-¡Éxitos! 💪`;
+Te recomiendo este recurso sobre estrategia para salir de deudas. Te va a dar un mapa claro de por dónde empezar:
+${REELS.salir_de_deudas}`;
 
 P.DESC_URGENCIA = `Gracias por la sinceridad, {nombre}.
 
 Con lo que me cuentas, creo que mi programa todavía no es el mejor fit para ti porque funciona mejor cuando hay urgencia real para ejecutarlo en 60 días.
 
-Igual, no quiero que te vayas sin nada. Te recomiendo este recurso:
-${REELS.ingresos_bajos}
+Igual, no quiero que te vayas sin nada. Cuando estés listo para tomar acción, acá estoy. ¡Éxitos! 💪
 
-Cuando estés listo para tomar acción, acá estoy. ¡Éxitos! 💪`;
+Te recomiendo este recurso:
+${REELS.ingresos_bajos}`;
 
 // ---------------------------------------------------------------------------
 // SOP DE RECUPERACION (bumps) — se disparan por tiempo, no por webhook.
@@ -362,11 +364,39 @@ P.FALLBACK_ERROR_esExtension = true;
 
 export const PLANTILLAS = P;
 
-/** Mapa objecion_num -> plantilla. */
+/** Mapa objecion_num -> plantilla. Las 9 estan construidas y probadas. */
 export const OBJECIONES = {
   1: P.OBJ_1, 2: P.OBJ_2, 3: P.OBJ_3, 4: P.OBJ_4, 5: P.OBJ_5,
   6: P.OBJ_6, 7: P.OBJ_7, 8: P.OBJ_8, 9: P.OBJ_9,
 };
+
+/**
+ * ===========================================================================
+ * PERILLA DE ALCANCE — cuales objeciones contesta el bot POR SI MISMO.
+ * ===========================================================================
+ * Las 9 estan implementadas y pasando la compuerta; esto NO es una limitacion
+ * tecnica, es una decision de riesgo para la primera prueba con leads reales
+ * (fundador, 2-sep-2026): arrancar dejando que el bot conteste solo lo mas
+ * mecanico, y que todo lo delicado lo vea un humano.
+ *
+ * Las que NO estan aca se entregan al Setter con razon `objecion_no_habilitada`
+ * -- distinta a proposito de `objecion_fuera_playbook`, que significa "esto no
+ * es ninguna de las 9 y el bot no sabe que es".
+ *
+ * PARA AMPLIAR: agrega el numero a este Set. Eso es todo -- el copy, el ruteo
+ * y los contadores de escalamiento ya existen para las 9.
+ *
+ *   1 = "¿Es gratis realmente?"        (habilitada)
+ *   2 = "No tengo tiempo"              (habilitada)
+ *   3 = "Dejame pensarlo"              (habilitada)
+ *   4 = "Ya probe cosas asi"
+ *   5 = "Necesito mas informacion"
+ *   6 = "Info muy sensible para DM"
+ *   7 = "¿Cuanto cuesta el programa?"
+ *   8 = "¿Que es el Protocolo de Reconexion?"
+ *   9 = "¿Por que resolverlo ahora?"
+ */
+export const OBJECIONES_HABILITADAS = new Set([1, 2, 3]);
 
 /**
  * Parte una plantilla que trae un link embebido en DOS burbujas: todo el texto

@@ -23,7 +23,7 @@ import {
   detectarUrgencia, detectarDolorLetra, detectarHostilidad, detectarEndeudamientoPct,
   pareceRemanente, detectarAgradecimiento, detectarCompromiso,
 } from '../bot_router_v42.js';
-import { CALENDAR_LINK, UMBRALES } from '../sop_v42_plantillas.js';
+import { CALENDAR_LINK, UMBRALES, OBJECIONES_HABILITADAS } from '../sop_v42_plantillas.js';
 
 // Helper: estado como lo devuelve fn_bot_get_estado
 const estadoEn = (etapa, extra = {}) => ({
@@ -338,10 +338,36 @@ describe('Objeciones y escalamiento', () => {
     assert.equal(p.handoffRazon, 'objecion_fuera_playbook');
   });
 
-  test('Objecion 9 en el filtro de urgencia (M4) se maneja sin descalificar', () => {
+  test('Objecion 9 en M4: NUNCA descalifica (invariante del SOP)', () => {
+    // El SOP es explicito: preguntar "¿por que ahora?" es señal MIXTA, puede
+    // ser duda legitima. Jamas se puede leer como falta de urgencia. Ese
+    // invariante se mantiene tanto si el bot la contesta como si la escala.
     const p = decidirTurno(estadoEn('M4_ENVIADO'), { urgencia: 'pregunta_por_que' });
-    assert.match(p.mensajes[0], /Lo más caro NO es la plata/);
     assert.notEqual(p.estadoDestino, 'descalificado');
+    // Con el alcance de la v1 (objeciones 1-3), la 9 la atiende un humano.
+    assert.equal(p.handoffRazon, 'objecion_no_habilitada');
+  });
+
+  test('la perilla de alcance funciona: habilitar la 9 la hace contestar sola', () => {
+    // Prueba que ampliar el alcance es UNA linea, y que el copy ya esta listo.
+    OBJECIONES_HABILITADAS.add(9);
+    try {
+      const p = decidirTurno(estadoEn('M4_ENVIADO'), { urgencia: 'pregunta_por_que' });
+      assert.equal(p.handoffRazon, null);
+      assert.match(p.mensajes[0], /Lo más caro NO es la plata/);
+    } finally {
+      OBJECIONES_HABILITADAS.delete(9);
+    }
+  });
+
+  test('objecion habilitada (1) la contesta el bot; no habilitada (7) va a humano', () => {
+    const habilitada = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_num: 1, objecion_conocida: true });
+    assert.equal(habilitada.handoffRazon, null);
+    assert.match(habilitada.mensajes[0], /100% gratis/);
+
+    const noHabilitada = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_num: 7, objecion_conocida: true });
+    assert.equal(noHabilitada.handoffRazon, 'objecion_no_habilitada');
+    assert.equal(noHabilitada.mensajes.length, 0, 'no le manda copy al lead');
   });
 });
 

@@ -12,7 +12,7 @@
  * de objeciones, transiciones -- es codigo determinista.
  */
 
-import { PLANTILLAS as P, OBJECIONES, UMBRALES, render, partirEnBurbujas } from './sop_v42_plantillas.js';
+import { PLANTILLAS as P, OBJECIONES, OBJECIONES_HABILITADAS, UMBRALES, render, partirEnBurbujas } from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
 // 1. Glosario de ingreso colombiano (★ NUEVO V4.1)
@@ -675,6 +675,17 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     return HANDOFF('resistencia_acumulada', estado, {
       campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
       summary: `${contexto} ${consecutivas} objeciones consecutivas.`,
+    });
+  }
+
+  // Perilla de alcance de la v1: el bot solo contesta las objeciones
+  // habilitadas; el resto las ve un humano. Va DESPUES de las reglas de
+  // escalamiento a proposito, para que el Setter reciba siempre la razon mas
+  // informativa (resistencia repetida/acumulada gana sobre "no habilitada").
+  if (!OBJECIONES_HABILITADAS.has(Number(c.objecion_num))) {
+    return HANDOFF('objecion_no_habilitada', estado, {
+      campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
+      summary: `${contexto} Objecion ${num} reconocida pero no habilitada en esta version: la atiende un humano.`,
     });
   }
 
