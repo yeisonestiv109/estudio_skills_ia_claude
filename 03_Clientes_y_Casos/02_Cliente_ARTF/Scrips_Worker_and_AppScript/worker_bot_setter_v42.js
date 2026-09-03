@@ -51,9 +51,9 @@ import {
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
   detectarUrgencia, detectarDolorLetra, detectarAceptacion,
   detectarHostilidad, detectarEndeudamientoPct,
-  detectarAgradecimiento, detectarCompromiso,
+  detectarSinHorarios, detectarSiNo, esSoloPalabraClave,
 } from './bot_router_v42.js';
-import { PLANTILLAS as P, render } from './sop_v42_plantillas.js';
+import { PLANTILLAS as P, render, EMPATIA_HABILITADA } from './sop_v42_plantillas.js';
 
 // Presupuesto de latencia: ManyChat corta la External Request cerca de los
 // 12-15s. Se deja margen para responder SIEMPRE algo antes de ese corte.
@@ -74,7 +74,7 @@ export default {
       // Nunca dejar al lead sin respuesta por un error nuestro.
       return json({
         ok: false, responder: true, msg: render(P.FALLBACK_ERROR, ''),
-        msg2: '', msg3: '', handoff: true, handoff_razon: 'error_tecnico',
+        msg2: '', msg3: '', msg4: '', handoff: true, handoff_razon: 'error_tecnico',
       });
     }
   },
@@ -206,7 +206,7 @@ async function manejar(request, env, ctx) {
   // Empatia dinamica: 1-2 frases del LLM antepuestas a la plantilla literal.
   // Limite duro de caracteres en el Worker -- no se confia solo en el prompt.
   let mensajes = [...plan.mensajes];
-  if (plan.permitirEmpatia && mensajes.length > 0) {
+  if (EMPATIA_HABILITADA && plan.permitirEmpatia && mensajes.length > 0) {
     const empatia = sanearEmpatia(clasificacion.oracion_empatia);
     if (empatia) mensajes[0] = `${empatia}\n\n${mensajes[0]}`;
   }
@@ -254,7 +254,7 @@ async function manejar(request, env, ctx) {
     }
     return json({
       ok: false, responder: true, msg: render(P.FALLBACK_ERROR, nombre),
-      msg2: '', msg3: '', handoff: true, handoff_razon: 'error_tecnico',
+      msg2: '', msg3: '', msg4: '', handoff: true, handoff_razon: 'error_tecnico',
     });
   }
 
@@ -283,6 +283,7 @@ async function manejar(request, env, ctx) {
     msg: mensajes[0] || '',
     msg2: mensajes[1] || '',
     msg3: mensajes[2] || '',
+    msg4: mensajes[3] || '',
     handoff: Boolean(plan.handoffRazon),
     handoff_razon: plan.handoffRazon,
     etapa: resultado?.out_etapa_bot ?? plan.etapaNueva,
@@ -341,10 +342,12 @@ export async function clasificar(env, estado, texto) {
     const acomp = detectarAcompanante(texto);
     if (acomp !== null) det.acompanado = acomp;
   }
-  if (etapa === 'CIERRE_PRECALL' && detectarAgradecimiento(texto)) det.agradece = true;
-  if (etapa === 'BLINDAJE_ENVIADO') {
-    const comp = detectarCompromiso(texto);
-    if (comp) det.compromiso = comp;
+  if (etapa === 'M7_ENVIADO' || etapa === 'M6_ENVIADO') {
+    if (detectarSinHorarios(texto)) det.sin_horarios = true;
+  }
+  if (etapa === 'RETORNO_PREGUNTA') {
+    const r = detectarSiNo(texto);
+    if (r !== null) det.retoma = r;
   }
 
   // --- LLM: cubre lo que los deterministas no resolvieron + crisis + empatia ---
@@ -561,7 +564,10 @@ async function leerEstado(env, manychatId) {
     estado_codigo: f.out_estado_codigo,
     es_terminal: f.out_es_terminal,
     etapa_bot: f.out_etapa_bot,
-    nombre: f.out_nombre,
+    // El marcador "[PRUEBA] " sirve para identificar leads de prueba en la
+    // base, pero NUNCA puede llegar al lead: sin esto el saludo sale como
+    // "¡Hola [PRUEBA]!" (bug visto en la primera prueba en vivo).
+    nombre: String(f.out_nombre || '').replace(/^\[PRUEBA\]\s*/, ''),
     ig_handle: f.out_ig_handle,
     profesion: f.out_profesion,
     salario_monto: f.out_salario_monto === null ? null : Number(f.out_salario_monto),
@@ -576,6 +582,9 @@ async function leerEstado(env, manychatId) {
     califica: f.out_califica,
     calendario_enviado_at: f.out_calendario_enviado_at,
     total_interacciones: f.out_total_interacciones ?? 0,
+    tiene_reunion: f.out_tiene_reunion === true,
+    motivo_perdida: f.out_motivo_perdida,
+    dias_sin_actividad: f.out_dias_sin_actividad ?? 0,
   };
 }
 

@@ -104,6 +104,12 @@ export function simular(conversacion) {
 
   conversacion.turnos.forEach((turno, i) => {
     const n = i + 1;
+
+    // `base` simula algo que cambio en la base de datos ENTRE turnos, sin que
+    // el bot lo hiciera. El caso real: el Setter vincula la reunion desde el
+    // dashboard. Es lo unico que le permite al bot dar el cierre por hecho.
+    if (turno.base && estado) Object.assign(estado, turno.base);
+
     const puerta = decidirSiResponder(estado);
 
     if (!puerta.responder) {

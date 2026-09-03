@@ -171,10 +171,10 @@ export function decidirSiResponder(estado) {
   if (estado.handoff_razon) {
     return { responder: false, razon: 'handoff_activo' };
   }
-  // CIERRE_PRECALL ya NO cierra la puerta: falta el blindaje del show-up
-  // (M5.5.d), que se dispara con el agradecimiento posterior. La puerta se
-  // cierra una vez el blindaje termina.
-  if (estado.etapa_bot === 'BLINDAJE_CERRADO') {
+  // Entregadas las preguntas pre-llamada, el bot no habla mas. (El blindaje
+  // del show-up se retiro el 3-sep: no estaba en el SOP V4.2 y el % de
+  // asistencia ya lo marca el Closer desde su dashboard.)
+  if (['CIERRE_PRECALL', 'BLINDAJE_ENVIADO', 'BLINDAJE_CERRADO'].includes(estado.etapa_bot)) {
     return { responder: false, razon: 'conversacion_cerrada' };
   }
   // Dominio del Setter/Closer: el bot no vuelve a hablar.
@@ -191,6 +191,74 @@ export function decidirSiResponder(estado) {
     return { responder: true, razon: 'posible_retorno_lead' };
   }
   return { responder: true, razon: 'flujo_normal' };
+}
+
+
+// ---------------------------------------------------------------------------
+// 3.b Retomar a un lead que vuelve
+// ---------------------------------------------------------------------------
+
+/**
+ * ¿El mensaje es SOLO una palabra clave de disparo?
+ *
+ * Caso real de la primera prueba en vivo: el lead ya estaba en M1 esperando su
+ * ingreso, volvio a mandar "PRUEBAV42", y el bot lo leyo como si fuera la
+ * respuesta a "¿cuanto ganas?" -- no le encontro cifra y lo empujo por la rama
+ * de ingreso ambiguo. Quemo un turno y lo saco del carril.
+ *
+ * Pasa igual con leads reales: el fundador reporta que muchos se caen a mitad
+ * del guion y semanas despues vuelven comentando "CONTROL" otra vez.
+ */
+export function esSoloPalabraClave(texto) {
+  const t = String(texto || '')
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // sin tildes
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return /^(control|claridad|radiografia|pruebav42|hola|test\s*javi|testjavi)$/.test(t);
+}
+
+/**
+ * Las burbujas que el bot ya habia enviado en esa etapa, para reenviarlas.
+ *
+ * Se usa cuando el lead vuelve y repite la palabra clave: en vez de avanzar el
+ * guion con basura, se le vuelve a poner delante la pregunta que quedo
+ * pendiente. El SOP-05 de Javier respalda NO comentar la repeticion
+ * ("veo que escribiste varios CONTROL" suena raro): solo se repregunta.
+ */
+export function preguntaPendiente(etapa, nombre) {
+  const mapa = {
+    M1_ENVIADO: [P.M1_GENERAL],
+    M1_INGRESO_AMBIGUO: [P.M1_PEDIR_CIFRA],
+    M1_ACLARAR_REMANENTE: [P.M1_ACLARAR_REMANENTE],
+    M2_ENVIADO: [P.M2_P1, P.M2_P2],
+    M2_BORDERLINE: [P.M2_BORDERLINE],
+    M2_NO_SABE: [P.M2_NO_SABE],
+    M3_ENVIADO: [P.M3],
+    M3_RECONDUCIR: [P.M3_RECONDUCIR],
+    M4_ENVIADO: [P.M4_P1, P.M4_P2],
+    M5_ENVIADO: [P.M5_P1, P.M5_P2],
+    M7_ENVIADO: [P.M7],
+  };
+  return (mapa[etapa] || []).map((x) => render(x, nombre));
+}
+
+/** Elige la pregunta de retorno segun POR QUE se descarto al lead. */
+export function plantillaRetorno(motivoPerdida) {
+  const m = String(motivoPerdida || '').toLowerCase();
+  if (m.includes('ingreso')) return P.RETORNO_INGRESO;
+  if (m.includes('endeudamiento')) return P.RETORNO_ENDEUDAMIENTO;
+  if (m.includes('urgencia')) return P.RETORNO_URGENCIA;
+  return P.RETORNO_GENERICO;
+}
+
+/** Si/no simple, para la respuesta a la pregunta de retorno. */
+export function detectarSiNo(texto) {
+  const t = String(texto || '').toLowerCase();
+  if (/\b(no|nada|igual|lo\s*mismo|todav[ií]a\s*no|a[uú]n\s*no|sigue\s*igual)\b/.test(t)) return false;
+  if (/\b(s[ií]|claro|ya|mejor[oó]|subi[oó]|baj[oó]|cambi[oó]|ahora\s*s[ií]|por\s*supuesto|dale)\b/.test(t)) return true;
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -239,12 +307,19 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     };
   }
 
-  // --- Lead descalificado que vuelve: unica ruta viva es RetornoLead ---
+  // --- Lead DESCALIFICADO que vuelve a escribir ---
+  // Caso real reportado por el fundador: "leads que ya he descalificado vuelven
+  // y llegan". Antes el bot no les respondia NADA salvo que soltaran una cifra
+  // que los recalificara. Ahora, como si guardamos POR QUE se descarto, se le
+  // pregunta exactamente por eso.
   if (estado?.estado_codigo === 'descalificado') {
     const ing = c.ingreso_cop ?? null;
+
+    // RetornoLead del propio SOP V4.1: si de entrada suelta una cifra que ya
+    // califica, se rectifica de inmediato, sin humano y sin revelar que es IA.
     if (ing !== null && evaluarIngreso(ing) === 'califica') {
       return {
-        mensajes: [render(P.RETORNO_LEAD, nombre), render(P.M2, nombre)],
+        mensajes: [render(P.RETORNO_LEAD, nombre), render(P.M2_P1, nombre), render(P.M2_P2, nombre)],
         etapaNueva: 'M2_ENVIADO',
         estadoDestino: 'contactado',
         handoffRazon: null,
@@ -254,10 +329,77 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         summary: `RetornoLead: se recalifica con ingreso ${ing}. Se retoma en M2.`,
       };
     }
+
+    // Ya le preguntamos si su situacion cambio; ahora se procesa la respuesta.
+    if (etapa === 'RETORNO_PREGUNTA') {
+      if (c.retoma === true) {
+        const m = String(estado?.motivo_perdida || '').toLowerCase();
+        if (m.includes('endeudamiento')) {
+          return {
+            mensajes: [render(P.M2_P1, nombre), render(P.M2_P2, nombre)],
+            etapaNueva: 'M2_ENVIADO', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null, campos: {},
+            permitirEmpatia: false,
+            summary: 'Retorna y dice que bajo la deuda. Se revalida el Filtro 2.',
+          };
+        }
+        if (m.includes('urgencia')) {
+          return {
+            mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
+            etapaNueva: 'M4_ENVIADO', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null, campos: {},
+            permitirEmpatia: false,
+            summary: 'Retorna y dice que ahora si es prioridad. Se revalida el Filtro 3.',
+          };
+        }
+        // Ingreso, o motivo desconocido: se pide la cifra (nunca se asume).
+        return {
+          mensajes: [render(P.M1_PEDIR_CIFRA, nombre)],
+          etapaNueva: 'M1_INGRESO_AMBIGUO', estadoDestino: 'contactado',
+          handoffRazon: null, motivoPerdida: null,
+          campos: { ingreso_confirmado: false },
+          permitirEmpatia: false,
+          summary: 'Retorna y dice que mejoro el ingreso. Se pide la cifra para revalidar el Filtro 1.',
+        };
+      }
+      if (c.retoma === false) {
+        return {
+          mensajes: [render(P.RETORNO_SIN_CAMBIO, nombre)],
+          etapaNueva: 'DESCALIFICADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Retorna pero su situacion no cambio. Se cierra sin insistir.',
+        };
+      }
+      return {
+        mensajes: [], etapaNueva: null, estadoDestino: null, handoffRazon: null,
+        motivoPerdida: null, campos: {}, permitirEmpatia: false,
+        summary: 'Respuesta a la pregunta de retorno no clasificable. Solo se registra.',
+      };
+    }
+
+    // Primera vez que vuelve: se le pregunta por el motivo EXACTO del descarte.
     return {
-      mensajes: [], etapaNueva: null, estadoDestino: null, handoffRazon: null,
+      mensajes: [render(plantillaRetorno(estado?.motivo_perdida), nombre)],
+      etapaNueva: 'RETORNO_PREGUNTA', estadoDestino: null,
+      handoffRazon: null, motivoPerdida: null, campos: {},
+      permitirEmpatia: false,
+      summary: `Lead descalificado (${estado?.motivo_perdida || 'motivo no registrado'}) vuelve a escribir. Se le pregunta si su situacion cambio.`,
+    };
+  }
+
+  // --- Repitio la palabra clave a mitad del guion ---
+  // No avanza el flujo: se le vuelve a poner delante la pregunta pendiente.
+  // El SOP-05 de Javier es explicito en NO comentar la repeticion.
+  if (esSoloPalabraClave(textoLead)) {
+    const pendientes = preguntaPendiente(etapa, nombre);
+    return {
+      mensajes: pendientes,
+      etapaNueva: null, estadoDestino: null, handoffRazon: null,
       motivoPerdida: null, campos: {}, permitirEmpatia: false,
-      summary: 'Mensaje de lead descalificado sin recalificacion. Solo se registra.',
+      summary: pendientes.length
+        ? `Repitio la palabra clave estando en ${etapa}. Se reenvia la pregunta pendiente sin avanzar.`
+        : `Repitio la palabra clave estando en ${etapa}. Sin pregunta pendiente que reenviar.`,
     };
   }
 
@@ -318,7 +460,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       }
 
       return {
-        mensajes: [render(P.M2, nombre)],
+        mensajes: [render(P.M2_P1, nombre), render(P.M2_P2, nombre)],
         etapaNueva: 'M2_ENVIADO',
         estadoDestino: 'contactado',
         handoffRazon: null, motivoPerdida: null,
@@ -409,7 +551,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       const esAvatar = ['A', 'B', 'C'].includes(dolor);
       if (esAvatar || (dolor === 'D' && c.dolor_financiero)) {
         return {
-          mensajes: [render(P.M4, nombre)],
+          mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
           etapaNueva: 'M4_ENVIADO', estadoDestino: 'contactado',
           handoffRazon: null, motivoPerdida: null,
           campos: { dolor: dolor || null },
@@ -432,7 +574,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     case 'M3_RECONDUCIR': {
       if (c.dolor_financiero || c.acepta) {
         return {
-          mensajes: [render(P.M4, nombre)],
+          mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
           etapaNueva: 'M4_ENVIADO', estadoDestino: 'contactado',
           handoffRazon: null, motivoPerdida: null, campos: {},
           permitirEmpatia: false,
@@ -468,7 +610,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         // el bot escribe 'calificado' en la base (nunca 'agendado': ese lo
         // escribe solo la sincronizacion de Google Calendar).
         return {
-          mensajes: [render(P.M5, nombre)],
+          mensajes: [render(P.M5_P1, nombre), render(P.M5_P2, nombre)],
           etapaNueva: 'M5_ENVIADO', estadoDestino: 'calificado',
           handoffRazon: null, motivoPerdida: null,
           campos: { urgencia_raw: 'ahora', califica: true },
@@ -490,15 +632,17 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         // El "Confirmame..." y M7 (asistencia) se envian en el TURNO SIGUIENTE.
         return {
           mensajes: [
+            render(P.M7, nombre),          // "antes de que separes tu espacio..."
             render(P.M6_SALUDO, nombre),
-            P.M6_LINK,
+            render(P.M6_CONFIRMAME, nombre),
+            P.M6_LINK,                     // SIEMPRE la ultima, y sola
           ],
-          etapaNueva: 'M6_ENVIADO',
+          etapaNueva: 'M7_ENVIADO',
           estadoDestino: 'calificado',
           handoffRazon: null, motivoPerdida: null,
           campos: { calendario_enviado: true },
           permitirEmpatia: false, // REGLA CRITICA DEL LINK
-          summary: 'Acepta agendar. Se envia el link aislado (M6). M7 va en el turno siguiente.',
+          summary: 'Acepta agendar. Se envian asistencia (M7) + link aislado al final.',
         };
       }
       if (c.objecion_num || c.objecion_detectada) {
@@ -534,15 +678,41 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
     // =====================================================================
     case 'M7_ENVIADO': {
-      if (c.confirmo_agendo) {
+      // El lead dice que no encuentra horarios: se le pregunta la franja Y se
+      // escala al Setter en el mismo turno (SOP-05 #5 del proyecto de Javier).
+      if (c.sin_horarios) {
         return {
-          mensajes: [render(P.CIERRE_PRECALL, nombre)],
-          etapaNueva: 'CIERRE_PRECALL', estadoDestino: 'calificado',
-          handoffRazon: null, motivoPerdida: null, campos: {},
+          mensajes: [render(P.SIN_HORARIOS, nombre)],
+          etapaNueva: 'HANDOFF', estadoDestino: null,
+          handoffRazon: 'agendamiento_manual_pendiente',
+          motivoPerdida: null, campos: {},
           permitirEmpatia: false,
-          summary: 'El lead dice que agendo. Se envian las preguntas pre-llamada. OJO: el estado "agendado" lo confirma la sync de Google Calendar, no esto.',
+          summary: 'No encuentra horarios. Se le pide la franja y se escala para agendar a mano.',
         };
       }
+
+      if (c.confirmo_agendo) {
+        // El bot NO decide si agendo: lo decide la base. El Setter es quien
+        // vincula la reunion desde el dashboard.
+        if (estado?.tiene_reunion) {
+          return {
+            mensajes: [render(P.CIERRE_PRECALL, nombre)],
+            etapaNueva: 'CIERRE_PRECALL', estadoDestino: 'calificado',
+            handoffRazon: null, motivoPerdida: null, campos: {},
+            permitirEmpatia: false,
+            summary: 'Confirma agendamiento Y la reunion ya esta vinculada. Se envian las preguntas pre-llamada.',
+          };
+        }
+        // Dice que agendo pero la base todavia no lo respalda: acuse y a esperar.
+        return {
+          mensajes: [render(P.ACUSE_SIN_REUNION, nombre)],
+          etapaNueva: 'M7_ENVIADO', estadoDestino: 'calificado',
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Dice que agendo pero NO hay reunion vinculada. Acuse corto; no se confirma nada que la base no respalde.',
+        };
+      }
+
       if (c.acompanado === true) {
         return {
           mensajes: [render(P.M7_ACOMPANADO, nombre)],
@@ -560,7 +730,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           handoffRazon: null, motivoPerdida: null,
           campos: { asiste_acompanado: false },
           permitirEmpatia: false,
-          summary: 'Asistira solo. Se espera a que agende (acuse operativo, no del SOP).',
+          summary: 'Asistira solo. Se espera a que agende.',
         };
       }
       if (c.objecion_num || c.objecion_detectada) {
@@ -575,59 +745,10 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     }
 
     // =====================================================================
-    // Blindaje del show-up (M5.5.d). Copy literal del proyecto de Javier,
-    // validado en produccion: sube el % de asistencia pre-comprometiendo al
-    // lead. Se dispara con el agradecimiento posterior al cierre.
-    case 'CIERRE_PRECALL': {
-      if (c.agradece) {
-        return {
-          mensajes: [render(P.BLINDAJE_SHOWUP, nombre)],
-          etapaNueva: 'BLINDAJE_ENVIADO', estadoDestino: null,
-          handoffRazon: null, motivoPerdida: null, campos: {},
-          permitirEmpatia: false,
-          summary: 'Agradece tras el cierre. Se envia la pregunta de blindaje del show-up (M5.5.d).',
-        };
-      }
-      return {
-        mensajes: [], etapaNueva: null, estadoDestino: null,
-        handoffRazon: null, motivoPerdida: null, campos: {},
-        permitirEmpatia: false,
-        summary: 'Mensaje tras el cierre sin agradecimiento claro. Solo se registra.',
-      };
-    }
-
-    // =====================================================================
-    case 'BLINDAJE_ENVIADO': {
-      if (c.compromiso === 'firme') {
-        return {
-          mensajes: [render(P.BLINDAJE_FIRME, nombre)],
-          etapaNueva: 'BLINDAJE_CERRADO', estadoDestino: null,
-          handoffRazon: null, motivoPerdida: null, campos: {},
-          permitirEmpatia: false,
-          summary: 'Se compromete a asistir. Conversacion cerrada.',
-        };
-      }
-      if (c.compromiso === 'dudoso') {
-        // No se pega el link aca: si hay que reenviarlo va en su propia
-        // burbuja al final, nunca con texto despues (misma regla critica).
-        return {
-          mensajes: [render(P.BLINDAJE_REAGENDAR, nombre), P.M6_LINK],
-          etapaNueva: 'M6_ENVIADO', estadoDestino: null,
-          handoffRazon: null, motivoPerdida: null, campos: {},
-          permitirEmpatia: false,
-          summary: 'Duda de poder asistir. Se ofrece reagendar y se reenvia el link aislado.',
-        };
-      }
-      return {
-        mensajes: [], etapaNueva: 'BLINDAJE_CERRADO', estadoDestino: null,
-        handoffRazon: null, motivoPerdida: null, campos: {},
-        permitirEmpatia: false,
-        summary: 'Respuesta al blindaje no clasificable. Se cierra sin insistir.',
-      };
-    }
-
-    // =====================================================================
+    case 'CIERRE_PRECALL':
+    case 'BLINDAJE_ENVIADO':   // legado: etapas de leads anteriores al 3-sep
     case 'BLINDAJE_CERRADO':
+    case 'RETORNO_PREGUNTA':
     case 'DESCALIFICADO':
     case 'HANDOFF':
     default:
@@ -715,7 +836,9 @@ export function detectarVarianteM1(texto) {
 /** Confirmaciones de agendamiento -- suficientemente mecanico para no gastar LLM. */
 export function detectarConfirmacionAgenda(texto) {
   const t = String(texto || '').toLowerCase();
-  return /\b(ya\s*(me\s*)?(agend|reserv|separ)|list[oa]\s*(ya)?\s*(agend|qued)|qued[eé]\s*(agendad|separad)|agend[eé]|reserv[eé]|ya\s*qued[eé])/.test(t);
+  // Ojo con las conjugaciones: la primera version solo cubria "quede/quedé" y
+  // se le escapaba "ya quedo agendado", que es como lo dice mucha gente.
+  return /\b(ya\s*(me\s*)?(agend|reserv|separ)|list[oa]\s*(ya)?\s*(agend|qued)|qued[eéoó]\s*(agendad|separad|list)|(?:agend|reserv)[eé](?![a-záéíóúñ])|agendad[oa]|ya\s*qued[eéoó])/.test(t);
 }
 
 /** "solo" vs "acompañado" en la pregunta M7. */
@@ -815,6 +938,18 @@ export function detectarCompromiso(texto) {
     return 'firme';
   }
   return null;
+}
+
+/**
+ * El lead dice que no encuentra horarios disponibles.
+ *
+ * SOP-05 #5 del proyecto de Javier: "NO confirmes que si hay espacio" --
+ * hay que escalar para agendar a mano. Es senal de calendario sin cupos, un
+ * dato que al Setter le sirve tanto como el lead mismo.
+ */
+export function detectarSinHorarios(texto) {
+  const t = String(texto || '').toLowerCase();
+  return /\b(no\s*(me\s*)?(aparece|hay|encuentro|veo|sale|deja|carga|figura)|sin\s*(cupos?|espacios?|horarios?)|no\s*(hay|tengo|queda)\s*(espacio|cupo|horario|nada)|no\s*me\s*(cuadra|cuadran|sirve|sirven|queda|quedan)|est[aá]\s*(lleno|bloqueado)|no\s*me\s*deja\s*agendar|no\s*pude\s*agendar)\b/.test(t);
 }
 
 /** Hostilidad -- red deterministas basica, el LLM afina. */

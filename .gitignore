@@ -98,3 +98,8 @@ graphify-out/
 # Vault de Obsidian -- ahora vive en el padre (proyecto_negocio_doscaras/.obsidian),
 # abarca los 3 repos hermanos, no solo este.
 .obsidian/
+
+# Secrets locales de wrangler (Worker del bot) -- NUNCA se commitean
+.dev.vars
+.dev.vars.*
+!.dev.vars.example

@@ -1,0 +1,23 @@
+{
+  "p_manychat_id": "813370090",
+  "p_ig_handle": "estiven_delgado12",
+  "p_nombre": "Estiven Delgado",
+  "p_etapa_bot_nueva": "saludo",
+  "p_estado_codigo_nuevo": "nuevo",
+  "p_profesion": null,
+  "p_salario_monto": null,
+  "p_ingreso_confirmado": false,
+  "p_endeudamiento_pct": null,
+  "p_dolor": null,
+  "p_urgencia_raw": null,
+  "p_asiste_acompanado": null,
+  "p_ultima_objecion_codigo": null,
+  "p_objeciones_consecutivas": 0,
+  "p_califica": null,
+  "p_handoff_razon": null,
+  "p_motivo_perdida_nombre": null,
+  "p_calendario_enviado": false,
+  "p_summary": "Test turn",
+  "p_ultimo_msg_lead": "PRUEBAV42",
+  "p_ultimo_msg_bot": "Hola Estiven"
+}

@@ -23,7 +23,33 @@
  * el fundador las revise y las apruebe o reemplace por copy oficial.
  */
 
-export const CALENDAR_LINK = 'https://calendar.app.google/iMW5LBbkcAvorypF9';
+/**
+ * Link del calendario.
+ *
+ * Hoy apunta al calendario PERSONAL del fundador, a proposito: mientras se
+ * prueba el bot no queremos leads de prueba cayendo en la agenda real de
+ * Andres. Para pasar a produccion se cambia esta constante por CALENDAR_ARTF
+ * y se corre la compuerta -- el corpus y los tests validan el cambio solo.
+ */
+export const CALENDAR_PRUEBAS = 'https://calendar.app.google/hMEGoX9T6DVsThft6';
+export const CALENDAR_ARTF = 'https://calendar.app.google/iMW5LBbkcAvorypF9';
+
+export const CALENDAR_LINK = CALENDAR_PRUEBAS;
+
+/**
+ * Empatia dinamica del LLM: APAGADA (decision del fundador, 3-sep-2026).
+ *
+ * Razon literal tras ver la primera prueba en vivo: "solo hace el mensaje mas
+ * largo, parece mucha IA". Y eso es exactamente lo que el playbook prohibe
+ * (nunca revelar que es una IA).
+ *
+ * Efecto lateral importante: era el UNICO texto que veia el lead que no salia
+ * de esta biblioteca. Con esto apagado el bot es 100% copy aprobado y
+ * desaparece por completo la superficie de inyeccion de prompt.
+ *
+ * El codigo y sus salvaguardas siguen ahi, listos para volver.
+ */
+export const EMPATIA_HABILITADA = false;
 
 export const REELS = {
   ingresos_bajos: 'https://www.instagram.com/reel/DJDejvjtfzH/',
@@ -149,6 +175,18 @@ Y ojo: no trabajo con todo el mundo. Solo con personas que:
 P.M6_SALUDO = `¡Perfecto! 🙌
 Acá te dejo el link para que elijas el día y hora que mejor te quede:`;
 
+/**
+ * ORDEN DEL TURNO DEL CIERRE (decision del fundador, 3-sep-2026):
+ *   1. M7 (asistencia)  2. M6_SALUDO  3. M6_CONFIRMAME  4. el link, solo
+ *
+ * M7 pasa ANTES del link aunque V4.2 lo numere despues. Dos razones:
+ *  - Su propio texto dice "antes de que separes tu espacio", asi que leerlo
+ *    antes del link es mas natural que despues.
+ *  - Si va en un turno aparte puede no enviarse NUNCA: el lead agenda y no
+ *    vuelve a escribir. En la primera prueba en vivo, M7 no se envio ni una vez.
+ * El link sigue siendo la ultima burbuja y va solo -- la regla dura se respeta.
+ */
+
 /** Va SOLO en su burbuja, y es lo ultimo del turno. Nada despues. */
 P.M6_LINK = CALENDAR_LINK;
 
@@ -185,26 +223,15 @@ P.CIERRE_PRECALL = `Genial, para nuestra sesión ten listo:
 Nos vemos en la llamada.`;
 
 // ---------------------------------------------------------------------------
-// BLINDAJE DEL SHOW-UP (M5.5.d) — aprobado por el fundador 1-sep-2026
+// BLINDAJE DEL SHOW-UP — RETIRADO (3-sep-2026)
 // ---------------------------------------------------------------------------
-// Copy LITERAL del proyecto de Javier
-// (Setter-IA-Claude-Code-Project/scripts/m5-5-confirmacion-post-calendly.md).
-// Validado en produccion: pre-compromete al lead con la asistencia (efecto
-// consistencia) y ataca directo el KPI "% Show Up > 70%" del Scorecard.
-// Se dispara cuando el lead agradece DESPUES de confirmar que agendo.
-P.BLINDAJE_SHOWUP = `Buenísimo. A ti, gracias {nombre}.
-
-Permíteme hacerte la última pregunta: ¿de aquí al día de la sesión puede pasar algo que haga que no asistas, o estamos súper firmes?`;
-
-/** Responde "firme/seguro" -> se cierra la conversacion. */
-P.BLINDAJE_FIRME = `¡Perfecto! Nos vemos entonces. 💪`;
-
-/**
- * Responde "puede que pase X" -> mejor reagendar antes de quemar el slot.
- * Ojo: este mensaje NO lleva el link pegado. Si hay que reenviarlo, va en su
- * propia burbuja al final (misma regla critica del link).
- */
-P.BLINDAJE_REAGENDAR = `Entiendo. Mejor reagendamos a un momento donde estés 100% seguro, así no perdemos el espacio.`;
+// Se quito tras verlo en vivo. Dos razones del fundador, ambas validas:
+//  1. NO esta en el SOP V4.2 -- venia del proyecto de Javier, y yo lo presente
+//     de forma que se leyo como si fuera parte del playbook del cliente.
+//     Verificado: "firmes"/"blindaje" no aparecen en el PDF de la V4.2.
+//  2. El % de show-up ya se mide donde corresponde: el Closer tiene un boton
+//     en su dashboard para marcar si el lead asistio. Preguntarselo al lead
+//     era, en sus palabras, "innecesario y una mala practica".
 
 // ---------------------------------------------------------------------------
 // ACLARACION DE INGRESO REMANENTE — aprendizaje de produccion (SOP-05 #2)
@@ -213,6 +240,72 @@ P.BLINDAJE_REAGENDAR = `Entiendo. Mejor reagendamos a un momento donde estés 10
 // al dinero que le SOBRA despues de gastos, no a su ingreso total. Descalificar
 // ahi es perder un lead bueno. Copy literal del proyecto de Javier.
 P.M1_ACLARAR_REMANENTE = `Solo para que estemos en la misma página: ¿esos que mencionas son tu ingreso total al mes, o lo que te queda después de cubrir gastos? Te pregunto porque cambia mucho el análisis.`;
+
+
+// ---------------------------------------------------------------------------
+// TROCEO DE LOS MENSAJES LARGOS (3-sep-2026)
+// ---------------------------------------------------------------------------
+// Fundamento: knowledge-base/04-voz-y-tono.md del proyecto de Javier --
+// "Si la respuesta tiene mas de ~80 palabras o mas de 4 parrafos, dividela en
+// 2 o 3 mensajes separados", y marca el pitch como "al menos 2 mensajes
+// (oferta + filtro/CTA)".
+//
+// Se parten POR CODIGO desde la plantilla completa, no reescribiendo el texto:
+// asi es imposible que las partes se desincronicen del original.
+const partir = (texto, corte) => {
+  const i = texto.indexOf(corte);
+  if (i < 0) throw new Error(`partir(): no se encontro el corte "${corte}"`);
+  return [texto.slice(0, i).trim(), texto.slice(i).trim()];
+};
+
+[P.M2_P1, P.M2_P2] = partir(P.M2, 'Para calcularlo suma');
+[P.M4_P1, P.M4_P2] = partir(P.M4, 'Última pregunta');
+[P.M5_P1, P.M5_P2] = partir(P.M5, 'Y ojo:');
+
+// ---------------------------------------------------------------------------
+// ACUSE cuando el lead dice "listo" pero la reunion AUN NO esta vinculada
+// ---------------------------------------------------------------------------
+// Aprobado por el fundador (3-sep-2026). El bot NO da el cierre por hecho: el
+// que vincula la reunion es el Setter desde el dashboard. Hasta que la base
+// confirme la reunion, el bot solo acusa recibo y se calla -- nunca le confirma
+// al lead algo que la base no respalda.
+P.ACUSE_SIN_REUNION = `¡Perfecto, {nombre}! 🙌`;
+
+// ---------------------------------------------------------------------------
+// EL LEAD NO ENCUENTRA HORARIOS DISPONIBLES
+// ---------------------------------------------------------------------------
+// Copy del proyecto de Javier (scripts/m5-cierre-agendamiento.md, "Caso
+// especial"), con una correccion: el original dice "Contame", que es VOSEO y
+// viola su propia Regla #2 de tuteo colombiano estricto. Aparece asi en 3 de
+// sus archivos. Aca va corregido a "Cuentame".
+//
+// Se pregunta la franja Y se escala al Setter en el mismo turno, para que el
+// caso le llegue ya con el horario que el lead prefiere.
+P.SIN_HORARIOS = `Entendido, {nombre}. Vamos a revisar qué espacios se liberan y te confirmamos para agendarnos.
+
+Cuéntame, ¿qué fecha y bloques de horarios te quedan bien?`;
+
+// ---------------------------------------------------------------------------
+// RETORNO DE UN LEAD DESCALIFICADO (3-sep-2026)
+// ---------------------------------------------------------------------------
+// Caso real reportado por el fundador: "me ha pasado que leads que ya he
+// descalificado vuelven y llegan". Antes el bot no les respondia NADA salvo que
+// soltaran una cifra que los recalificara.
+//
+// Como si guardamos POR QUE se descarto (motivo_perdida_id), se puede preguntar
+// exactamente por eso. Copy nuevo, aprobado por el fundador -- las preguntas de
+// seguimiento reusan plantillas ya aprobadas (M1_PEDIR_CIFRA / M2 / M4).
+P.RETORNO_INGRESO = `¡Hola de nuevo, {nombre}! 👋 La última vez que hablamos, tu ingreso todavía no estaba en el rango donde mi método funciona. ¿Cambió algo desde entonces?`;
+
+P.RETORNO_ENDEUDAMIENTO = `¡Hola de nuevo, {nombre}! 👋 La última vez que hablamos, tus deudas se llevaban buena parte de tu ingreso. ¿Lograste bajar esa carga?`;
+
+P.RETORNO_URGENCIA = `¡Hola de nuevo, {nombre}! 👋 La última vez me contaste que esto era algo para más adelante. ¿Ya es prioridad para ti?`;
+
+/** Cuando no quedo registrado el motivo del descarte. */
+P.RETORNO_GENERICO = `¡Hola de nuevo, {nombre}! 👋 Ya habíamos hablado antes. ¿Cambió algo en tu situación desde entonces?`;
+
+/** Responde que no cambio nada -- se cierra sin insistir. */
+P.RETORNO_SIN_CAMBIO = `Entendido, {nombre}. Cuando la situación cambie, acá estoy. ¡Éxitos! 💪`;
 
 // ---------------------------------------------------------------------------
 // RETORNO LEAD (★ NUEVO V4.1) — descartado que se recalifica
