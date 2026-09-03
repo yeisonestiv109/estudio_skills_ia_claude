@@ -342,7 +342,7 @@ export async function clasificar(env, estado, texto) {
     const acomp = detectarAcompanante(texto);
     if (acomp !== null) det.acompanado = acomp;
   }
-  if (etapa === 'M7_ENVIADO' || etapa === 'M6_ENVIADO') {
+  if (['M7_ENVIADO', 'M6_ENVIADO', 'M7_ESPERANDO_VINCULO'].includes(etapa)) {
     if (detectarSinHorarios(texto)) det.sin_horarios = true;
   }
   if (etapa === 'RETORNO_PREGUNTA') {

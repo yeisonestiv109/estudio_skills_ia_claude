@@ -76,13 +76,20 @@
     {
       "lead": "Listo, ya agendé para el sábado a las 11am",
       "espera": {
-        "etapa": "M7_ENVIADO",
+        "etapa": "M7_ESPERANDO_VINCULO",
         "burbujas": 1,
         "contiene": "¡Perfecto, Daniela! 🙌"
       }
     },
     {
-      "lead": "ya quedó agendado",
+      "lead": "gracias, ahi nos vemos",
+      "espera": {
+        "etapa": null,
+        "burbujas": 0
+      }
+    },
+    {
+      "lead": "ok",
       "base": {
         "tiene_reunion": true
       },

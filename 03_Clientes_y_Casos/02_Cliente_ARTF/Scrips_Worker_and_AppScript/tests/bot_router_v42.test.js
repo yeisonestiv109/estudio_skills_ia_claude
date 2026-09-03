@@ -245,10 +245,33 @@ describe('Camino feliz completo M1 -> M7', () => {
     const p = decidirTurno(
       estadoEn('M7_ENVIADO', { estado_codigo: 'calificado', tiene_reunion: false }),
       { confirmo_agendo: true });
-    assert.equal(p.etapaNueva, 'M7_ENVIADO', 'no avanza al cierre');
+    assert.equal(p.etapaNueva, 'M7_ESPERANDO_VINCULO', 'no avanza al cierre');
     assert.equal(p.mensajes.length, 1);
     assert.ok(!/estimado total de créditos/.test(p.mensajes[0]),
       'no manda las preguntas pre-llamada sin reunion vinculada');
+  });
+
+  test('el acuse se manda UNA vez: despues el bot espera en silencio', () => {
+    // Sin esto, cada "listo"/"gracias"/"ya quedo" recibia el mismo
+    // "¡Perfecto! 🙌" otra vez. Se ve robotico en el peor momento.
+    const esperando = estadoEn('M7_ESPERANDO_VINCULO', { estado_codigo: 'calificado', tiene_reunion: false });
+    assert.equal(decidirTurno(esperando, {}, 'gracias').mensajes.length, 0);
+    assert.equal(decidirTurno(esperando, { confirmo_agendo: true }, 'ya quedo').mensajes.length, 0);
+  });
+
+  test('esperando el vinculo: cuando el Setter vincula, sale el cierre', () => {
+    const p = decidirTurno(
+      estadoEn('M7_ESPERANDO_VINCULO', { estado_codigo: 'calificado', tiene_reunion: true }),
+      {}, 'ok');
+    assert.equal(p.etapaNueva, 'CIERRE_PRECALL');
+    assert.match(p.mensajes[0], /estimado total de créditos/);
+  });
+
+  test('esperando el vinculo: si dice que no encuentra horarios, escala', () => {
+    const p = decidirTurno(
+      estadoEn('M7_ESPERANDO_VINCULO', { estado_codigo: 'calificado' }),
+      { sin_horarios: true }, 'no me aparece nada');
+    assert.equal(p.handoffRazon, 'agendamiento_manual_pendiente');
   });
 
   test('M7 -> no encuentra horarios: pide la franja y escala', () => {

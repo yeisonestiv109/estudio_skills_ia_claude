@@ -703,10 +703,14 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
             summary: 'Confirma agendamiento Y la reunion ya esta vinculada. Se envian las preguntas pre-llamada.',
           };
         }
-        // Dice que agendo pero la base todavia no lo respalda: acuse y a esperar.
+        // Dice que agendo pero la base todavia no lo respalda: acuse UNA vez y
+        // a esperar en silencio. Sin este cambio de etapa, cada "listo",
+        // "gracias" o "ya quedo" recibia el mismo "¡Perfecto! 🙌" otra vez, y
+        // repetir la misma linea tres veces seguidas se ve robotico justo en el
+        // momento mas delicado de la conversacion.
         return {
           mensajes: [render(P.ACUSE_SIN_REUNION, nombre)],
-          etapaNueva: 'M7_ENVIADO', estadoDestino: 'calificado',
+          etapaNueva: 'M7_ESPERANDO_VINCULO', estadoDestino: 'calificado',
           handoffRazon: null, motivoPerdida: null, campos: {},
           permitirEmpatia: false,
           summary: 'Dice que agendo pero NO hay reunion vinculada. Acuse corto; no se confirma nada que la base no respalde.',
@@ -741,6 +745,41 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         handoffRazon: null, motivoPerdida: null, campos: {},
         permitirEmpatia: false,
         summary: 'Mensaje tras el link sin señal clara. Solo se registra, se espera el agendamiento.',
+      };
+    }
+
+    // =====================================================================
+    // Ya dijo que agendo y se le acuso recibo; falta que el Setter vincule la
+    // reunion. El bot espera en SILENCIO -- solo reacciona a lo que de verdad
+    // necesita accion: que no encuentre horarios, o una objecion tardia.
+    case 'M7_ESPERANDO_VINCULO': {
+      if (c.sin_horarios) {
+        return {
+          mensajes: [render(P.SIN_HORARIOS, nombre)],
+          etapaNueva: 'HANDOFF', estadoDestino: null,
+          handoffRazon: 'agendamiento_manual_pendiente',
+          motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Dijo que agendo pero no encuentra horarios. Se escala para agendar a mano.',
+        };
+      }
+      if (estado?.tiene_reunion) {
+        return {
+          mensajes: [render(P.CIERRE_PRECALL, nombre)],
+          etapaNueva: 'CIERRE_PRECALL', estadoDestino: 'calificado',
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'El Setter ya vinculo la reunion. Se envian las preguntas pre-llamada.',
+        };
+      }
+      if (c.objecion_num || c.objecion_detectada) {
+        return manejarObjecion(estado, c, nombre, 'Objecion tardia, esperando el vinculo de la reunion.');
+      }
+      return {
+        mensajes: [], etapaNueva: null, estadoDestino: null,
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Esperando que el Setter vincule la reunion. Solo se registra.',
       };
     }
 

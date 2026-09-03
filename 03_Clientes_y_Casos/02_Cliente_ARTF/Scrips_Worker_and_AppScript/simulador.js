@@ -22,7 +22,7 @@ import {
   parseIngresoCOP, detectarEndeudamientoPct, detectarDolorLetra,
   detectarUrgencia, detectarAceptacion, detectarConfirmacionAgenda,
   detectarAcompanante, detectarHostilidad, detectarAgradecimiento,
-  detectarCompromiso,
+  detectarSinHorarios,
 } from './bot_router_v42.js';
 import { verificarMensajes } from './verificador_cumplimiento.js';
 
@@ -53,8 +53,10 @@ export function clasificarDeterminista(etapa, texto) {
     if (u) c.urgencia = u;
   }
   if (etapa === 'M5_ENVIADO' && detectarAceptacion(texto)) c.acepta = true;
+  if (etapa === 'M7_ESPERANDO_VINCULO' && detectarSinHorarios(texto)) c.sin_horarios = true;
   if (etapa === 'M6_ENVIADO' || etapa === 'M7_ENVIADO') {
     if (detectarConfirmacionAgenda(texto)) c.confirmo_agendo = true;
+    if (detectarSinHorarios(texto)) c.sin_horarios = true;
     const acomp = detectarAcompanante(texto);
     if (acomp !== null) c.acompanado = acomp;
   }
