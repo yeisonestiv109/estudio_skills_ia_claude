@@ -11,7 +11,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { secretoValido, sanearEmpatia, validarClasificacionLLM } from '../worker_bot_setter_v42.js';
+import { secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo } from '../worker_bot_setter_v42.js';
 
 describe('Autenticación del webhook', () => {
   test('acepta el secreto correcto', () => {
@@ -90,5 +90,25 @@ describe('Validación de la salida del LLM', () => {
   test('una respuesta basura no revienta ni inventa datos', () => {
     assert.deepEqual(validarClasificacionLLM(null), {});
     assert.deepEqual(validarClasificacionLLM('no soy json'), {});
+  });
+});
+
+// ===========================================================================
+describe('Frenos para probar sobre el ManyChat de PRODUCCIÓN', () => {
+  test('sin TAG_PREFIX los tags salen tal cual', () => {
+    assert.equal(conPrefijo({}, 'ATENDIDO_BOT'), 'ATENDIDO_BOT');
+    assert.equal(conPrefijo({ TAG_PREFIX: '' }, 'HANDOFF_ANDRES'), 'HANDOFF_ANDRES');
+  });
+
+  test('con TAG_PREFIX no chocan con los tags de producción', () => {
+    // HANDOFF_ANDRES YA existe en el ManyChat real y alimenta los filtros del
+    // sistema actual. Si el bot nuevo lo aplicara, metería contactos de prueba
+    // en flujos reales.
+    assert.equal(conPrefijo({ TAG_PREFIX: 'V42_' }, 'HANDOFF_ANDRES'), 'V42_HANDOFF_ANDRES');
+    assert.equal(conPrefijo({ TAG_PREFIX: 'V42_' }, 'ATENDIDO_BOT'), 'V42_ATENDIDO_BOT');
+  });
+
+  test('el prefijo se limpia de espacios accidentales', () => {
+    assert.equal(conPrefijo({ TAG_PREFIX: '  V42_  ' }, 'DESCALIFICADO'), 'V42_DESCALIFICADO');
   });
 });

@@ -76,13 +76,28 @@ npx wrangler secret put MANYCHAT_API_TOKEN
 npx wrangler secret put WEBHOOK_SECRET
 
 # Opcional pero MUY recomendado para esta prueba:
+# OBLIGATORIO si pruebas sobre el ManyChat de PRODUCCION -- es la lista blanca.
 npx wrangler secret put MANYCHAT_IDS_PRUEBA
-# pega los 2 subscriber_id de prueba separados por coma, ej: 123456,789012
+# pega los subscriber_id de prueba separados por coma, ej: 123456,789012
+
+# OBLIGATORIO si pruebas sobre el ManyChat de PRODUCCION -- evita chocar tags.
+npx wrangler secret put TAG_PREFIX
+# pega: V42_
 ```
 
-`MANYCHAT_IDS_PRUEBA` hace que esos leads se guarden con el nombre
-prefijado **`[PRUEBA]`**. Sirve para dos cosas: los distingues de un vistazo en
-el dashboard, y al final los borras filtrando por ese prefijo.
+`MANYCHAT_IDS_PRUEBA` hace dos cosas:
+1. **Lista blanca:** el Worker **solo responde a esos subscribers**. A cualquier
+   otro lo ignora por completo. Es el freno que te protege si el Flow queda mal
+   configurado.
+2. Marca esos leads con el nombre prefijado **`[PRUEBA]`**, para distinguirlos en
+   el dashboard y limpiarlos después.
+
+`TAG_PREFIX=V42_` hace que todos los tags del bot nuevo queden agrupados y sin
+colisionar con los que ya usa el sistema actual.
+
+> **Cómo saco los `subscriber_id`:** en ManyChat, abre el contacto → la URL
+> termina en el id. O escríbele una vez al bot con esa cuenta y busca el id en
+> los logs del Worker (`npx wrangler tail`), que registra cada petición.
 
 ### Probar que responde (sin ManyChat todavía)
 
@@ -144,13 +159,49 @@ aplica solo, pero deben existir:
 switch, no hay condiciones que bloqueen turnos, no hay custom fields de memoria.
 Manda TODO al Worker y envía lo que el Worker le diga.
 
+### ⚠️ 4.0 Si pruebas sobre el ManyChat de PRODUCCIÓN (lee esto primero)
+
+Decisión del 2-sep-2026: la prueba corre sobre la cuenta real de ARTF, con
+palabras clave que solo usan Yeison y Yuli. Eso obliga a tres frenos, porque
+**el trigger de "cualquier mensaje entrante" se dispara con el mensaje de
+CUALQUIER lead real**, no solo con los de prueba.
+
+**Freno 1 — Lista blanca en el Worker (el más importante).**
+Pon los `subscriber_id` de las cuentas de prueba en `MANYCHAT_IDS_PRUEBA`. Con
+eso el Worker **solo responde a esos contactos**; a cualquier otro lo ignora por
+completo (no escribe en la base, no llama al LLM, no aplica tags, no responde).
+Este freno **no depende de que el Flow esté bien configurado**: está en el código.
+
+**Freno 2 — Prefijo en los tags.**
+Pon `TAG_PREFIX=V42_`. Sin esto el bot nuevo aplicaría `HANDOFF_ANDRES`, que
+**ya existe en producción** y alimenta los filtros del sistema actual — meterías
+contactos de prueba en flujos reales. Con el prefijo quedan como
+`V42_HANDOFF_ANDRES`: agrupados y sin tocar nada.
+
+**Freno 3 — Condición de tag en el Flow.**
+El Default Reply debe pasar por una condición de tag antes de llamar al Worker
+(ver 4.1). Así ni siquiera se hace la petición para leads reales.
+
+> Los tres se refuerzan entre sí a propósito. El 1 te protege aunque el 3 quede
+> mal puesto.
+
 ### 4.1 Triggers
 
-Un solo Flow, con los triggers que quieras probar (comentario en Reel con
-`CONTROL` / `CLARIDAD`, DM nuevo, etc.). **Importante:** agrega también el
-trigger de **cualquier mensaje entrante** (Default Reply / "User replies"), para
-que los mensajes 2, 3, 4… también lleguen al Worker. Sin eso el bot solo
-contestaría el primer mensaje — que fue exactamente lo que rompió al bot viejo.
+Un solo Flow. Dos entradas:
+
+**a) Entrada — palabra clave privada.** El keyword que solo ustedes van a usar
+(ej. `PRUEBAV42`). Primera acción del Flow: **aplicar el tag `V42_EN_PRUEBA`**
+al contacto. Ese tag es lo que marca "esta conversación es del bot nuevo".
+
+**b) Continuación — cualquier mensaje entrante** (Default Reply / "User
+replies"), para que los mensajes 2, 3, 4… también lleguen al Worker. Sin esto el
+bot solo contestaría el primer mensaje — que fue exactamente lo que rompió al
+bot viejo.
+
+> **En esa segunda entrada, la PRIMERA acción tiene que ser una Condition:
+> "¿tiene el tag `V42_EN_PRUEBA`?"** Si no lo tiene → terminar el Flow sin hacer
+> nada (que lo atienda el sistema de siempre). Solo si lo tiene → External
+> Request al Worker.
 
 ### 4.2 Acción 1 — External Request
 

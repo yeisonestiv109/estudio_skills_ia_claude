@@ -36,8 +36,14 @@
  *   SUPABASE_SERVICE_ROLE_KEY    service_role (fn_bot_* solo tienen grant a service_role)
  *   GROQ_API_KEY                 clasificador
  *   MANYCHAT_API_TOKEN           token de la cuenta de ManyChat DE PRUEBA
- *   MANYCHAT_IDS_PRUEBA          (opcional) ids separados por coma -> marca los
- *                                leads con "[PRUEBA]" para poder borrarlos luego
+ *   WEBHOOK_SECRET               OBLIGATORIO. Sin el, el Worker no opera (500).
+ *   MANYCHAT_IDS_PRUEBA          LISTA BLANCA. Si tiene valores, el Worker SOLO
+ *                                responde a esos subscribers y marca sus leads
+ *                                con "[PRUEBA]". Imprescindible mientras se
+ *                                pruebe sobre el ManyChat de PRODUCCION.
+ *   TAG_PREFIX                   (opcional) prefijo para TODOS los tags, ej
+ *                                "V42_". Evita chocar con los tags que el
+ *                                sistema actual ya usa (HANDOFF_ANDRES...).
  */
 
 import {
@@ -118,6 +124,32 @@ async function manejar(request, env, ctx) {
   }
 
   // -------------------------------------------------------------------------
+  // 0.b LISTA BLANCA — freno duro cuando se prueba sobre el ManyChat REAL
+  // -------------------------------------------------------------------------
+  // Si MANYCHAT_IDS_PRUEBA tiene valores, el Worker SOLO le responde a esos
+  // subscribers. Cualquier otro se ignora por completo: no escribe en la base,
+  // no llama al LLM, no aplica tags, no responde nada.
+  //
+  // Por que existe: la prueba corre sobre la cuenta de ManyChat de PRODUCCION.
+  // El trigger de "cualquier mensaje entrante" que necesita el bot para
+  // atender los turnos 2, 3, 4... se dispara con el mensaje de CUALQUIER lead
+  // real. Si el Flow queda mal condicionado, el bot nuevo se pondria a
+  // contestarle a leads de verdad. Esta lista no depende de que la config de
+  // ManyChat este bien: es un freno en el codigo.
+  //
+  // Cuando la prueba termine y el bot vaya a atender a todos, se borra el
+  // secret y el Worker vuelve a atender a cualquiera.
+  const idsPrueba = (env.MANYCHAT_IDS_PRUEBA || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  const hayListaBlanca = idsPrueba.length > 0;
+  const esPrueba = idsPrueba.includes(subId);
+
+  if (hayListaBlanca && !esPrueba) {
+    console.warn(`Ignorado por lista blanca: ${subId} no esta en MANYCHAT_IDS_PRUEBA.`);
+    return json({ ok: true, responder: false, motivo: 'fuera_de_lista_blanca' });
+  }
+
+  // -------------------------------------------------------------------------
   // 1. Idempotencia: si ManyChat reintenta el MISMO mensaje (pasa cuando la
   //    respuesta se demora), devolvemos lo ya calculado sin volver a escribir
   //    en la base ni a llamar al LLM.
@@ -136,8 +168,6 @@ async function manejar(request, env, ctx) {
   const nombreBase = sanitize(payload.full_name)
     || [sanitize(payload.first_name), sanitize(payload.last_name)].filter(Boolean).join(' ').trim()
     || sanitize(payload.first_name);
-  const esPrueba = (env.MANYCHAT_IDS_PRUEBA || '')
-    .split(',').map((s) => s.trim()).filter(Boolean).includes(subId);
   const nombre = esPrueba && nombreBase ? `[PRUEBA] ${nombreBase}` : nombreBase;
 
   // -------------------------------------------------------------------------
@@ -219,8 +249,8 @@ async function manejar(request, env, ctx) {
     // etiqueta para que un humano lo tome. Nunca se responde el guion cuando
     // la base no confirmo -- eso desincronizaria la conversacion.
     if (env.MANYCHAT_API_TOKEN && ctx?.waitUntil) {
-      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'HANDOFF_ANDRES', 'add'));
-      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'ERROR_TECNICO_BOT', 'add'));
+      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, conPrefijo(env, 'HANDOFF_ANDRES'), 'add'));
+      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, conPrefijo(env, 'ERROR_TECNICO_BOT'), 'add'));
     }
     return json({
       ok: false, responder: true, msg: render(P.FALLBACK_ERROR, nombre),
@@ -232,17 +262,18 @@ async function manejar(request, env, ctx) {
   // 6. Tags de ManyChat (fire-and-forget, nunca retrasan la respuesta)
   // -------------------------------------------------------------------------
   if (env.MANYCHAT_API_TOKEN && ctx?.waitUntil) {
-    ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'ATENDIDO_BOT', 'add'));
+    const tag = (nombreTag) => conPrefijo(env, nombreTag);
+    ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('ATENDIDO_BOT'), 'add'));
     if (plan.handoffRazon) {
-      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'HANDOFF_ANDRES', 'add'));
+      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('HANDOFF_ANDRES'), 'add'));
       ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId,
-        `HANDOFF_${plan.handoffRazon.toUpperCase()}`, 'add'));
+        tag(`HANDOFF_${plan.handoffRazon.toUpperCase()}`), 'add'));
     }
     if (plan.estadoDestino === 'descalificado') {
-      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'DESCALIFICADO', 'add'));
+      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('DESCALIFICADO'), 'add'));
     }
     if (plan.campos.calendario_enviado) {
-      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, 'CALENDARIO_ENVIADO', 'add'));
+      ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('CALENDARIO_ENVIADO'), 'add'));
     }
   }
 
@@ -575,6 +606,20 @@ async function rpc(env, fn, body, timeoutMs) {
 // ---------------------------------------------------------------------------
 // ManyChat + utilidades
 // ---------------------------------------------------------------------------
+/**
+ * Antepone TAG_PREFIX al nombre del tag.
+ *
+ * Necesario porque la prueba corre sobre el ManyChat de PRODUCCION, donde ya
+ * existen tags como HANDOFF_ANDRES que alimentan los filtros y automatismos del
+ * sistema actual. Si el bot nuevo aplicara ese mismo tag, metería contactos de
+ * prueba en flujos reales. Con TAG_PREFIX="V42_" quedan como V42_HANDOFF_ANDRES:
+ * agrupados, distinguibles y sin tocar nada de produccion.
+ */
+export function conPrefijo(env, nombreTag) {
+  const prefijo = (env?.TAG_PREFIX || '').trim();
+  return prefijo ? `${prefijo}${nombreTag}` : nombreTag;
+}
+
 async function aplicarTag(token, subscriberId, tagName, accion) {
   if (!token || !subscriberId || !tagName) return;
   const endpoint = accion === 'remove' ? 'removeTagByName' : 'addTagByName';
