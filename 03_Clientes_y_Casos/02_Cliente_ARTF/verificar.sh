@@ -35,7 +35,11 @@ else
 fi
 
 titulo "4. Smoke de las RPC contra la base real"
-echo "  (manual por ahora: ver LOOPS.md seccion 1, compuerta 4)"
+if (cd "$AQUI/Scrips_Worker_and_AppScript" && node smoke_rpc.mjs); then
+  :
+else
+  malo "smoke de las RPC"
+fi
 
 titulo "5. Smoke HTTP del Worker"
 if [ -n "${BOT_WORKER_URL:-}" ] && [ -n "${BOT_WEBHOOK_SECRET:-}" ]; then

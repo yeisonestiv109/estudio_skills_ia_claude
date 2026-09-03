@@ -175,3 +175,27 @@ describe('El router completo pasa la compuerta en cada etapa', () => {
     });
   }
 });
+
+// ===========================================================================
+describe('Saludo sin nombre — bug encontrado leyendo el corpus', () => {
+  test('sin nombre, el saludo NO queda como "¡Hola ! 👋"', () => {
+    // ManyChat no siempre resuelve first_name. Antes esto le llegaba roto a
+    // TODOS los leads nuevos, que es el primer mensaje que ven.
+    const m1 = render(P.M1_CONTROL, '');
+    assert.ok(!/ !/.test(m1), `saludo roto: "${m1.slice(0, 40)}"`);
+    assert.match(m1, /^¡Hola! 👋/);
+    assert.ok(!/ {2,}/.test(m1), 'quedaron espacios dobles');
+  });
+
+  test('con nombre sigue funcionando igual', () => {
+    assert.match(render(P.M1_CONTROL, 'Daniela'), /^¡Hola Daniela! 👋/);
+  });
+
+  test('un nombre basura de la base se trata como sin nombre', () => {
+    assert.match(render(P.M1_CONTROL, 'Lead 12345'), /^¡Hola! 👋/);
+  });
+
+  test('el saludo sin nombre sigue pasando la compuerta', () => {
+    assert.equal(verificarMensajes([render(P.M1_CONTROL, '')], { nombre: '' }).pasa, true);
+  });
+});

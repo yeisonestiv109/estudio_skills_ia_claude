@@ -444,8 +444,20 @@ export function render(plantilla, nombre) {
   const limpio = (nombre || '').trim().split(/\s+/)[0] || '';
   // Evita nombres basura tipo "Lead 12345" que genera la propia base.
   const usable = /^lead$/i.test(limpio) || /^\d+$/.test(limpio) ? '' : limpio;
-  return plantilla
+
+  let salida = plantilla
     .replaceAll(', {nombre}', usable ? `, ${usable}` : '')
     .replaceAll('{nombre},', usable ? `${usable},` : '')
     .replaceAll('{nombre}', usable);
+
+  // Sin nombre no puede quedar "¡Hola ! 👋" ni un doble espacio en medio de la
+  // frase. Bug real encontrado leyendo una conversacion del corpus: ManyChat no
+  // siempre resuelve el first_name, y el saludo roto le llegaria a TODOS los
+  // leads nuevos, que es justo el primer mensaje que ven.
+  if (!usable) {
+    salida = salida
+      .replace(/ +([!?.,:;])/g, '$1')
+      .replace(/[^\S\n]{2,}/g, ' ');
+  }
+  return salida;
 }

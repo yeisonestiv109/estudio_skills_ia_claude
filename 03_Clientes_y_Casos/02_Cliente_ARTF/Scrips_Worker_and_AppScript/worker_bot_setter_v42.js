@@ -162,6 +162,11 @@ async function manejar(request, env, ctx) {
   // 3. Clasificacion (deterministas primero; el LLM solo donde aporta)
   // -------------------------------------------------------------------------
   const clasificacion = await clasificar(env, estado, lastText);
+  // El nombre tiene que viajar en la clasificacion: en el PRIMER turno el lead
+  // todavia no existe en la base, asi que `estado` es null y el router se
+  // quedaria sin nombre. Sin esto, el saludo de apertura le llega roto
+  // ("¡Hola ! 👋") a todos los leads nuevos -- el primer mensaje que ven.
+  clasificacion.nombre = nombreBase || '';
 
   // -------------------------------------------------------------------------
   // 4. Ruteo determinista -> que se envia y a que estado se pasa

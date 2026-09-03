@@ -742,11 +742,39 @@ export function detectarUrgencia(texto) {
   return null;
 }
 
-/** Dolor A/B/C/D cuando responde con la letra sola. */
+/**
+ * Dolor A/B/C/D.
+ *
+ * Ampliado con lenguaje real del corpus: en las conversaciones modelo el lead
+ * no responde "B" a secas, responde "B sin duda. Siento que me llega la plata
+ * y a los 15 dias ya no se en que se fue". La version anterior solo reconocia
+ * la letra aislada y mandaba ese turno al LLM sin necesidad.
+ *
+ * OJO con la "a": en español es preposicion ("a mi me pasa que..."), asi que
+ * solo se acepta aislada o seguida de puntuacion. La b/c/d no son palabras, asi
+ * que ahi si se acepta la letra al inicio seguida de texto.
+ */
 export function detectarDolorLetra(texto) {
   const t = String(texto || '').trim().toLowerCase();
-  const m = t.match(/^\(?([abcd])\)?[\s.,)]*$/);
-  return m ? m[1].toUpperCase() : null;
+  if (!t) return null;
+
+  // 1. La letra sola: "B", "(c)", "d."
+  const sola = t.match(/^\(?([abcd])\)?[\s.,:)]*$/);
+  if (sola) return sola[1].toUpperCase();
+
+  // 2. b/c/d al inicio seguidas de texto: "B sin duda...", "c) porque..."
+  const inicio = t.match(/^\(?([bcd])\)?[\s.,:)]/);
+  if (inicio) return inicio[1].toUpperCase();
+
+  // 3. "a" al inicio SOLO con puntuacion, para no confundirla con la preposicion
+  const inicioA = t.match(/^\(?a\)?[.,:)]/);
+  if (inicioA) return 'A';
+
+  // 4. Marcada explicitamente: "la B", "opcion C", "elijo la d"
+  const marcada = t.match(/\b(?:la|el|opci[oó]n|respuesta|elijo|ser[ií]a)\s+\(?([abcd])\)?\b/);
+  if (marcada) return marcada[1].toUpperCase();
+
+  return null;
 }
 
 /** Aceptacion del pitch ("dale", "si", "agendemos"). */

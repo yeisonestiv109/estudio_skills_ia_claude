@@ -70,10 +70,13 @@ La guía (principio 4) advierte: *"si el generador puede tocar su propio examen,
 
 | Regla | Valor |
 |---|---|
-| **Presupuesto** | ~9–12 turnos para llegar al verde |
-| **Tope duro** | 15 turnos. Si no está verde, paro y escalo |
-| **Regla de atasco** | 3 intentos fallidos sobre la misma compuerta → paro y pregunto |
+| **Presupuesto** | Abierto hasta sacar la v1 desplegada y probada (decisión del fundador, 2-sep-2026: *"si llegas al límite quedamos a medias"*) |
+| **Reporte** | En cada checkpoint informo cuántos turnos llevo |
+| **Regla de atasco** | 3 intentos fallidos sobre la misma compuerta → paro y pregunto. **Esta sigue firme:** el presupuesto abierto no es licencia para insistir en algo que no avanza |
 | **Escalo siempre que** | La decisión sea de negocio (copy nuevo, un umbral del playbook, una política), no técnica |
+
+> El tope duro se levantó a propósito, pero la regla de atasco lo reemplaza como
+> freno: lo que protege el presupuesto no es un número, es no iterar a ciegas.
 
 ---
 

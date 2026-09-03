@@ -3,7 +3,7 @@
 > El órgano "estado" del loop (ver `LOOPS.md`). Qué se intentó, qué falló y qué
 > queda. Se actualiza en cada iteración para no repetir errores ni perder el hilo.
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (2-sep-2026)
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (2-sep-2026) · 143 tests · 4 de 5 compuertas automatizadas
 
 ---
 
@@ -11,9 +11,9 @@
 
 | | |
 |---|---|
-| Estimado | ~9–12 turnos |
-| Consumidos | ~7 |
-| Tope duro | 15 → paro y escalo |
+| Presupuesto | Abierto hasta sacar la v1 desplegada y probada |
+| Consumidos | ~11 |
+| Freno | Regla de atasco (3 intentos sobre la misma compuerta) |
 
 ---
 
@@ -41,13 +41,17 @@ Decisiones del fundador (2-sep-2026), que **él puede aprobar como Setter actual
 
 **⚠️ Consecuencia que hay que vigilar en la prueba:** la **Objeción 9** ("¿por qué resolverlo ahora?") es la única que el SOP predice como parte del flujo normal — dice literal *"aparece en Mensaje 4 (urgencia)"*. Con el alcance actual, ese lead va a handoff en vez de recibir el reframe. Si en la prueba aparece seguido, el arreglo es agregar `9` al Set. El invariante crítico sí se mantiene: preguntar "¿por qué ahora?" **nunca** se lee como falta de urgencia.
 
-### It. 2 — Corpus y simulador (pendiente)
-Convertir `Setter-IA-Claude-Code-Project/examples/` (4 conversaciones modelo reales) en fixtures y reproducirlas turno por turno contra el router, con la compuerta corriendo en cada turno.
+### It. 2 — Corpus y simulador (hecho)
+`simulador.js` reproduce una conversación completa contra el router, turno por turno, **corriendo la compuerta en cada turno**. 4 conversaciones en `tests/corpus/`, con frases literales de leads reales.
 
-**Por qué importa:** es el terreno externo más fuerte que tenemos — conversaciones que yo no escribí, con las frases literales del lead (`"gano alrededor de 7 millones netos al mes"`, `"B sin duda"`, `"Firme firme, lo tengo agendado"`). Sirven para probar los detectores deterministas contra lenguaje real, no contra casos que yo invente.
+`node ver-conversacion.mjs [filtro]` imprime la conversación como se vería en el chat. Eso es lo que la guía llama aprovechar la "GPU de visión", y valió la pena de inmediato:
 
-### It. 3 — Automatizar la compuerta 4 (pendiente)
-Hoy el smoke de las RPC contra la base real es manual. Convertirlo en script.
+**🐞 Bug real encontrado leyéndola:** el turno 1 salía `¡Hola ! 👋`. En el primer mensaje `estado` es `null` (el lead aún no existe en la base) y el Worker **nunca le pasaba el nombre al router** — o sea que el saludo roto le habría llegado a **todos los leads nuevos**, que es justo el primer mensaje que ven. Dos arreglos: el Worker ahora pasa el nombre en la clasificación, y `render()` limpia el espacio colgante cuando no hay nombre (ManyChat no siempre resuelve `first_name`). Con test propio.
+
+**Mejora que salió del lenguaje real:** el lead no responde `"B"`, responde `"B sin duda. Siento que me llega la plata..."`. `detectarDolorLetra` ahora lo resuelve determinista en vez de gastar una llamada al LLM. Con guarda para que la `"a"` no se confunda con la preposición (`"a mí me pasa que..."`).
+
+### It. 3 — Automatizar la compuerta 4 (hecho)
+`smoke_rpc.mjs` corre contra la base real: lead inexistente, escritura+lectura de un turno, **que la guarda de `agendado` siga saltando**, y que el CHECK acepte las 4 etapas nuevas. Ya está cableado en `verificar.sh`.
 
 ---
 

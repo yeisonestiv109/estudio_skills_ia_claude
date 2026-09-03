@@ -417,10 +417,25 @@ describe('Detectores deterministas', () => {
     assert.equal(detectarUrgencia('por que es importante resolverlo ahora?'), 'pregunta_por_que');
   });
 
-  test('dolor por letra sola', () => {
+  test('dolor: letra sola y letra con texto (mejorado con el corpus)', () => {
+    // El corpus real mostro que el lead NO responde "B" a secas, responde
+    // "B sin duda. Siento que me llega la plata...". Antes eso caia al LLM sin
+    // necesidad; ahora se resuelve determinista.
     assert.equal(detectarDolorLetra('B'), 'B');
     assert.equal(detectarDolorLetra('c)'), 'C');
-    assert.equal(detectarDolorLetra('la B porque no se en que se va'), null, 'texto largo lo resuelve el LLM');
+    assert.equal(detectarDolorLetra('B sin duda. Siento que me llega la plata'), 'B');
+    assert.equal(detectarDolorLetra('la B porque no se en que se va'), 'B');
+    assert.equal(detectarDolorLetra('seria la c'), 'C');
+  });
+
+  test('dolor: la "a" no se confunde con la preposicion', () => {
+    // "a" es palabra en español; b/c/d no. Por eso la "a" solo cuenta aislada
+    // o con puntuacion -- si no, "a mi me pasa que..." se leeria como opcion A.
+    assert.equal(detectarDolorLetra('A'), 'A');
+    assert.equal(detectarDolorLetra('a.'), 'A');
+    assert.equal(detectarDolorLetra('la a'), 'A');
+    assert.equal(detectarDolorLetra('a mi me pasa que no me alcanza'), null);
+    assert.equal(detectarDolorLetra('a veces siento eso'), null);
   });
 
   test('endeudamiento en %', () => {

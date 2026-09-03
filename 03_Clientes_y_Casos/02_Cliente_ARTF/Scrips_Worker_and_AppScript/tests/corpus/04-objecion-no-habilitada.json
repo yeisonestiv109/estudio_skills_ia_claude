@@ -1,0 +1,26 @@
+{
+  "nombre": "04 · Objeción de precio — fuera del alcance de la v1",
+  "fuente": "Setter-IA-Claude-Code-Project/examples/04-objecion-precio-superada.md (alcance ajustado)",
+  "nota": "En el proyecto original el bot resolvía la objeción de precio. En la v1 nuestra NO: la Objeción 7 no está habilitada, así que el lead pasa a un humano. Esta conversación fija ese comportamiento -- si alguien habilita la 7 sin querer, este test se pone rojo.",
+  "lead": { "nombre": "Mauricio" },
+  "turnos": [
+    { "lead": "CONTROL", "espera": { "etapa": "M1_ENVIADO" } },
+    {
+      "lead": "soy ingeniero civil, gano 15 millones",
+      "pista": { "profesion": "Ingeniero civil" },
+      "espera": { "etapa": "M2_ENVIADO" }
+    },
+    { "lead": "40%", "espera": { "etapa": "M3_ENVIADO" } },
+    { "lead": "C", "espera": { "etapa": "M4_ENVIADO" } },
+    { "lead": "sí, es ahora", "espera": { "etapa": "M5_ENVIADO", "estado": "calificado" } },
+    {
+      "lead": "y cuánto cuesta el programa?",
+      "pista": { "objecion_num": 7, "objecion_conocida": true },
+      "espera": {
+        "etapa": "HANDOFF",
+        "handoff": "objecion_no_habilitada",
+        "burbujas": 0
+      }
+    }
+  ]
+}

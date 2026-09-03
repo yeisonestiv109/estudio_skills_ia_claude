@@ -1,0 +1,92 @@
+{
+  "nombre": "01 · Lead calificado que cierra limpio",
+  "fuente": "Setter-IA-Claude-Code-Project/examples/01-lead-calificado-cierra.md",
+  "nota": "Conversacion REAL (Daniela, ingeniera de software, cerro el programa). Las frases del lead son literales del ejemplo de Javier -- eso es lo que la hace terreno externo: no las escribi yo. Adaptada a V4.2: se agrego el turno de endeudamiento (M2), que no existia cuando se escribio el ejemplo, y el flujo del link/asistencia sigue el orden nuevo.",
+  "lead": { "nombre": "Daniela" },
+  "turnos": [
+    {
+      "lead": "CONTROL",
+      "espera": {
+        "etapa": "M1_ENVIADO",
+        "estado": "contactado",
+        "contiene": "¿A qué te dedicas y cuánto estás ganando al mes aproximadamente?"
+      }
+    },
+    {
+      "lead": "Hola! Soy ingeniera de software, gano alrededor de 7 millones netos al mes",
+      "pista": { "profesion": "Ingeniera de software" },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "estado": "contactado",
+        "contiene": "nivel de endeudamiento"
+      }
+    },
+    {
+      "lead": "creo que como el 30%",
+      "espera": {
+        "etapa": "M3_ENVIADO",
+        "contiene": "¿cuál es tu mayor frustración hoy con tu dinero?"
+      }
+    },
+    {
+      "lead": "B sin duda. Siento que me llega la plata y a los 15 días ya no sé en qué se fue",
+      "espera": {
+        "etapa": "M4_ENVIADO",
+        "contiene": "¿Resolver esto es una prioridad AHORA para ti"
+      }
+    },
+    {
+      "lead": "Es prioridad ya. Llevo 3 años con la misma situación y este año me prometí cambiarlo",
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "estado": "calificado",
+        "contiene": "¿Agendamos?"
+      }
+    },
+    {
+      "lead": "Sí, dale. Agendemos",
+      "espera": {
+        "etapa": "M6_ENVIADO",
+        "estado": "calificado",
+        "burbujas": 2,
+        "contiene": "https://calendar.app.google/iMW5LBbkcAvorypF9"
+      }
+    },
+    {
+      "lead": "listo",
+      "espera": {
+        "etapa": "M7_ENVIADO",
+        "contiene": ["asistirás solo tú", "Confirmame cuando te hayas agendado"]
+      }
+    },
+    {
+      "lead": "voy solo",
+      "espera": {
+        "etapa": "M7_ENVIADO",
+        "contiene": "Quedo pendiente de tu confirmación"
+      }
+    },
+    {
+      "lead": "Listo, ya agendé para el sábado a las 11am",
+      "espera": {
+        "etapa": "CIERRE_PRECALL",
+        "estado": "calificado",
+        "contiene": "estimado total de créditos"
+      }
+    },
+    {
+      "lead": "Gracias!",
+      "espera": {
+        "etapa": "BLINDAJE_ENVIADO",
+        "contiene": "o estamos súper firmes"
+      }
+    },
+    {
+      "lead": "Firme firme, lo tengo agendado en mi calendario",
+      "espera": {
+        "etapa": "BLINDAJE_CERRADO",
+        "contiene": "Nos vemos"
+      }
+    }
+  ]
+}
