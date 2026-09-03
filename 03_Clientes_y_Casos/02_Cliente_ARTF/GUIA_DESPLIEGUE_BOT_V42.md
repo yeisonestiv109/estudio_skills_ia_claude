@@ -1,6 +1,8 @@
 # Guía de despliegue — Bot conversacional ARTF (SOP V4.2)
 
-**Fecha:** 1-sep-2026 · **Estado:** listo para la prueba con cuentas de prueba.
+**Fecha:** 2-sep-2026 · **Estado:** listo para desplegar y probar.
+**Compuerta del proyecto:** `./verificar.sh` — 143 tests, 4 de 5 en verde
+(la 5ª es justamente el smoke del Worker, que se corre al terminar el paso 2).
 
 Esta guía cubre el despliegue del **Worker nuevo** y la configuración del
 **ManyChat de prueba**. Todo corre en paralelo a producción: lo único
@@ -15,10 +17,16 @@ compartido es la base de datos de Supabase (decisión explícita del fundador).
 | Plantillas del SOP | `Scrips_Worker_and_AppScript/sop_v42_plantillas.js` | Texto literal V4.2 (M1-M7, 9 objeciones, 3 descalificaciones, bumps) |
 | Router determinista | `Scrips_Worker_and_AppScript/bot_router_v42.js` | Filtros, glosario de ingreso, objeciones, transiciones. Sin red: 100% testeable |
 | Worker | `Scrips_Worker_and_AppScript/worker_bot_setter_v42.js` | Webhook, idempotencia, LLM, Supabase, tags |
-| Tests | `Scrips_Worker_and_AppScript/tests/` | 52 tests, `node --test` |
+| Verificador | `Scrips_Worker_and_AppScript/verificador_cumplimiento.js` | La compuerta: reprueba cualquier mensaje que viole el playbook (link, voz, copy no aprobado) |
+| Simulador | `Scrips_Worker_and_AppScript/simulador.js` | Reproduce conversaciones completas sin red. `node ver-conversacion.mjs` |
+| Corpus | `Scrips_Worker_and_AppScript/tests/corpus/` | 4 conversaciones con frases literales de leads reales |
+| Tests | `Scrips_Worker_and_AppScript/tests/` | 143 tests, `node --test` |
 | Migraciones | `artf-pipeline-app/supabase/migrations/20260901*` | Campos nuevos + `fn_bot_get_estado` + `fn_bot_procesar_turno` |
 
-**Ya aplicado en la base** (las 3 migraciones corrieron y están verificadas).
+**Ya aplicado en la base** (las 4 migraciones corrieron y están verificadas).
+
+> Antes de desplegar, si quieres ver cómo conversa el bot sin tocar nada:
+> `cd Scrips_Worker_and_AppScript && node ver-conversacion.mjs`
 
 ---
 
@@ -120,8 +128,13 @@ aplica solo, pero deben existir:
 `ERROR_TECNICO_BOT`, y los de razón específica:
 `HANDOFF_CRISIS_EMOCIONAL`, `HANDOFF_CONTENIDO_HOSTIL`, `HANDOFF_PREGUNTA_PRECIO`,
 `HANDOFF_RESISTENCIA_REPETIDA`, `HANDOFF_RESISTENCIA_ACUMULADA`,
-`HANDOFF_OBJECION_FUERA_PLAYBOOK`, `HANDOFF_AMBIGUO`, `HANDOFF_EX_CLIENTE`,
-`HANDOFF_ERROR_TECNICO`.
+`HANDOFF_OBJECION_FUERA_PLAYBOOK`, `HANDOFF_OBJECION_NO_HABILITADA`,
+`HANDOFF_AMBIGUO`, `HANDOFF_EX_CLIENTE`, `HANDOFF_ERROR_TECNICO`.
+
+> **Atajo:** si prefieres no crearlos a mano, ManyChat crea el tag solo la
+> primera vez que la API lo aplica. Crear al menos `ATENDIDO_BOT` y
+> `HANDOFF_ANDRES` a mano te sirve para dejar armados los filtros de la bandeja
+> desde el dia 1.
 
 ---
 
@@ -179,11 +192,34 @@ turno — esa fue la causa raíz de que perdiera la memoria.
 3. **Condition:** `{{response.msg2}}` no está vacío → **Send Message:** `{{response.msg2}}`
 4. **Condition:** `{{response.msg3}}` no está vacío → **Send Message:** `{{response.msg3}}`
 
+> Hoy el bot envía **máximo 2 burbujas** por turno, así que `msg3` siempre llega
+> vacío. Configúralo igual: es una condición más y evita que un mensaje se
+> pierda en silencio si más adelante alguna rama envía 3.
+
 > **Por qué 3 mensajes separados:** el SOP exige que el link del calendario vaya
 > **aislado en su propia burbuja** (Instagram lo rompe si le pegas texto justo
 > después). En el turno del cierre el Worker manda: `msg` = link,
 > `msg2` = "Confirmame cuando te hayas agendado…", `msg3` = la pregunta de si
 > asiste solo o acompañado.
+
+---
+
+## 4.5 Qué hace y qué NO hace el bot en esta v1
+
+Para que sepas qué esperar en la prueba y no lo leas como un fallo:
+
+| El bot lo hace solo | Te lo pasa a ti (handoff + tag) |
+|---|---|
+| Los 7 mensajes del guion (M1→M7) | Objeciones **4 a 9** (`objecion_no_habilitada`) |
+| Los 3 filtros + glosario de ingreso | Cualquier objeción fuera de las 9 |
+| Descalificación con valor (3 scripts) | Crisis emocional, hostilidad, ex-cliente |
+| Objeciones **1, 2 y 3** | Ingreso que sigue ambiguo tras pedirlo |
+| RetornoLead (descartado que se recalifica) | Misma objeción 2 veces / 3 seguidas |
+| Blindaje del show-up | Fallo técnico de la base |
+
+**Ampliar objeciones después = agregar el número al Set `OBJECIONES_HABILITADAS`** en `sop_v42_plantillas.js`. El copy y el ruteo de las 9 ya están construidos y probados.
+
+**Lo que NO existe todavía:** los bumps de recuperación (30min/24h/72h). Necesitan un Cron Trigger de Cloudflare y quedan para después de esta prueba. Si un lead deja de responder, el bot simplemente no insiste.
 
 ---
 
