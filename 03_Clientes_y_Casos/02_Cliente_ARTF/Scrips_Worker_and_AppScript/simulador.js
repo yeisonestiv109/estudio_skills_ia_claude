@@ -19,7 +19,7 @@
 
 import {
   decidirTurno, decidirSiResponder,
-  parseIngresoCOP, detectarEndeudamientoPct, detectarDolorLetra,
+  parseIngresoCOP, detectarEndeudamientoPct, detectarDolorLetras, detectarSiNo,
   detectarUrgencia, detectarAceptacion, detectarConfirmacionAgenda,
   detectarAcompanante, detectarHostilidad, detectarAgradecimiento,
   detectarSinHorarios,
@@ -34,8 +34,8 @@ export function clasificarDeterminista(etapa, texto) {
   const c = { hostil: detectarHostilidad(texto) };
   if (!etapa || c.hostil) return c;
 
-  if (etapa === 'M1_ENVIADO' || etapa === 'M1_INGRESO_AMBIGUO' || etapa === 'M1_ACLARAR_REMANENTE'
-      || etapa === 'DESCALIFICADO') {
+  if (['M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_ACLARAR_REMANENTE', 'DESCALIFICADO',
+       'RETORNO_PREGUNTA'].includes(etapa)) {
     const ing = parseIngresoCOP(texto);
     if (!ing.ambiguo) { c.ingreso_cop = ing.monto; c.ingreso_glosario = ing.glosario; }
     else if (ing.glosario) { c.ingreso_glosario = ing.glosario; c.ingreso_cop = null; }
@@ -45,8 +45,17 @@ export function clasificarDeterminista(etapa, texto) {
     if (pct !== null) c.endeudamiento_pct = pct;
   }
   if (etapa === 'M3_ENVIADO') {
-    const letra = detectarDolorLetra(texto);
-    if (letra) { c.dolor = letra; c.dolor_financiero = letra !== 'D'; }
+    const letras = detectarDolorLetras(texto);
+    if (letras.length) {
+      c.dolores = letras;
+      c.dolor_financiero = !letras.every((l) => l === 'D');
+    }
+  }
+  if (etapa === 'M1_RANGO_PREGUNTADO') {
+    const r = detectarSiNo(texto);
+    if (r !== null) c.confirma_rango = r;
+    const ing = parseIngresoCOP(texto);
+    if (!ing.ambiguo) c.ingreso_cop = ing.monto;
   }
   if (etapa === 'M4_ENVIADO') {
     const u = detectarUrgencia(texto);

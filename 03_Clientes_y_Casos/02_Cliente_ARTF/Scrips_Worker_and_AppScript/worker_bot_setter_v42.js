@@ -49,7 +49,7 @@
 import {
   decidirTurno, decidirSiResponder, parseIngresoCOP,
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
-  detectarUrgencia, detectarDolorLetra, detectarAceptacion,
+  detectarUrgencia, detectarDolorLetras, detectarAceptacion,
   detectarHostilidad, detectarEndeudamientoPct,
   detectarSinHorarios, detectarSiNo, esSoloPalabraClave,
 } from './bot_router_v42.js';
@@ -329,8 +329,17 @@ export async function clasificar(env, estado, texto) {
     if (pct !== null) det.endeudamiento_pct = pct;
   }
   if (etapa === 'M3_ENVIADO') {
-    const letra = detectarDolorLetra(texto);
-    if (letra) { det.dolor = letra; det.dolor_financiero = letra !== 'D'; }
+    const letras = detectarDolorLetras(texto);
+    if (letras.length) {
+      det.dolores = letras;
+      det.dolor_financiero = !letras.every((l) => l === 'D');
+    }
+  }
+  if (etapa === 'M1_RANGO_PREGUNTADO') {
+    const r = detectarSiNo(texto);
+    if (r !== null) det.confirma_rango = r;
+    const ing = parseIngresoCOP(texto);
+    if (!ing.ambiguo) det.ingreso_cop = ing.monto;
   }
   if (etapa === 'M4_ENVIADO') {
     const u = detectarUrgencia(texto);
@@ -363,32 +372,59 @@ export async function clasificar(env, estado, texto) {
   return fusion;
 }
 
+/**
+ * Campos que van en TODAS las etapas, sin excepcion.
+ *
+ * REGRESION REAL que esto corrige (3-sep-2026): las etapas que fui agregando
+ * (M1_ACLARAR_REMANENTE, M7_ESPERANDO_VINCULO, RETORNO_PREGUNTA) no tenian
+ * entrada aca, y `clasificarConLLM` hace `if (!esquema) return {}`. Resultado:
+ * en esas etapas el LLM NO corria, asi que `crisis` y `hostil` no se evaluaban
+ * -- y la deteccion de crisis emocional es la regla de MAXIMA prioridad del
+ * diseño. Un lead en crisis ahi no se escalaba a un humano.
+ *
+ * Las objeciones tambien van en todas: la Objecion 6 ("esa info es muy sensible
+ * para DM") aparece por definicion cuando se pide el ingreso o la deuda, o sea
+ * en M1/M2. Antes solo se clasificaban despues del pitch, y por eso el bot leyo
+ * "es un dato delicado para compartir por aqui" como un ingreso ambiguo.
+ */
+const CAMPOS_COMUNES =
+  '"objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, '
+  + '"crisis": boolean, "hostil": boolean, "ex_cliente": boolean';
+
 const ESQUEMA_POR_ETAPA = {
-  M1_ENVIADO: `{"profesion": string|null, "ingreso_cop": number|null, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M1_INGRESO_AMBIGUO: `{"profesion": string|null, "ingreso_cop": number|null, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M2_ENVIADO: `{"endeudamiento_pct": number|null, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M2_NO_SABE: `{"endeudamiento_pct": number|null, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M2_BORDERLINE: `{"deuda_mayoritariamente_buena": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M3_ENVIADO: `{"dolor": "A"|"B"|"C"|"D", "dolor_financiero": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M3_RECONDUCIR: `{"dolor_financiero": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M4_ENVIADO: `{"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M5_ENVIADO: `{"acepta": boolean, "objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M6_ENVIADO: `{"confirmo_agendo": boolean, "acompanado": boolean|null, "objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
-  M7_ENVIADO: `{"confirmo_agendo": boolean, "acompanado": boolean|null, "objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, "crisis": boolean, "hostil": boolean, "ex_cliente": boolean, "oracion_empatia": string}`,
+  M1_ENVIADO:           `{"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M1_INGRESO_AMBIGUO:   `{"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M1_RANGO_PREGUNTADO:  `{"ingreso_cop": number|null, "confirma_rango": true|false|null, ${CAMPOS_COMUNES}}`,
+  M1_ACLARAR_REMANENTE: `{"ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M2_ENVIADO:           `{"endeudamiento_pct": number|null, ${CAMPOS_COMUNES}}`,
+  M2_NO_SABE:           `{"endeudamiento_pct": number|null, ${CAMPOS_COMUNES}}`,
+  M2_BORDERLINE:        `{"deuda_mayoritariamente_buena": boolean, ${CAMPOS_COMUNES}}`,
+  M3_ENVIADO:           `{"dolores": ["A"|"B"|"C"|"D"], "dolor_detalle": string|null, "dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
+  M3_RECONDUCIR:        `{"dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
+  M4_ENVIADO:           `{"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, ${CAMPOS_COMUNES}}`,
+  M5_ENVIADO:           `{"acepta": boolean, ${CAMPOS_COMUNES}}`,
+  M6_ENVIADO:           `{"confirmo_agendo": boolean, "acompanado": boolean|null, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
+  M7_ENVIADO:           `{"confirmo_agendo": boolean, "acompanado": boolean|null, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
+  M7_ESPERANDO_VINCULO: `{"sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
+  RETORNO_PREGUNTA:     `{"retoma": true|false|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
 };
 
 const CONTEXTO_POR_ETAPA = {
   M1_ENVIADO: 'Se le pregunto: "¿A que te dedicas y cuanto estas ganando al mes aproximadamente?"',
   M1_INGRESO_AMBIGUO: 'Se le pidio que confirme el numero aproximado que le queda al mes en pesos.',
+  M1_RANGO_PREGUNTADO: 'Se le pregunto: "¿Estas en el rango de $7M a $15M COP o mas al mes?". Es una pregunta de SI/NO: "confirma_rango" es true si dice que si esta en ese rango (o mas), false si dice que gana menos, null si no queda claro.',
+  M1_ACLARAR_REMANENTE: 'Se le pregunto si la cifra que dio es su ingreso TOTAL o lo que le queda despues de gastos.',
   M2_ENVIADO: 'Se le pregunto su nivel de endeudamiento en porcentaje (deudas mensuales / ingresos x 100).',
   M2_NO_SABE: 'No sabia su endeudamiento; se le pidio un estimado y si le queda plata despues de pagar deudas.',
   M2_BORDERLINE: 'Se le pregunto que TIPO de deudas son (consumo, hipoteca, tarjetas). "Deuda buena" = vivienda/hipoteca.',
-  M3_ENVIADO: 'Se le pidio elegir su mayor frustracion: A) no me alcanza B) no se en que se va C) deberia estar mejor D) otra.',
+  M3_ENVIADO: 'Se le pidio elegir su mayor frustracion: A) no me alcanza B) no se en que se va C) deberia estar mejor D) otra. PUEDE ELEGIR VARIAS ("C y B") -- devuelve TODAS en el array "dolores". Si incluye D, pon el texto libre en "dolor_detalle".',
   M3_RECONDUCIR: 'Dijo un dolor no financiero; se le pregunto si su frustracion SI esta conectada con que su dinero no le alcanza.',
   M4_ENVIADO: 'Se le pregunto si resolver esto es prioridad AHORA o algo para "cuando tenga mas tiempo/dinero".',
   M5_ENVIADO: 'Se le hizo el pitch de la llamada de diagnostico gratuita de 30 min y se cerro con "¿Agendamos?".',
   M6_ENVIADO: 'Ya se le envio el link del calendario.',
   M7_ENVIADO: 'Ya se le envio el link y se le pregunto si asistira solo o acompañado.',
+  M7_ESPERANDO_VINCULO: 'Dijo que ya agendo y se le acuso recibo; se espera a que el equipo verifique la reserva.',
+  RETORNO_PREGUNTA: 'Es un lead que fue descartado antes y volvio a escribir. Se le pregunto si su situacion cambio desde entonces. "retoma" es true si dice que si cambio/mejoro, false si dice que sigue igual.',
 };
 
 async function clasificarConLLM(env, etapa, texto, det) {
@@ -519,6 +555,18 @@ export function validarClasificacionLLM(bruto) {
     limpio.endeudamiento_pct = p !== null && p >= 0 && p <= 100 ? p : null;
   }
   if ('dolor' in bruto) limpio.dolor = enumDe(bruto.dolor, ['A', 'B', 'C', 'D']);
+  if ('dolores' in bruto) {
+    limpio.dolores = Array.isArray(bruto.dolores)
+      ? [...new Set(bruto.dolores.filter((x) => ['A', 'B', 'C', 'D'].includes(x)))]
+      : [];
+  }
+  if ('dolor_detalle' in bruto) {
+    limpio.dolor_detalle = typeof bruto.dolor_detalle === 'string' && bruto.dolor_detalle.trim()
+      ? bruto.dolor_detalle.trim().slice(0, 200) : null;
+  }
+  for (const campo of ['confirma_rango', 'retoma']) {
+    if (campo in bruto) limpio[campo] = typeof bruto[campo] === 'boolean' ? bruto[campo] : null;
+  }
   if ('urgencia' in bruto) {
     limpio.urgencia = enumDe(bruto.urgencia, ['ahora', 'algun_dia', 'pregunta_por_que']);
   }
@@ -527,7 +575,8 @@ export function validarClasificacionLLM(bruto) {
     limpio.objecion_num = n !== null && Number.isInteger(n) && n >= 1 && n <= 9 ? n : null;
   }
   for (const campo of ['crisis', 'hostil', 'ex_cliente', 'acepta', 'confirmo_agendo',
-                       'dolor_financiero', 'objecion_conocida', 'deuda_mayoritariamente_buena']) {
+                       'dolor_financiero', 'objecion_conocida', 'deuda_mayoritariamente_buena',
+                       'sin_horarios']) {
     const b = bool(bruto[campo]);
     if (b !== undefined) limpio[campo] = b;
   }

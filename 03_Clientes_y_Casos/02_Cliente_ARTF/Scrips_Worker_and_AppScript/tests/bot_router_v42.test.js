@@ -317,11 +317,48 @@ describe('Descalificacion con valor', () => {
     assert.equal(p.motivoPerdida, 'Descalificado - Sin urgencia');
   });
 
-  test('REGLA DE ORO V4.1: ingreso ambiguo NUNCA descalifica, pide la cifra', () => {
+  test('Escenario B del SOP: no dio cifra -> se le pregunta por el RANGO', () => {
     const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: null, profesion: 'Abogada' });
     assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.equal(p.etapaNueva, 'M1_RANGO_PREGUNTADO');
+    assert.match(p.mensajes[0], /¿Estás en ese rango\?/);
+  });
+
+  test('Escenario E del SOP: termino ambiguo -> se le pide la CIFRA', () => {
+    const p = decidirTurno(estadoEn('M1_ENVIADO'),
+      { ingreso_cop: null, ingreso_glosario: 'salario_integral', profesion: 'Abogada' });
     assert.equal(p.etapaNueva, 'M1_INGRESO_AMBIGUO');
     assert.match(p.mensajes[0], /me confirmas el número aproximado/);
+  });
+
+  test('H2: un "Si" al rango CONFIRMA el Filtro 1 y avanza a M2', () => {
+    // Antes esto caia como ambiguo y terminaba escalando a un humano un lead
+    // que acababa de decir que si califica.
+    const p = decidirTurno(estadoEn('M1_RANGO_PREGUNTADO'), { confirma_rango: true }, 'si');
+    assert.equal(p.etapaNueva, 'M2_ENVIADO');
+    assert.equal(p.estadoDestino, 'contactado');
+    assert.equal(p.campos.ingreso_confirmado, true);
+    assert.equal(p.campos.salario_monto, UMBRALES.INGRESO_MINIMO, 'se registra el piso del rango');
+    assert.match(p.mensajes[0], /nivel de endeudamiento/);
+    assert.equal(p.handoffRazon, null, 'NO escala a humano');
+  });
+
+  test('H2: un "No" al rango descalifica por ingreso', () => {
+    const p = decidirTurno(estadoEn('M1_RANGO_PREGUNTADO'), { confirma_rango: false }, 'no, gano menos');
+    assert.equal(p.estadoDestino, 'descalificado');
+    assert.equal(p.motivoPerdida, 'Descalificado - Ingreso bajo (< $7M)');
+  });
+
+  test('H2: si al rango responde con una cifra, la cifra manda sobre el si/no', () => {
+    const p = decidirTurno(estadoEn('M1_RANGO_PREGUNTADO'), { ingreso_cop: 20_000_000 }, '20 millones');
+    assert.equal(p.etapaNueva, 'M2_ENVIADO');
+    assert.equal(p.campos.salario_monto, 20_000_000);
+  });
+
+  test('H2: respuesta al rango no clasificable -> pide la cifra, NUNCA descarta', () => {
+    const p = decidirTurno(estadoEn('M1_RANGO_PREGUNTADO'), {}, 'mmm');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.equal(p.etapaNueva, 'M1_INGRESO_AMBIGUO');
   });
 
   test('sigue ambiguo tras pedirla -> handoff, jamas descarte', () => {
@@ -406,26 +443,53 @@ describe('Objeciones y escalamiento', () => {
     assert.equal(p.handoffRazon, 'objecion_fuera_playbook');
   });
 
-  test('Objecion 9 en M4: NUNCA descalifica (invariante del SOP)', () => {
+  test('Objecion 9 en M4: la contesta el bot y NUNCA descalifica', () => {
     // El SOP es explicito: preguntar "¿por que ahora?" es señal MIXTA, puede
-    // ser duda legitima. Jamas se puede leer como falta de urgencia. Ese
-    // invariante se mantiene tanto si el bot la contesta como si la escala.
+    // ser duda legitima. Jamas se puede leer como falta de urgencia.
+    // La 9 se habilito el 3-sep: es la unica que el SOP predice DENTRO del
+    // flujo normal ("aparece en Mensaje 4").
     const p = decidirTurno(estadoEn('M4_ENVIADO'), { urgencia: 'pregunta_por_que' });
     assert.notEqual(p.estadoDestino, 'descalificado');
-    // Con el alcance de la v1 (objeciones 1-3), la 9 la atiende un humano.
-    assert.equal(p.handoffRazon, 'objecion_no_habilitada');
+    assert.equal(p.handoffRazon, null);
+    assert.match(p.mensajes[0], /Lo más caro NO es la plata/);
   });
 
-  test('la perilla de alcance funciona: habilitar la 9 la hace contestar sola', () => {
-    // Prueba que ampliar el alcance es UNA linea, y que el copy ya esta listo.
-    OBJECIONES_HABILITADAS.add(9);
+  test('la perilla de alcance sigue funcionando: deshabilitar la 9 la escala', () => {
+    OBJECIONES_HABILITADAS.delete(9);
     try {
       const p = decidirTurno(estadoEn('M4_ENVIADO'), { urgencia: 'pregunta_por_que' });
-      assert.equal(p.handoffRazon, null);
-      assert.match(p.mensajes[0], /Lo más caro NO es la plata/);
+      assert.equal(p.handoffRazon, 'objecion_no_habilitada');
     } finally {
-      OBJECIONES_HABILITADAS.delete(9);
+      OBJECIONES_HABILITADAS.add(9);
     }
+  });
+
+  test('H5: la Objecion 6 se atiende en M1, no se lee como ingreso ambiguo', () => {
+    // CASO REAL de la primera prueba: la lead respondio "es un dato delicado
+    // para compartir por aqui" y el bot le pidio el rango de ingresos.
+    const p = decidirTurno(estadoEn('M1_ENVIADO'),
+      { ingreso_cop: null, objecion_num: 6, objecion_conocida: true },
+      'es un dato delicado para compartir por aqui');
+    assert.equal(p.handoffRazon, null, 'la 6 esta habilitada: la contesta el bot');
+    assert.match(p.mensajes[0], /Esa info es sensible y no tienes por qué compartirla acá/);
+    assert.notEqual(p.etapaNueva, 'M1_RANGO_PREGUNTADO', 'no la trata como ingreso ambiguo');
+  });
+
+  test('H5: una objecion en M2 tampoco se lee como "no sabe"', () => {
+    const p = decidirTurno(estadoEn('M2_ENVIADO'),
+      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true },
+      'prefiero no dar ese dato por aca');
+    assert.match(p.mensajes[0], /Esa info es sensible/);
+  });
+
+  test('H4: varios dolores se guardan todos, en el formato del dashboard', () => {
+    const p = decidirTurno(estadoEn('M3_ENVIADO'), { dolores: ['C', 'B'], dolor_financiero: true });
+    assert.equal(p.campos.dolor, 'B,C', 'ordenados y unidos por coma, como serializeDolor');
+    assert.equal(p.etapaNueva, 'M4_ENVIADO');
+  });
+
+  test('H4: un solo dolor sigue guardandose igual que antes', () => {
+    assert.equal(decidirTurno(estadoEn('M3_ENVIADO'), { dolores: ['B'] }).campos.dolor, 'B');
   });
 
   test('objecion habilitada (1) la contesta el bot; no habilitada (7) va a humano', () => {

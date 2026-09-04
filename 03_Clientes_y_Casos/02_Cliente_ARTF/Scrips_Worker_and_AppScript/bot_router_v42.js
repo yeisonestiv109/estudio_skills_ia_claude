@@ -405,6 +405,70 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
   switch (etapa) {
     // =====================================================================
+    // =====================================================================
+    // Se le pregunto "¿estas en el rango de $7M a $15M o mas?". Es una pregunta
+    // de SI/NO: un "Si" ahi CONFIRMA el Filtro 1. Antes caia como ambiguo y
+    // terminaba escalando a un humano un lead que ya habia dicho que califica.
+    case 'M1_RANGO_PREGUNTADO': {
+      if (c.objecion_num || c.objecion_detectada) {
+        return manejarObjecion(estado, c, nombre, 'Objecion al preguntar por el rango de ingreso.');
+      }
+      // Si de paso soltó una cifra, esa manda sobre el si/no.
+      const ingRango = c.ingreso_cop ?? null;
+      if (ingRango !== null) {
+        if (evaluarIngreso(ingRango) === 'califica') {
+          return {
+            mensajes: [render(P.M2_P1, nombre), render(P.M2_P2, nombre)],
+            etapaNueva: 'M2_ENVIADO', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null,
+            campos: { salario_monto: ingRango, ingreso_confirmado: true },
+            permitirEmpatia: false,
+            summary: `Filtro 1 superado con cifra ${ingRango} al preguntar el rango.`,
+          };
+        }
+        return {
+          mensajes: partirEnBurbujas(render(P.DESC_INGRESO, nombre)),
+          etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
+          handoffRazon: null,
+          motivoPerdida: 'Descalificado - Ingreso bajo (< $7M)',
+          campos: { salario_monto: ingRango, ingreso_confirmado: true, califica: false },
+          permitirEmpatia: false,
+          summary: `Filtro 1 no superado: dio ${ingRango} al preguntar el rango.`,
+        };
+      }
+      if (c.confirma_rango === true) {
+        // Confirma estar en el rango: se registra el PISO del rango que acepto
+        // ($7M), que es lo minimo verificado. No se inventa una cifra mayor.
+        return {
+          mensajes: [render(P.M2_P1, nombre), render(P.M2_P2, nombre)],
+          etapaNueva: 'M2_ENVIADO', estadoDestino: 'contactado',
+          handoffRazon: null, motivoPerdida: null,
+          campos: { salario_monto: UMBRALES.INGRESO_MINIMO, ingreso_confirmado: true },
+          permitirEmpatia: false,
+          summary: `Confirma estar en el rango $7M-$15M. Filtro 1 superado; se registra el piso (${UMBRALES.INGRESO_MINIMO}) como minimo verificado.`,
+        };
+      }
+      if (c.confirma_rango === false) {
+        return {
+          mensajes: partirEnBurbujas(render(P.DESC_INGRESO, nombre)),
+          etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
+          handoffRazon: null,
+          motivoPerdida: 'Descalificado - Ingreso bajo (< $7M)',
+          campos: { ingreso_confirmado: true, califica: false },
+          permitirEmpatia: false,
+          summary: 'Dice que NO esta en el rango $7M-$15M. Filtro 1 no superado.',
+        };
+      }
+      // Ni cifra ni si/no claro: se pide el numero, nunca se descarta.
+      return {
+        mensajes: [render(P.M1_PEDIR_CIFRA, nombre)],
+        etapaNueva: 'M1_INGRESO_AMBIGUO', estadoDestino: 'contactado',
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Respuesta al rango no clasificable. Se pide la cifra exacta (nunca se descarta sobre ambiguo).',
+      };
+    }
+
     case 'M1_ENVIADO':
     case 'M1_INGRESO_AMBIGUO':
     case 'M1_ACLARAR_REMANENTE': {
@@ -412,6 +476,14 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       const veredicto = evaluarIngreso(ing);
 
       if (veredicto === 'ambiguo') {
+        // OBJECION antes que ambiguedad. Caso real de la prueba: la lead
+        // respondio "es un dato delicado para compartir por aqui" -- eso es la
+        // Objecion 6 del SOP, no un ingreso ambiguo. El bot le pidio el rango y
+        // la conversacion se atasco.
+        if (c.objecion_num || c.objecion_detectada) {
+          return manejarObjecion(estado, c, nombre, 'Objecion al pedir el ingreso (M1).');
+        }
+
         // Regla de oro V4.1: NUNCA descalificar sobre un ingreso ambiguo.
         if (etapa === 'M1_INGRESO_AMBIGUO') {
           // Ya se pidio la cifra una vez y sigue sin darla -> humano, jamas descarte.
@@ -420,15 +492,32 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
             summary: 'Ingreso sigue ambiguo tras pedir la cifra. Handoff en vez de descartar (regla V4.1).',
           });
         }
-        const plantilla = c.profesion ? P.M1_PEDIR_CIFRA : P.M1_PEDIR_RANGO;
+
+        // Cual de las dos preguntas toca, segun el SOP:
+        //  - Escenario E: dijo un TERMINO ambiguo ("minimo integral", "variable")
+        //    -> se le pide el numero.
+        //  - Escenario B: no menciono ingreso en absoluto -> se le pregunta si
+        //    esta en el rango. Esa pregunta es de SI/NO, y por eso lleva su
+        //    propia etapa: un "Si" ahi es una respuesta valida, no ambiguedad.
+        const terminoAmbiguo = ['salario_integral', 'ingreso_variable', 'numero_sin_unidad']
+          .includes(c.ingreso_glosario);
+        if (terminoAmbiguo) {
+          return {
+            mensajes: [render(P.M1_PEDIR_CIFRA, nombre)],
+            etapaNueva: 'M1_INGRESO_AMBIGUO', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null,
+            campos: { profesion: c.profesion ?? null, ingreso_confirmado: false },
+            permitirEmpatia: false,
+            summary: `Ingreso ambiguo (${c.ingreso_glosario}). Se pide la cifra exacta.`,
+          };
+        }
         return {
-          mensajes: [render(plantilla, nombre)],
-          etapaNueva: 'M1_INGRESO_AMBIGUO',
-          estadoDestino: 'contactado',
+          mensajes: [render(P.M1_PEDIR_RANGO, nombre)],
+          etapaNueva: 'M1_RANGO_PREGUNTADO', estadoDestino: 'contactado',
           handoffRazon: null, motivoPerdida: null,
           campos: { profesion: c.profesion ?? null, ingreso_confirmado: false },
           permitirEmpatia: false,
-          summary: `Ingreso ambiguo (${c.ingreso_glosario || 'sin cifra'}). Se pide la cifra exacta.`,
+          summary: 'No dio ninguna cifra. Se pregunta si esta en el rango $7M-$15M.',
         };
       }
 
@@ -477,6 +566,11 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       const pct = c.endeudamiento_pct ?? null;
       const veredicto = evaluarEndeudamiento(pct, ingreso);
 
+      if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)) {
+        // Igual que en M1: "esa info es sensible" es la Objecion 6, no un
+        // "no se". Preguntar por deudas la dispara con la misma frecuencia.
+        return manejarObjecion(estado, c, nombre, 'Objecion al pedir el endeudamiento (M2).');
+      }
       if (veredicto === 'no_sabe') {
         if (etapa === 'M2_NO_SABE') {
           return HANDOFF('ambiguo', estado, {
@@ -547,9 +641,19 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
     // =====================================================================
     case 'M3_ENVIADO': {
-      const dolor = (c.dolor || '').toUpperCase();
-      const esAvatar = ['A', 'B', 'C'].includes(dolor);
-      if (esAvatar || (dolor === 'D' && c.dolor_financiero)) {
+      // H4: el lead puede elegir VARIOS dolores ("C y B"). Se guardan todos,
+      // con el mismo formato que ya usa el dashboard ("B,C").
+      const letras = Array.isArray(c.dolores) && c.dolores.length
+        ? c.dolores.map((x) => String(x).toUpperCase())
+        : ((c.dolor || '').toUpperCase() ? [(c.dolor || '').toUpperCase()] : []);
+      const dolor = serializarDolor(letras, c.dolor_detalle || '');
+
+      if (letras.length === 0 && (c.objecion_num || c.objecion_detectada)) {
+        return manejarObjecion(estado, c, nombre, 'Objecion al preguntar por el dolor (M3).');
+      }
+      // Califica emocionalmente si eligio CUALQUIERA de los dolores del avatar.
+      const esAvatar = letras.some((l) => ['A', 'B', 'C'].includes(l));
+      if (esAvatar || (letras.includes('D') && c.dolor_financiero)) {
         return {
           mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
           etapaNueva: 'M4_ENVIADO', estadoDestino: 'contactado',
@@ -590,6 +694,9 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
     // =====================================================================
     case 'M4_ENVIADO': {
+      if (!c.urgencia && (c.objecion_num || c.objecion_detectada)) {
+        return manejarObjecion(estado, c, nombre, 'Objecion al preguntar por la urgencia (M4).');
+      }
       if (c.urgencia === 'pregunta_por_que') {
         return manejarObjecion(estado, { ...c, objecion_num: 9, objecion_conocida: true }, nombre,
           'Objecion 9 (por que ahora) en el filtro de urgencia.');
@@ -916,6 +1023,48 @@ export function detectarUrgencia(texto) {
  * solo se acepta aislada o seguida de puntuacion. La b/c/d no son palabras, asi
  * que ahi si se acepta la letra al inicio seguida de texto.
  */
+export function detectarDolorLetras(texto) {
+  const t = String(texto || '').trim().toLowerCase();
+  if (!t) return [];
+
+  // Se trabaja por tokens: "la B y la C" tiene palabras entre las letras, asi
+  // que una regex de "letra separador letra" se pierde la segunda.
+  const tokens = t.replace(/[()]/g, ' ').split(/[\s,.;:/+&]+/).filter(Boolean);
+  const letras = new Set();
+
+  // Letras pegadas: "AB", "BCD". ManyChat ya dispara con esas combinaciones.
+  for (const tok of tokens) {
+    if (/^[abcd]{2,4}$/.test(tok)) for (const c of tok) letras.add(c);
+  }
+
+  // b/c/d aisladas cuentan siempre: no son palabras en español.
+  for (const tok of tokens) if (/^[bcd]$/.test(tok)) letras.add(tok);
+
+  // La "a" es preposicion ("a mi me pasa que..."), asi que solo cuenta si es
+  // el mensaje entero o si ya hay otra letra de respuesta ("a y b").
+  const hayA = tokens.includes('a');
+  if (hayA && (tokens.length === 1 || letras.size > 0)) letras.add('a');
+
+  if (letras.size === 0) {
+    const una = detectarDolorLetra(texto);
+    if (una) letras.add(una.toLowerCase());
+  }
+  return [...letras].map((x) => x.toUpperCase()).sort();
+}
+
+/**
+ * Serializa el dolor con EL MISMO formato que ya usa el dashboard
+ * (`serializeDolor` en src/lib/data/estados.ts): letras ordenadas unidas por
+ * coma, y si incluye D se le pega "|detalle". Asi el dato que escribe el bot y
+ * el que escribe un Setter a mano son indistinguibles.
+ */
+export function serializarDolor(letras, detalle = '') {
+  const ls = [...new Set(letras || [])].filter(Boolean).sort();
+  if (ls.length === 0) return null;
+  const base = ls.join(',');
+  return ls.includes('D') && String(detalle).trim() ? `${base}|${String(detalle).trim()}` : base;
+}
+
 export function detectarDolorLetra(texto) {
   const t = String(texto || '').trim().toLowerCase();
   if (!t) return null;

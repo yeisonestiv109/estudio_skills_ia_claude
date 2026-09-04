@@ -489,7 +489,24 @@ export const OBJECIONES = {
  *   8 = "¿Que es el Protocolo de Reconexion?"
  *   9 = "¿Por que resolverlo ahora?"
  */
-export const OBJECIONES_HABILITADAS = new Set([1, 2, 3]);
+export const OBJECIONES_HABILITADAS = new Set([1, 2, 3, 6, 9]);
+
+/**
+ * Por que se sumaron la 6 y la 9 (3-sep-2026, tras la primera prueba):
+ *
+ *  - La 6 ("esa info es muy sensible para DM") aparece POR DEFINICION cuando se
+ *    pide el ingreso o el endeudamiento, o sea en M1/M2. Es lo que respondio
+ *    Marly en la prueba real ("es un dato delicado para compartir por aqui") y
+ *    el bot la leyo como "ingreso ambiguo". No es una objecion de venta: es
+ *    parte de calificar, y su script reencuadra y ofrece la llamada.
+ *
+ *  - La 9 ("¿por que resolverlo ahora?") es la unica que el SOP predice DENTRO
+ *    del flujo normal: dice literal "aparece en Mensaje 4 (urgencia)".
+ *
+ * Siguen fuera de alcance las de venta pura -- 4 (ya probe cosas asi),
+ * 5 (necesito mas info), 7 (precio) y 8 (que es el Protocolo) -- porque llevan
+ * a terreno de precio, garantias y credibilidad, donde conviene un humano.
+ */
 
 /**
  * Parte una plantilla que trae un link embebido en DOS burbujas: todo el texto
