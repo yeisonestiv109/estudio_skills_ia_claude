@@ -2,18 +2,11 @@
 
 > El órgano "estado" del loop (ver `LOOPS.md`). Qué se intentó, qué falló y qué
 > queda. Se actualiza en cada iteración para no repetir errores ni perder el hilo.
+>
+> **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (2-sep-2026) · 143 tests · 4 de 5 compuertas automatizadas
-
----
-
-## Presupuesto
-
-| | |
-|---|---|
-| Presupuesto | Abierto hasta sacar la v1 desplegada y probada |
-| Consumidos | ~11 |
-| Freno | Regla de atasco (3 intentos sobre la misma compuerta) |
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (3-sep-2026) · **179 tests** · 5 de 5 compuertas automatizadas
+**Estado del bot: DESPLEGADO y probado en vivo en Instagram.**
 
 ---
 
@@ -21,62 +14,75 @@
 
 ### It. 1 — Construir la compuerta (hecho)
 Se construyó el verificador **antes** que nada más, como manda la guía.
-`verificador_cumplimiento.js` + 119 tests + `verificar.sh`.
 
-**Rojos que encontró en su primera corrida — todos reales:**
-
-| Hallazgo | Veredicto |
-|---|---|
-| `"Sabes"` marcado como voseo | **Falso positivo mío.** `sabes` es tuteo; el voseo es `sabés`, con tilde. Corregido: las formas ambiguas (`sabés/hacés/andás`) ahora exigen tilde |
-| Objeciones **2, 3 y 6** llevan el link incrustado con texto después | **Bug real.** Es el mismo bug del M6 que ya habíamos arreglado, repetido en el playbook |
-| Las **3 descalificaciones** y los **bumps** igual, con los links de reels | **Bug real.** Su regla dice "aplica a cualquier link futuro" |
-
-**Cómo se arregló el link:** no reescribiendo 9 plantillas a mano (habría cambiado copy aprobado), sino con `partirEnBurbujas()`, que saca el link del texto y lo manda solo al final **conservando todas las frases en su orden**. R1 del verificador pasó a chequear *cualquier* URL, no solo la del calendario.
-
-### It. 1b — Alcance de la v1 y copy del link (hecho)
-Decisiones del fundador (2-sep-2026), que **él puede aprobar como Setter actual** — no hay que escalar a Catalina/Javier salvo algo que ninguno de los dos pueda resolver:
-
-- **Copy reordenado:** la frase que anuncia el link se movió al final en la Objeción 3 y en las 3 descalificaciones, para que no quede anunciando algo que llega en la burbuja siguiente. Mismas frases del SOP, distinto orden. (Las Objeciones 2 y 6 ya quedaban bien.)
-- **Alcance v1 de objeciones:** el bot contesta solo la **1, 2 y 3** (las mecánicas de agendamiento). Las otras 6 van a handoff con razón `objecion_no_habilitada`. Se controla con `OBJECIONES_HABILITADAS` en `sop_v42_plantillas.js`: **ampliar es agregar un número al Set**, el copy y el ruteo de las 9 ya existen y están probados.
-
-**⚠️ Consecuencia que hay que vigilar en la prueba:** la **Objeción 9** ("¿por qué resolverlo ahora?") es la única que el SOP predice como parte del flujo normal — dice literal *"aparece en Mensaje 4 (urgencia)"*. Con el alcance actual, ese lead va a handoff en vez de recibir el reframe. Si en la prueba aparece seguido, el arreglo es agregar `9` al Set. El invariante crítico sí se mantiene: preguntar "¿por qué ahora?" **nunca** se lee como falta de urgencia.
+**Rojos reales en su primera corrida:** el link del calendario se enviaba con texto después (bug confirmado en producción por el equipo de Javier, que deja el link inválido en Instagram) — y **el mismo bug estaba repetido** en las objeciones 2/3/6, las 3 descalificaciones y los bumps. Se arregló con `partirEnBurbujas()`, que saca el link del texto y lo manda solo al final **conservando todas las frases en su orden**.
 
 ### It. 2 — Corpus y simulador (hecho)
-`simulador.js` reproduce una conversación completa contra el router, turno por turno, **corriendo la compuerta en cada turno**. 4 conversaciones en `tests/corpus/`, con frases literales de leads reales.
+`simulador.js` reproduce conversaciones completas contra el router, sin red ni base, **corriendo la compuerta en cada turno**. El corpus sale de conversaciones reales.
 
-`node ver-conversacion.mjs [filtro]` imprime la conversación como se vería en el chat. Eso es lo que la guía llama aprovechar la "GPU de visión", y valió la pena de inmediato:
+**Bug encontrado leyéndolas:** el turno 1 salía `¡Hola ! 👋`. En el primer mensaje el lead aún no existe en la base y el Worker no le pasaba el nombre al router — ese saludo roto le habría llegado a **todos los leads nuevos**.
 
-**🐞 Bug real encontrado leyéndola:** el turno 1 salía `¡Hola ! 👋`. En el primer mensaje `estado` es `null` (el lead aún no existe en la base) y el Worker **nunca le pasaba el nombre al router** — o sea que el saludo roto le habría llegado a **todos los leads nuevos**, que es justo el primer mensaje que ven. Dos arreglos: el Worker ahora pasa el nombre en la clasificación, y `render()` limpia el espacio colgante cuando no hay nombre (ManyChat no siempre resuelve `first_name`). Con test propio.
+### It. 3 — Smoke de las RPC (hecho)
+`smoke_rpc.mjs` contra la base real: lead inexistente, escritura y lectura de un turno, **que la guarda de `agendado` siga saltando**, y que el CHECK acepte las etapas nuevas.
 
-**Mejora que salió del lenguaje real:** el lead no responde `"B"`, responde `"B sin duda. Siento que me llega la plata..."`. `detectarDolorLetra` ahora lo resuelve determinista en vez de gastar una llamada al LLM. Con guarda para que la `"a"` no se confunda con la preposición (`"a mí me pasa que..."`).
+### It. 4 — Primera prueba en vivo y sus correcciones (hecho)
+El bot recorrió el camino feliz completo en Instagram. De ahí salieron:
+- **`"Listo"` se leía como "ya agendé"** → ahora el cierre exige **reunión vinculada en la base**. El bot no decide si agendó: lo decide la base, y quien vincula es el Setter.
+- **M7 (asistencia) nunca se enviaba** → pasa a ir junto al link, antes de él.
+- **Blindaje del show-up retirado** (no estaba en el SOP V4.2; se verificó en el PDF).
+- **Empatía apagada**, mensajes largos troceados.
+- Etapa `M7_ESPERANDO_VINCULO`: el acuse se manda **una sola vez** y después el bot espera en silencio.
 
-### It. 3 — Automatizar la compuerta 4 (hecho)
-`smoke_rpc.mjs` corre contra la base real: lead inexistente, escritura+lectura de un turno, **que la guarda de `agendado` siga saltando**, y que el CHECK acepte las 4 etapas nuevas. Ya está cableado en `verificar.sh`.
+### It. 5 — Segunda prueba en vivo: las 5 historias (hecho)
+- **H1 — vincular = reclamar.** El bug era peor de lo reportado: `fn_vincular_reserva_flotante` **le fallaba al Setter** ("Este lead no te pertenece"), porque el bot deja `setter_id = Andrew`. Solo funcionaba siendo admin.
+- **H2 — la causa no era un "Sí" mal leído.** El lead respondió *"es un dato delicado para compartir por aqui"* = **Objeción 6 del SOP**. Causa raíz: las objeciones solo se clasificaban **después del pitch**. Ahora en todas las etapas. Además, etapa `M1_RANGO_PREGUNTADO` para que un "Sí" al rango confirme el Filtro 1, y se corrigió el mapeo, que estaba invertido respecto al SOP.
+- **H3 — el crash no se pudo reproducir** (`HANDOFF` y `DESCALIFICADO` llevan en el constraint desde el 1-sep). Probablemente fue una ventana de despliegue-antes-de-migración. El arreglo no fue ensanchar el constraint sino que **un desfase de versiones no pueda tumbar un turno**: la lista de etapas vive en una sola función que usan el CHECK y la RPC, y una etapa desconocida se guarda como `null` con el aviso anotado.
+- **H4 — dolores múltiples** con el mismo formato del dashboard (`"B,C"`).
+- **H5 — regresión de seguridad encontrada y corregida:** las etapas nuevas no tenían esquema de LLM, y `clasificarConLLM` retorna vacío sin esquema. **`crisis` y `hostil` no se evaluaban en 3 etapas** — siendo crisis la regla de máxima prioridad del diseño.
+
+### It. 6 — Objeciones antes del pitch (hecho)
+Al habilitar la Objeción 6 en M1 quedó expuesto un bug de negocio: su plantilla remata con el link, **entregándole la llamada a un lead que no ha pasado los filtros**. No era solo la 6: **la 2, la 3 y la 6** cargaban link.
+
+Variantes sin cierre de agenda construidas **recortando párrafos por código** (no reescribiendo copy), y `manejarObjecion` reenvía la pregunta pendiente para reencarrilar. Post-pitch todo sigue igual.
+
+**Dos huecos que encontraron los tests nuevos:** `preguntaPendiente` no cubría `M1_RANGO_PREGUNTADO`, y reencarrilar reenviaba el saludo completo de M1 como si el bot hubiera perdido el hilo.
 
 ---
 
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
-- El bot **nunca** escribe `agendado`; eso es de la sync de Google Calendar (con guarda dura en la base).
-- Única puerta abierta en estado terminal: `descalificado`, por el RetornoLead que exige el SOP.
-- Acuse corto aprobado para "asisto solo".
-- Blindaje del show-up (M5.5.d) incorporado.
-- Autonomía alta: técnico sin preguntar; copy nuevo y umbrales de negocio, preguntando.
+- El bot **nunca** escribe `agendado`; eso es de la sync de Google Calendar, con guarda dura en la base.
+- El cierre exige **reunión vinculada**: que el lead diga "ya agendé" no es prueba.
+- El link va **siempre** de último y solo. Aplica a cualquier URL.
+- Una objeción **antes del pitch** no remata con el link.
+- Empatía apagada: el bot es 100% copy aprobado.
+- Objeciones habilitadas: **1, 2, 3, 6, 9**. Fuera 4, 5, 7 y 8.
+- Blindaje del show-up: retirado.
+- Única puerta abierta en estado terminal: `descalificado`, y solo para el RetornoLead.
+- Vincular una reserva **reclama** el lead para el Setter.
 
 ---
 
 ## Riesgos vivos
 
-1. **Auto-juicio.** Yo escribo código y tests. Mitigado con terreno externo (PDF del SOP, proyecto de Javier, constraints de Postgres). **Vigilar:** si un test se pone rojo, la salida por defecto es arreglar el código, no reescribir el test.
-2. **Reordenamiento de copy por el link.** `partirEnBurbujas()` no inventa texto, pero **sí cambia el orden** en que el lead lee las frases de 9 plantillas. Conviene que Javier/Catalina lo bendigan.
-3. **Base compartida con producción.** Migraciones aditivas y probadas con `begin/rollback`. Leads de prueba marcados `[PRUEBA]`.
-4. **La compuerta 5 no se ha corrido nunca** — requiere el Worker desplegado.
+1. **Las 4 burbujas del cierre sin pausa.** ManyChat no permite pausas <10s. Con 2 burbujas ya funcionó; con 4 no se ha probado. Si Instagram las entrega desordenadas, el link deja de ser el último. **Es lo #1 a vigilar en la próxima prueba.** Plan B listo: bajar a 2 burbujas.
+2. 🔴 **El link es el calendario PERSONAL de Yeison.** Cambiar a `CALENDAR_ARTF` antes de producción.
+3. **Auto-juicio.** Quien escribe el código escribe los tests. Mitigado con terreno externo (PDF del SOP, proyecto de Javier, constraints de Postgres, base real). **Vigilar:** si un test se pone rojo, arreglar el código, no reescribir el test.
+4. **Una etapa nueva necesita 4 sitios**: el CHECK (vía `fn_etapa_bot_valida`), `ESQUEMA_POR_ETAPA`, `preguntaPendiente()` y el `switch`. Olvidar el segundo apagó la detección de crisis; olvidar el tercero dejó una etapa sin qué reenviar. **Ambos ya pasaron.**
+5. **Base compartida con producción.** Migraciones aditivas, probadas con `begin/rollback`. Leads de prueba marcados `[PRUEBA]`.
 
 ---
 
-## Pendientes que no bloquean el verde
+## Pendientes
 
+Ver `RETOMAR_AQUI.md` para la lista ordenada y el prompt de arranque.
+
+- Redesplegar el Worker y volver a probar.
+- Probar la vinculación de reserva **como Setter**, no como admin.
+- Cambiar el link al de ARTF antes de producción.
 - Bumps del SOP de Recuperación: necesitan un Cron Trigger de Cloudflare.
-- Re-correr `e2e/setter-agendado.spec.ts` cuando el entorno esté estable (el fix está probado a nivel SQL, no con navegador).
-- 4 inconsistencias de renumeración en el PDF V4.2 (documentadas, las corrige Javier).
+- Objeciones 4, 5, 7 y 8: ampliar cuando haya datos de cuáles aparecen.
+- Debounce real (KV) solo si el double-texting resulta frecuente.
+- Re-correr `e2e/setter-agendado.spec.ts` con el entorno estable.
+- Comentarle a Javier las 4 inconsistencias del PDF V4.2 y el `"Contame"` (voseo en 3 de sus archivos).
