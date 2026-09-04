@@ -259,6 +259,12 @@ const partir = (texto, corte) => {
 };
 
 [P.M2_P1, P.M2_P2] = partir(P.M2, 'Para calcularlo suma');
+
+// Solo la PREGUNTA de M1, sin el saludo de apertura. Se usa para reencarrilar a
+// un lead que se desvio (repitio la palabra clave, o puso una objecion): repetir
+// "¡Hola {nombre}! 👋 Llegas al lugar correcto..." a mitad de conversacion se
+// lee como si el bot hubiera perdido el hilo y estuviera arrancando de cero.
+P.M1_PREGUNTA = P.M1_GENERAL.split('\n\n').pop().trim();
 [P.M4_P1, P.M4_P2] = partir(P.M4, 'Última pregunta');
 [P.M5_P1, P.M5_P2] = partir(P.M5, 'Y ojo:');
 
@@ -542,6 +548,55 @@ export function partirEnBurbujas(plantilla) {
 
   return sinLink ? [sinLink, link] : [link];
 }
+
+// ---------------------------------------------------------------------------
+// OBJECIONES ANTES DEL PITCH — sin cierre de agenda (3-sep-2026)
+// ---------------------------------------------------------------------------
+// Bug de negocio detectado al habilitar la Objecion 6 en M1: su plantilla
+// remata con "O directamente agenda la llamada de diagnostico de 30 minutos:"
+// + el link. Eso le entrega la llamada a un lead que TODAVIA NO ha pasado los
+// filtros de endeudamiento, dolor y urgencia. Rompe el embudo.
+//
+// No es solo la 6: de las habilitadas, la 2, la 3 y la 6 cargan el link.
+//
+// Las variantes se construyen POR CODIGO recortando los ultimos parrafos de la
+// plantilla aprobada -- no se reescribe copy. Asi es imposible que se
+// desincronicen del original si el copy cambia.
+//
+// Cuantos parrafos finales se quitan de cada una:
+//   2 -> 1 (el parrafo que anuncia el link)
+//   3 -> 2 (el link y el "¿Listo?", que es un cierre de agenda: dejarlo pegado
+//           antes de la pregunta pendiente confunde al lead con dos preguntas)
+//   6 -> 2 (ademas del link, la oferta de "una llamada corta de 5 minutos",
+//           que tambien es un cierre de agenda prematuro)
+//
+// La Objecion 9 NO lleva variante a proposito: no tiene link, y el SOP la
+// predice justo en M4 con su propio cierre ("¿Agendamos los 30 minutos...?").
+// Su bifurcacion oficial contempla que el lead acepte agendar ahi mismo.
+const CORTE_PRE_PITCH = { 2: 1, 3: 2, 6: 2 };
+
+function sinCierreDeAgenda(plantilla, parrafos) {
+  const partes = plantilla.split('\n\n');
+  if (partes.length <= parrafos) return plantilla;
+  return partes.slice(0, -parrafos).join('\n\n').trim();
+}
+
+/** Objecion -> version sin cierre de agenda, para las etapas de calificacion. */
+export const OBJECIONES_PRE_PITCH = Object.fromEntries(
+  Object.entries(CORTE_PRE_PITCH).map(([num, n]) => [num, sinCierreDeAgenda(OBJECIONES[num], n)]),
+);
+
+/**
+ * Etapas donde el lead TODAVIA se esta calificando. Una objecion aca no debe
+ * terminar en un cierre de agenda: debe responderse y volver a la pregunta que
+ * quedo pendiente.
+ */
+export const ETAPAS_PRE_PITCH = new Set([
+  'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
+  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
+  'M3_ENVIADO', 'M3_RECONDUCIR',
+  'M4_ENVIADO',
+]);
 
 /**
  * Interpolacion simple. Solo {nombre} -- a proposito: cuanto menos dinamico

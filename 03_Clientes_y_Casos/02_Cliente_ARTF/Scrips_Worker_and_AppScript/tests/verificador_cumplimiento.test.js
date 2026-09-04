@@ -199,3 +199,66 @@ describe('Saludo sin nombre — bug encontrado leyendo el corpus', () => {
     assert.equal(verificarMensajes([render(P.M1_CONTROL, '')], { nombre: '' }).pasa, true);
   });
 });
+
+// ===========================================================================
+describe('Objeciones antes del pitch: NUNCA el link del calendario', () => {
+  const estadoEn = (etapa, extra = {}) => ({
+    estado_codigo: 'contactado', etapa_bot: etapa, nombre: 'Ana',
+    salario_monto: 12_000_000, objeciones_consecutivas: 0,
+    ultima_objecion_codigo: null, handoff_razon: null, ...extra,
+  });
+
+  // Bug de negocio real: al habilitar la Objecion 6 en M1, su plantilla remataba
+  // con "O directamente agenda la llamada de diagnostico:" + el link. Eso le
+  // entrega la llamada a un lead que aun no paso los filtros de deuda, dolor y
+  // urgencia. De las objeciones habilitadas, la 2, la 3 y la 6 cargaban link.
+  const etapasDeCalificacion = [
+    ['M1_ENVIADO', /¿A qué te dedicas y cuánto ganas al mes/],
+    ['M1_RANGO_PREGUNTADO', /¿Estás en ese rango\?/],
+    ['M2_ENVIADO', /nivel de endeudamiento/],
+    ['M3_ENVIADO', /mayor frustración hoy con tu dinero/],
+  ];
+
+  for (const [etapa, preguntaPend] of etapasDeCalificacion) {
+    for (const num of [2, 3, 6]) {
+      test(`Objecion ${num} en ${etapa}: sin link y re-preguntando`, () => {
+        const p = decidirTurno(estadoEn(etapa), { objecion_num: num, objecion_conocida: true });
+        const todo = p.mensajes.join('\n');
+
+        assert.ok(!todo.includes(CALENDAR_LINK),
+          `la Objecion ${num} en ${etapa} mando el link del calendario`);
+        assert.ok(!/agenda la llamada|Revisa el calendario|te dejo el link/i.test(todo),
+          `la Objecion ${num} en ${etapa} remata con un cierre de agenda`);
+        assert.match(todo, preguntaPend,
+          `la Objecion ${num} en ${etapa} no reencarrila con la pregunta pendiente`);
+        assert.equal(p.etapaNueva, etapa, 'no avanza el guion');
+        assert.equal(verificarMensajes(p.mensajes, { nombre: 'Ana' }).pasa, true);
+      });
+    }
+  }
+
+  test('DESPUES del pitch la objecion SI busca el agendamiento', () => {
+    // Ahi el lead ya paso los 3 filtros: ofrecerle la llamada es el objetivo.
+    const p = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_num: 6, objecion_conocida: true });
+    const todo = p.mensajes.join('\n');
+    assert.ok(todo.includes(CALENDAR_LINK), 'post-pitch la Objecion 6 si lleva el link');
+    assert.equal(p.mensajes[p.mensajes.length - 1].trim(), CALENDAR_LINK,
+      'y el link sigue siendo la ultima burbuja, solo');
+  });
+
+  test('la Objecion 9 en M4 conserva su cierre propio (excepcion del SOP)', () => {
+    // El SOP la predice en M4 y su bifurcacion contempla que el lead acepte
+    // agendar ahi mismo. No lleva link, asi que no rompe el embudo.
+    const p = decidirTurno(estadoEn('M4_ENVIADO'), { objecion_num: 9, objecion_conocida: true });
+    const todo = p.mensajes.join('\n');
+    assert.ok(!todo.includes(CALENDAR_LINK));
+    assert.match(todo, /¿Agendamos los 30 minutos/);
+  });
+
+  test('tras la Objecion 9, aceptar agendar cuenta como urgencia (SOP)', () => {
+    const p = decidirTurno(
+      estadoEn('M4_ENVIADO', { ultima_objecion_codigo: '9' }), {}, 'tiene sentido, agendemos');
+    assert.equal(p.etapaNueva, 'M5_ENVIADO');
+    assert.equal(p.estadoDestino, 'calificado');
+  });
+});

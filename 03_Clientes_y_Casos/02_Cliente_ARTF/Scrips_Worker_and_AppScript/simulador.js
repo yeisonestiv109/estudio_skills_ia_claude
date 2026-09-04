@@ -171,6 +171,17 @@ export function simular(conversacion) {
         }
       }
     }
+    // `no_contiene` afirma AUSENCIA. Hace falta para probar cosas como "aqui
+    // NO puede aparecer el link del calendario", que es un requisito de negocio
+    // tan real como los de presencia.
+    if (e.no_contiene) {
+      const todos = plan.mensajes.join('\n');
+      for (const frag of [].concat(e.no_contiene)) {
+        if (todos.includes(frag)) {
+          errores.push(`Turno ${n}: la respuesta NO deberia contener "${frag}", pero lo contiene.`);
+        }
+      }
+    }
     if (e.burbujas !== undefined && plan.mensajes.length !== e.burbujas) {
       errores.push(`Turno ${n}: se esperaban ${e.burbujas} burbujas, fueron ${plan.mensajes.length}.`);
     }

@@ -12,7 +12,10 @@
  * de objeciones, transiciones -- es codigo determinista.
  */
 
-import { PLANTILLAS as P, OBJECIONES, OBJECIONES_HABILITADAS, UMBRALES, render, partirEnBurbujas } from './sop_v42_plantillas.js';
+import {
+  PLANTILLAS as P, OBJECIONES, OBJECIONES_HABILITADAS, OBJECIONES_PRE_PITCH,
+  ETAPAS_PRE_PITCH, UMBRALES, render, partirEnBurbujas,
+} from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
 // 1. Glosario de ingreso colombiano (★ NUEVO V4.1)
@@ -229,17 +232,22 @@ export function esSoloPalabraClave(texto) {
  */
 export function preguntaPendiente(etapa, nombre) {
   const mapa = {
-    M1_ENVIADO: [P.M1_GENERAL],
+    // Solo la pregunta, no el saludo de apertura: reencarrilar no es reiniciar.
+    M1_ENVIADO: [P.M1_PREGUNTA],
     M1_INGRESO_AMBIGUO: [P.M1_PEDIR_CIFRA],
+    M1_RANGO_PREGUNTADO: [P.M1_PEDIR_RANGO],
     M1_ACLARAR_REMANENTE: [P.M1_ACLARAR_REMANENTE],
     M2_ENVIADO: [P.M2_P1, P.M2_P2],
     M2_BORDERLINE: [P.M2_BORDERLINE],
     M2_NO_SABE: [P.M2_NO_SABE],
     M3_ENVIADO: [P.M3],
     M3_RECONDUCIR: [P.M3_RECONDUCIR],
-    M4_ENVIADO: [P.M4_P1, P.M4_P2],
-    M5_ENVIADO: [P.M5_P1, P.M5_P2],
+    // De M4 y M5 se reenvia solo el remate, no la narrativa completa: el lead
+    // ya la leyo, lo que necesita es volver a ver la pregunta.
+    M4_ENVIADO: [P.M4_P2],
+    M5_ENVIADO: [P.M5_P2],
     M7_ENVIADO: [P.M7],
+    M7_ESPERANDO_VINCULO: [P.M6_CONFIRMAME],
   };
   return (mapa[etapa] || []).map((x) => render(x, nombre));
 }
@@ -697,6 +705,20 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       if (!c.urgencia && (c.objecion_num || c.objecion_detectada)) {
         return manejarObjecion(estado, c, nombre, 'Objecion al preguntar por la urgencia (M4).');
       }
+      // Bifurcacion oficial post-Objecion 9 del SOP: "Tiene sentido, agendemos"
+      // -> se avanza al cierre. Aceptar agendar ES mostrar urgencia, asi que se
+      // trata como tal y el lead pasa por el pitch antes del link.
+      if (!c.urgencia && (c.acepta || estado?.ultima_objecion_codigo === '9')
+          && detectarAceptacion(textoLead)) {
+        return {
+          mensajes: [render(P.M5_P1, nombre), render(P.M5_P2, nombre)],
+          etapaNueva: 'M5_ENVIADO', estadoDestino: 'calificado',
+          handoffRazon: null, motivoPerdida: null,
+          campos: { urgencia_raw: 'ahora', califica: true },
+          permitirEmpatia: false,
+          summary: 'Acepta agendar tras la Objecion 9. Se trata como urgencia "ahora" y se envia el pitch.',
+        };
+      }
       if (c.urgencia === 'pregunta_por_que') {
         return manejarObjecion(estado, { ...c, objecion_num: 9, objecion_conocida: true }, nombre,
           'Objecion 9 (por que ahora) en el filtro de urgencia.');
@@ -956,16 +978,38 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     });
   }
 
+  // ANTES DEL PITCH la objecion no puede terminar en un cierre de agenda: el
+  // lead todavia no ha pasado los filtros de endeudamiento, dolor y urgencia.
+  // Se usa la variante sin link y se REENVIA la pregunta que quedo pendiente,
+  // para volver al carril de la calificacion.
+  //
+  // La Objecion 9 es la excepcion, y esta fundamentada: el SOP la predice justo
+  // en M4 y su bifurcacion oficial contempla que el lead acepte agendar ahi
+  // mismo. Ademas no lleva link, y cierra con su propia pregunta -- pegarle la
+  // de urgencia dejaria dos preguntas seguidas.
+  const etapaActual = estado?.etapa_bot || null;
+  const esPrePitch = ETAPAS_PRE_PITCH.has(etapaActual) && Number(c.objecion_num) !== 9;
+
+  const plantilla = esPrePitch
+    ? (OBJECIONES_PRE_PITCH[num] || OBJECIONES[c.objecion_num])
+    : OBJECIONES[c.objecion_num];
+
+  const mensajes = esPrePitch
+    ? [render(plantilla, nombre), ...preguntaPendiente(etapaActual, nombre)]
+    : partirEnBurbujas(render(plantilla, nombre));
+
   return {
-    mensajes: partirEnBurbujas(render(OBJECIONES[c.objecion_num], nombre)),
-    // Se queda en la misma etapa: tras manejar la objecion se vuelve a pedir
-    // el agendamiento, no se avanza el guion.
-    etapaNueva: estado?.etapa_bot || null,
+    mensajes,
+    // Se queda en la misma etapa: tras manejar la objecion se retoma donde
+    // estaba, no se avanza el guion.
+    etapaNueva: etapaActual,
     estadoDestino: null,
     handoffRazon: null, motivoPerdida: null,
     campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
     permitirEmpatia: false,
-    summary: `${contexto} Se responde con la Objecion ${num}.`,
+    summary: esPrePitch
+      ? `${contexto} Objecion ${num} respondida SIN cierre de agenda (el lead aun se esta calificando) y se reenvia la pregunta pendiente.`
+      : `${contexto} Se responde con la Objecion ${num}.`,
   };
 }
 

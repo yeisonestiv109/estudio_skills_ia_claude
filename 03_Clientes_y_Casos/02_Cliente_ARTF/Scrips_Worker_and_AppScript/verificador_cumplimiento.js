@@ -25,7 +25,9 @@
  * el agendamiento. No lo atraparon 52 tests ni el type-check.
  */
 
-import { PLANTILLAS as P, OBJECIONES, CALENDAR_LINK, REELS, partirEnBurbujas } from './sop_v42_plantillas.js';
+import {
+  PLANTILLAS as P, OBJECIONES, OBJECIONES_PRE_PITCH, CALENDAR_LINK, REELS, partirEnBurbujas,
+} from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
 // Reglas de voz -- literales de knowledge-base/04-voz-y-tono.md (proyecto de Javier)
@@ -104,6 +106,10 @@ const HUELLAS_APROBADAS = (() => {
   const fuentes = [
     ...Object.values(P),
     ...Object.values(OBJECIONES),
+    // Variantes sin cierre de agenda para las etapas de calificacion: se
+    // derivan de las plantillas aprobadas recortando parrafos, asi que son
+    // copy aprobado tambien.
+    ...Object.values(OBJECIONES_PRE_PITCH),
     CALENDAR_LINK,
     ...Object.values(REELS),
   ].filter((v) => typeof v === 'string' && v.trim());

@@ -1,20 +1,36 @@
 {
   "nombre": "05 · Ingreso ambiguo: el caso REAL de Marly + confirmación de rango",
   "fuente": "activity_log del lead 1269883784 (prueba en vivo del 3-sep-2026, 21:46)",
-  "nota": "Conversación REAL que se atascó. Marly respondió 'es un dato delicado para compartir por aqui' -- que es la Objeción 6 del SOP -- y el bot lo leyó como ingreso ambiguo y le pidió el rango. Este corpus fija el comportamiento corregido: primero se atiende la objeción, y despues un 'Sí' al rango CONFIRMA el Filtro 1 en vez de escalar a un humano.",
-  "lead": { "nombre": "Marly" },
+  "nota": "Conversación REAL que se atascó. Marly respondió 'es un dato delicado para compartir por aqui' -- que es la Objeción 6 del SOP -- y el bot lo leyó como ingreso ambiguo y le pidió el rango. Este corpus fija el comportamiento corregido: primero se atiende la objeción, y despues un 'Sí' al rango CONFIRMA el Filtro 1 en vez de escalar a un humano. Ademas fija el arreglo del 3-sep: una objecion ANTES del pitch no puede rematar con el link del calendario -- el lead todavia no ha pasado los filtros de deuda, dolor y urgencia.",
+  "lead": {
+    "nombre": "Marly"
+  },
   "turnos": [
     {
       "lead": "PRUEBAV42",
-      "espera": { "etapa": "M1_ENVIADO", "estado": "contactado" }
+      "espera": {
+        "etapa": "M1_ENVIADO",
+        "estado": "contactado"
+      }
     },
     {
       "lead": "es un dato delicado para compartir por aqui",
-      "pista": { "objecion_num": 6, "objecion_conocida": true },
+      "pista": {
+        "objecion_num": 6,
+        "objecion_conocida": true
+      },
       "espera": {
         "etapa": "M1_ENVIADO",
         "handoff": null,
-        "contiene": "Esa info es sensible y no tienes por qué compartirla acá"
+        "burbujas": 2,
+        "contiene": [
+          "Esa info es sensible y no tienes por qué compartirla acá",
+          "¿A qué te dedicas y cuánto ganas al mes aproximadamente?"
+        ],
+        "no_contiene": [
+          "https://calendar.app.google",
+          "O directamente agenda la llamada"
+        ]
       }
     },
     {
@@ -36,8 +52,12 @@
     },
     {
       "lead": "C y B",
-      "pista": { "endeudamiento_pct": 35 },
-      "espera": { "etapa": "M3_ENVIADO" }
+      "pista": {
+        "endeudamiento_pct": 35
+      },
+      "espera": {
+        "etapa": "M3_ENVIADO"
+      }
     },
     {
       "lead": "C y B",
