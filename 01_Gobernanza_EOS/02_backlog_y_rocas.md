@@ -4415,3 +4415,53 @@ Corriendo `e2e/setter-agendado.spec.ts` apareció una falla que **no era mía**,
 3. **`M7_SOLO_ACK` es copy inventado** (marcado como `_extensionOperativa` en el código): el SOP, para "asisto solo", le habla al Setter humano en vez de dar script. Reemplazar por copy oficial.
 4. **Confirmar cuándo se marca `calificado`:** hoy queda al pasar los 3 filtros (antes del pitch), con `calendario_enviado_at` aparte para medir quién sí recibió el link.
 5. **4 inconsistencias de renumeración en el PDF de la V4.2** (referencias a "Mensaje 6/7" que quedaron del orden viejo) — detalladas en la guía de despliegue, sección 10.
+
+---
+
+## 🤖 Sesión 2 y 3-sep-2026 — Bot V4.2 desplegado, probado en vivo y afinado con datos reales
+
+**Estado: el bot está desplegado y funcionando en Instagram.** Compuerta `./verificar.sh` en verde con **179 tests**. Se hicieron 2 pruebas reales end-to-end.
+
+### Loop Engineering aplicado al desarrollo
+Se adoptó `Loop_Engineering_Guia_Viva.md`. **Aclaración importante que costó una ronda:** el loop es del **desarrollo** (Claude genera, la compuerta decide si su trabajo pasa), no del runtime del bot. Artefactos: `LOOPS.md` (reglas, terreno externo, presupuesto, autonomía), `PROGRESS.md` (estado), `verificar.sh` (5 compuertas), `verificador_cumplimiento.js` (la compuerta), `simulador.js` + `tests/corpus/` (conversaciones reales).
+
+**El terreno externo** —lo que impide que el generador haga trampa a su propio examen— son el PDF del SOP V4.2, el proyecto del Setter IA de Javier, las restricciones de Postgres y la base real. Ninguna regla del verificador se puede debilitar sin contradecir un documento del cliente.
+
+### Lo que la compuerta encontró (todo real, nada decorativo)
+| Hallazgo | Cómo apareció |
+|---|---|
+| **El link se rompía**: mandábamos link + 2 mensajes después | Leyendo el proyecto de Javier (bug confirmado en su producción). No lo vieron 52 tests ni el type-check |
+| **El mismo bug repetido** en objeciones 2/3/6, las 3 descalificaciones y los bumps | Primera corrida del verificador |
+| **`¡Hola ! 👋`** — el saludo roto le habría llegado a TODOS los leads nuevos | Imprimiendo una conversación del corpus |
+| **Crisis emocional no se evaluaba en 3 etapas** | Revisión de seguridad + auditoría propia |
+| **Una objeción antes del pitch remataba con el link** | El fundador, al ver la Objeción 6 habilitada en M1 |
+| **`fn_vincular_reserva_flotante` le fallaba al Setter** | Investigando H1: la guarda comparaba contra el actor y el bot deja `setter_id=Andrew`. Solo funcionaba siendo admin |
+
+### Las 2 pruebas en vivo
+1. **Camino feliz completo** (lead 813370090): M1→M2→M3→M4→M5→link→acuse, sin un solo error. La memoria en Supabase funcionó turno a turno.
+2. **Lead 1269883784 ("Marly") se atascó** — respondió *"es un dato delicado para compartir por aqui"*, que es la **Objeción 6 del SOP**, y el bot la leyó como ingreso ambiguo. **Causa raíz: las objeciones solo se clasificaban después del pitch.** Ahora se clasifican en todas las etapas.
+
+También se descubrió por qué un `"40%"` no obtuvo respuesta: **ningún disparador de ManyChat coincidía**. El de 15.778 ejecuciones (`contiene A,B,C,D`) matchea por substring casi cualquier texto, pero `"40%"` no tiene letras. Se agregó un disparador de dígitos.
+
+### Decisiones del fundador (cerradas)
+- `calificado` se marca al pasar los 3 filtros, no al enviar el link.
+- **Blindaje del show-up RETIRADO**: se verificó que *"firmes"/"blindaje"* **no están en el PDF V4.2** — venían del proyecto de Javier y se presentaron de forma que se leyeron como del playbook del cliente. El % de asistencia lo marca el Closer desde su dashboard.
+- **Empatía apagada** (*"parece mucha IA"*). El bot queda 100% copy aprobado.
+- Objeciones habilitadas: **1, 2, 3, 6, 9** (las de calificación). Fuera 4, 5, 7 y 8 (precio, garantías, credibilidad).
+- Mensajes largos troceados; el link **siempre** de último y solo.
+- Un lead **descalificado que vuelve** recibe una pregunta por el motivo exacto de su descarte.
+- Vincular una reserva **reclama** el lead para el Setter.
+
+### Hallazgos sobre material del cliente
+- **4 inconsistencias de renumeración en el PDF V4.2** (referencias a "Mensaje 6/7" del orden viejo). Documentadas en la guía de despliegue, sección 10.
+- **`"Contame"` es voseo** y aparece en 3 archivos de Javier, violando su propia Regla #2 de tuteo colombiano estricto. En nuestra copia va como `"Cuéntame"`.
+
+### ⚠️ Pendientes exactos para retomar
+1. **Redesplegar el Worker** (`npx wrangler deploy`) — el código cambió mucho después del último despliegue.
+2. **Reiniciar los leads de prueba** (`813370090`, `1269883784`) — quedaron a mitad de flujo.
+3. **Probar de nuevo**, mirando sobre todo: que las **4 burbujas del cierre lleguen en orden y el link quede último y clickeable** (ManyChat no permite pausas menores a 10s, así que van sin pausa; con 2 burbujas ya funcionó, con 4 no se ha probado).
+4. **Probar la vinculación de reserva como Setter** (no como admin) — es lo que arregla H1.
+5. **El link es el PERSONAL del fundador.** Cambiar `CALENDAR_LINK` a `CALENDAR_ARTF` antes de producción.
+6. Bumps del SOP de Recuperación: necesitan un **Cron Trigger** de Cloudflare.
+7. Debounce real (Cloudflare KV) si el double-texting resulta frecuente.
+8. Re-correr `e2e/setter-agendado.spec.ts` cuando el entorno esté estable.
