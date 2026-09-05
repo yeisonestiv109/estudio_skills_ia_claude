@@ -5,8 +5,8 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (4-sep-2026) · **346 tests** · **5 de 5 compuertas corridas de verdad**
-**Estado del bot: DESPLEGADO** (versión `e2f3799d`) **— 4 rondas de QA en vivo aplicadas.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **355 tests** · **4 de 5 compuertas corridas de verdad** (la 5 pide `BOT_WORKER_URL`/`BOT_WEBHOOK_SECRET`, solo aplica tras el proximo deploy)
+**Estado del bot: DESPLEGADO** (versión `e2f3799d`, **sin los 2 fixes de la It. 16 -- faltan por desplegar**) **— 4 rondas de QA en vivo aplicadas.**
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -465,6 +465,51 @@ También se arregló `detectarAcompanante`: la gente contesta *"va mi esposa"*, 
 
 ---
 
+### It. 16 — Incertidumbre vs Objecion 6 en M2, y el silencio tras SIN_HORARIOS (hecho, sin desplegar)
+
+Dos loops reales reportados por Gaby, diagnosticados leyendo el codigo real antes de tocar nada (no se asumio ninguna causa).
+
+**1. Endeudamiento (M2): "no se" se leia como la Objecion 6.** El LLM confundia
+"no se/no estoy segura" (incertidumbre) con "esa info es sensible" (reticencia) --
+son intenciones vecinas y el prompt no las distinguia. Con `objecion_num=6` y
+`endeudamiento_pct=null`, el guard de M2 mandaba a `manejarObjecion`, que
+antepone OBJ_6 y **reenvia P.M2_P1/P.M2_P2 tal cual** -- ignorando `M2_NO_SABE`,
+que ya existia para esto. Arreglo en dos capas: regla de desambiguacion en el
+prompt del clasificador (para que el LLM razone la diferencia, no que la
+"dicte" ciego) + `pareceIncertidumbre()`, guarda determinista de respaldo
+(mismo patron que `pareceDolorFinanciero`) que solo anula la Objecion 6 cuando
+el texto es un "no se" inequivoco -- una reticencia real ("prefiero no decir")
+sigue yendo a la Objecion 6 sin cambios.
+
+**2. Agendamiento: la pregunta de SIN_HORARIOS no admitia respuesta.**
+`P.SIN_HORARIOS` pregunta la franja, pero el mismo turno saltaba a un `HANDOFF`
+**no recuperable** -- la respuesta del lead a esa pregunta caia en silencio
+total (`decidirSiResponder` corta antes). Peor: la franja nunca se guardaba, asi
+que ni siquiera se cumplia la intencion original ("que el caso le llegue con el
+horario que prefiere"). Nuevo estado de un solo turno,
+`SIN_HORARIOS_ESPERANDO_FRANJA`: el handoff se pone YA (cero regresion en cuando
+se entera el Setter), pero se deja un turno para capturar la franja (queda en el
+`summary`/activity_log) y despedirse con un cierre generado por el catch-all del
+LLM ya verificado (`verificarTextoGenerado`), con fallback determinista
+(`P.SIN_HORARIOS_CIERRE`) si el catch-all no esta habilitado o no sobrevive el
+saneo. Excepcion puntual en `decidirSiResponder` **y** en el gate de handoff
+dentro de `decidirTurno` (habia dos, no uno -- el segundo se encontro porque el
+primer intento de test seguia mudo). Guarda anti-bucle: el case siempre sale a
+`HANDOFF` sin condiciones.
+
+**Migracion:** `fn_etapa_bot_valida` necesito el nuevo valor -- bloqueada por el
+clasificador de auto-mode al intentar aplicarla via MCP, aplicada manualmente
+por Gaby en el SQL Editor de Supabase y verificada en vivo despues.
+
+`smoke_rpc.mjs` se actualizo para probar la etapa 19 (antes 18) -- de proposito,
+para que la compuerta detecte sola si la migracion faltara, en vez de ocultarlo.
+
+346 → **355 tests**. Commit `54b4ed7` en `estudio_skills_ia_claude`. **Pendiente:
+desplegar el Worker** (`npx wrangler deploy` -- esta sesion no tiene
+`CLOUDFLARE_API_TOKEN`/`wrangler login`, lo hace quien tenga acceso a Cloudflare).
+
+---
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
@@ -487,6 +532,8 @@ También se arregló `detectarAcompanante`: la gente contesta *"va mi esposa"*, 
 - Blindaje del show-up: retirado.
 - Única puerta abierta en estado terminal: `descalificado`, y solo para el RetornoLead.
 - Vincular una reserva **reclama** el lead para el Setter.
+- **"No sé" en M2 es incertidumbre, no la Objeción 6** (5-sep-2026): solo una reticencia explícita ("prefiero no decir") va a la Objeción 6.
+- **`SIN_HORARIOS_ESPERANDO_FRANJA`**: tras "no encuentro horarios" el bot SIEMPRE captura la franja y se despide antes de callar para siempre — nunca deja la pregunta de `P.SIN_HORARIOS` sin respuesta (5-sep-2026).
 
 ---
 
@@ -504,6 +551,7 @@ También se arregló `detectarAcompanante`: la gente contesta *"va mi esposa"*, 
 
 Ver `RETOMAR_AQUI.md` para la lista ordenada y el prompt de arranque.
 
+- 🔴 **Desplegar el Worker con los fixes de la It. 16** (incertidumbre M2 + silencio de SIN_HORARIOS) — código y migración ya listos, falta `npx wrangler deploy` (esta sesión no tiene Cloudflare autenticado).
 - ~~Redesplegar el Worker~~ (hecho, versión `ebf17b76`). **Falta la 3ª prueba en vivo.**
 - Probar la vinculación de reserva **como Setter**, no como admin.
 - Cambiar el link al de ARTF antes de producción.
