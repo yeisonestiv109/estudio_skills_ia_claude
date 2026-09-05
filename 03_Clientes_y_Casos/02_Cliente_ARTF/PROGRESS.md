@@ -5,8 +5,8 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **355 tests** · **4 de 5 compuertas corridas de verdad** (la 5 pide `BOT_WORKER_URL`/`BOT_WEBHOOK_SECRET`, solo aplica tras el proximo deploy)
-**Estado del bot: DESPLEGADO** (versión `e2f3799d`, **sin los 2 fixes de la It. 16 -- faltan por desplegar**) **— 4 rondas de QA en vivo aplicadas.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **355 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
+**Estado del bot: DESPLEGADO** (versión `d9fb8642`, **con los 2 fixes de la It. 16**) **— 4 rondas de QA en vivo aplicadas.**
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -504,9 +504,18 @@ por Gaby en el SQL Editor de Supabase y verificada en vivo despues.
 `smoke_rpc.mjs` se actualizo para probar la etapa 19 (antes 18) -- de proposito,
 para que la compuerta detecte sola si la migracion faltara, en vez de ocultarlo.
 
-346 → **355 tests**. Commit `54b4ed7` en `estudio_skills_ia_claude`. **Pendiente:
-desplegar el Worker** (`npx wrangler deploy` -- esta sesion no tiene
-`CLOUDFLARE_API_TOKEN`/`wrangler login`, lo hace quien tenga acceso a Cloudflare).
+346 → **355 tests**. Commits `54b4ed7`/`d6a1536` en `estudio_skills_ia_claude`.
+**Desplegado** el mismo dia via `wrangler login` (cuenta real del Worker:
+`luisjavier.suarezmeza@gmail.com` -- Javier, no Yeisiton/Gaby -- primera vez que
+queda documentado). Version `d9fb8642`, verificada con `401` sin secreto tras el
+deploy (no se tenia el valor real de `WEBHOOK_SECRET` para el smoke completo).
+
+⚠️ **Hallazgo de proceso, no de codigo:** justo antes de desplegar, el historial
+de Cloudflare mostro 3 despliegues del propio 5-sep (17:39/18:06/18:42) que NO
+correspondian a ningun commit en git (`git fetch` confirmo la rama al dia). Gaby
+confirmo que sabia que eran y autorizo desplegar encima. Pendiente real: ese
+codigo de Yeisiton sigue sin llegar al repo -- sincronizar antes de la proxima
+sesion para no perderlo.
 
 ---
 
@@ -551,7 +560,8 @@ desplegar el Worker** (`npx wrangler deploy` -- esta sesion no tiene
 
 Ver `RETOMAR_AQUI.md` para la lista ordenada y el prompt de arranque.
 
-- 🔴 **Desplegar el Worker con los fixes de la It. 16** (incertidumbre M2 + silencio de SIN_HORARIOS) — código y migración ya listos, falta `npx wrangler deploy` (esta sesión no tiene Cloudflare autenticado).
+- ~~Desplegar el Worker con los fixes de la It. 16~~ (hecho, versión `d9fb8642`, 5-sep-2026).
+- 🔴 **Sincronizar con Yeisiton el código de los 3 despliegues del 5-sep no versionados** (17:39/18:06/18:42) — se desplegaron encima con autorización de Gaby, pero ese código todavía no está en git.
 - ~~Redesplegar el Worker~~ (hecho, versión `ebf17b76`). **Falta la 3ª prueba en vivo.**
 - Probar la vinculación de reserva **como Setter**, no como admin.
 - Cambiar el link al de ARTF antes de producción.
