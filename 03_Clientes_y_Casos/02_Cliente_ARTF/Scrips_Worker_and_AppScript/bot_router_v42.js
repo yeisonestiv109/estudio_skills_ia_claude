@@ -237,6 +237,15 @@ export function decidirSiResponder(estado) {
   if (!estado) return { responder: true, razon: 'lead_nuevo' };
 
   if (estado.handoff_razon) {
+    // Excepcion puntual (5-sep-2026): `SIN_HORARIOS_ESPERANDO_FRANJA` pone el
+    // handoff YA (el Setter se entera de inmediato, sin regresion), pero falta
+    // UN turno para capturar la franja del lead y despedirse -- sin esto, la
+    // pregunta de P.SIN_HORARIOS quedaba sin respuesta posible (bug real). No
+    // reabre la conversacion: el propio case sale a HANDOFF sin condiciones, asi
+    // que esta rama nunca se vuelve a tomar para el mismo lead.
+    if (estado.etapa_bot === 'SIN_HORARIOS_ESPERANDO_FRANJA') {
+      return { responder: true, razon: 'cerrando_franja_sin_horarios' };
+    }
     // Auto-recuperacion (4-sep-2026): con un handoff recuperable el bot se deja
     // CLASIFICAR el mensaje, pero solo HABLA si el lead pidio continuar -- eso
     // lo decide `decidirTurno` con `recupera_handoff`. Sin esta puerta, un
@@ -322,6 +331,7 @@ export function preguntaPendiente(etapa, nombre) {
     M5_PITCH_REINTENTO: [P.M5_PITCH_REINTENTO],
     M7_ENVIADO: [P.M7],
     M7_ESPERANDO_VINCULO: [P.M6_CONFIRMAME],
+    SIN_HORARIOS_ESPERANDO_FRANJA: [P.SIN_HORARIOS],
   };
   return (mapa[etapa] || []).map((x) => render(x, nombre));
 }
@@ -375,7 +385,12 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
   if (c.ex_cliente) return HANDOFF('ex_cliente', estado);
 
   // --- Handoff recuperable: el bot solo vuelve a hablar si el lead lo pide ---
-  if (estado?.handoff_razon) {
+  // Excepcion puntual (5-sep-2026), MISMO caso que la de `decidirSiResponder`:
+  // en SIN_HORARIOS_ESPERANDO_FRANJA hay que dejar que decidirTurno llegue a su
+  // propio case (que cierra la conversacion) en vez de caer aca y quedarse mudo
+  // -- sin esto, el gate general de arriba se comia el turno antes de que el
+  // nuevo case pudiera correr, y el lead quedaba en visto igual que antes.
+  if (estado?.handoff_razon && etapa !== 'SIN_HORARIOS_ESPERANDO_FRANJA') {
     if (c.recupera_handoff !== true) {
       // El lead escribio pero no pidio continuar. Se registra y se calla: el
       // handoff sigue en pie y el Setter conserva el turno.
@@ -701,7 +716,16 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       
       const veredicto = evaluarEndeudamiento(pct, ingreso);
 
-      if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)) {
+      // BUG REAL (5-sep-2026): el LLM confunde "no se/no estoy segura" (INCERTIDUMBRE)
+      // con la Objecion 6 "es un dato sensible" (RETICENCIA) -- son intenciones
+      // vecinas y el prompt no las distinguia. Resultado: el bot anteponia la
+      // plantilla de "dato sensible" y repetia P.M2_P1/P.M2_P2 tal cual, en vez de
+      // usar M2_NO_SABE que ya existe para este caso exacto. `pareceIncertidumbre`
+      // es el mismo tipo de guarda determinista que ya usa `pareceDolorFinanciero`:
+      // no le quita al LLM la decision en el caso general, solo la anula cuando el
+      // texto es un "no se" inequivoco.
+      if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)
+          && !pareceIncertidumbre(textoLead)) {
         // Igual que en M1: "esa info es sensible" es la Objecion 6, no un
         // "no se". Preguntar por deudas la dispara con la misma frecuencia.
         return manejarObjecion(estado, c, nombre, 'Objecion al pedir el endeudamiento (M2).');
@@ -1009,9 +1033,14 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         };
       }
       if (c.sin_horarios) {
+        // No se salta directo a HANDOFF: P.SIN_HORARIOS hace una pregunta, y un
+        // HANDOFF no recuperable en el mismo turno dejaba la respuesta del lead
+        // en silencio total (bug real 5-sep-2026). El handoff ya queda puesto
+        // (el Setter se entera YA); falta un turno para capturar la franja y
+        // despedirse bien -- ver el case SIN_HORARIOS_ESPERANDO_FRANJA.
         return {
           mensajes: [render(P.SIN_HORARIOS, nombre)],
-          etapaNueva: 'HANDOFF', estadoDestino: null,
+          etapaNueva: 'SIN_HORARIOS_ESPERANDO_FRANJA', estadoDestino: null,
           handoffRazon: 'agendamiento_manual_pendiente',
           motivoPerdida: null, campos: {},
           permitirEmpatia: false,
@@ -1049,9 +1078,14 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // era ambiguo: el LLM lo leyo como "ya agende" y salto hasta el cierre.
     case 'M7_ENVIADO': {
       if (c.sin_horarios) {
+        // No se salta directo a HANDOFF: P.SIN_HORARIOS hace una pregunta, y un
+        // HANDOFF no recuperable en el mismo turno dejaba la respuesta del lead
+        // en silencio total (bug real 5-sep-2026). El handoff ya queda puesto
+        // (el Setter se entera YA); falta un turno para capturar la franja y
+        // despedirse bien -- ver el case SIN_HORARIOS_ESPERANDO_FRANJA.
         return {
           mensajes: [render(P.SIN_HORARIOS, nombre)],
-          etapaNueva: 'HANDOFF', estadoDestino: null,
+          etapaNueva: 'SIN_HORARIOS_ESPERANDO_FRANJA', estadoDestino: null,
           handoffRazon: 'agendamiento_manual_pendiente',
           motivoPerdida: null, campos: {},
           permitirEmpatia: false,
@@ -1109,9 +1143,11 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // necesita accion: que no encuentre horarios, o una objecion tardia.
     case 'M7_ESPERANDO_VINCULO': {
       if (c.sin_horarios) {
+        // Mismo arreglo que en M6/M7: no saltar directo a HANDOFF (ver comentario
+        // arriba y el case SIN_HORARIOS_ESPERANDO_FRANJA).
         return {
           mensajes: [render(P.SIN_HORARIOS, nombre)],
-          etapaNueva: 'HANDOFF', estadoDestino: null,
+          etapaNueva: 'SIN_HORARIOS_ESPERANDO_FRANJA', estadoDestino: null,
           handoffRazon: 'agendamiento_manual_pendiente',
           motivoPerdida: null, campos: {},
           permitirEmpatia: false,
@@ -1135,6 +1171,37 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         handoffRazon: null, motivoPerdida: null, campos: {},
         permitirEmpatia: false,
         summary: 'Esperando que el Setter vincule la reunion. Solo se registra.',
+      };
+    }
+
+    // =====================================================================
+    // UN SOLO TURNO: captura la franja que el lead acaba de dar en respuesta a
+    // P.SIN_HORARIOS y se despide bien, en vez de dejarlo en silencio (bug real
+    // 5-sep-2026 -- ver los 3 sitios que entran aca). El handoff ya estaba
+    // puesto desde el turno anterior (el Setter se entero YA); esto solo cierra
+    // la conversacion con el lead. `decidirSiResponder` tiene una excepcion
+    // puntual para esta etapa: sin ella, el handoff ya activo silenciaria este
+    // turno antes de llegar aca.
+    //
+    // Guarda anti-bucle: siempre sale a HANDOFF sin importar que responda el
+    // lead -- no hay forma de quedarse dando vueltas en esta etapa.
+    case 'SIN_HORARIOS_ESPERANDO_FRANJA': {
+      const franja = String(textoLead || '').trim().slice(0, 200);
+      const generada = CATCHALL_LLM_HABILITADO && typeof c?.respuesta_empatica === 'string'
+        ? c.respuesta_empatica.trim()
+        : '';
+      const cierre = generada || render(P.SIN_HORARIOS_CIERRE, nombre);
+      return {
+        mensajes: [cierre],
+        etapaNueva: 'HANDOFF', estadoDestino: null,
+        handoffRazon: 'agendamiento_manual_pendiente',
+        motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        // El Worker usa esto para eximir la burbuja de la lista blanca y para
+        // dejar constancia de que fue texto generado (mismo contrato que reencauzar()).
+        textoGenerado: generada || null,
+        summary: `Franja informada por el lead: "${franja}". Se le confirmo el cierre `
+          + `(${generada ? 'generado por el LLM' : 'plantilla estandar'}) y queda en HANDOFF definitivo.`,
       };
     }
 
@@ -1594,6 +1661,21 @@ export function detectarAceptacion(texto) {
 export function pareceRemanente(texto) {
   const t = String(texto || '').toLowerCase();
   return /\b(me\s*qued|queda[nr]?\b|me\s*sobra|sobran|libre[s]?\b|despu[eé]s\s*de\s*(gastos|pagar)|neto|limpio|disponible|para\s*gastar|menos\s*de)\b/.test(t);
+}
+
+/**
+ * ¿El lead dice que NO SABE el dato (incertidumbre), y no que se niega a
+ * darlo (reticencia = Objecion 6)? Mismo vocabulario que ya usa
+ * `detectarEndeudamientoPct` para no inventar un %, exportado aparte porque el
+ * LLM confundia las dos intenciones (bug real 5-sep-2026, ver el guard en el
+ * case M2_ENVIADO/M2_NO_SABE).
+ */
+export function pareceIncertidumbre(texto) {
+  const t = String(texto || '').toLowerCase();
+  // ⚠️ MISMA TRAMPA YA DOCUMENTADA: `\b` no cierra entre dos letras. Un `\b`
+  // final tras "segur" no casaria "segura"/"segure". El final queda abierto a
+  // proposito (igual que las raices de RAICES_DE_DINERO); solo `\b` al inicio.
+  return /\b(no\s*s[eé]\b|ni\s*idea|no\s*estoy\s*segur|no\s*tengo\s*idea|no\s*lo\s*s[eé]\b|no\s*sabr[ií]a\s*decir)/.test(t);
 }
 
 /** Agradecimiento tras el cierre -> dispara el blindaje del show-up. */

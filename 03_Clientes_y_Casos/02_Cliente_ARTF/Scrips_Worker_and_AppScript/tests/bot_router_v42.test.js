@@ -23,6 +23,7 @@ import {
   detectarUrgencia, detectarDolorLetra, detectarDolorLetras, detectarHostilidad, detectarEndeudamientoPct,
   detectarAceptacion,
   pareceRemanente, esSoloPalabraClave, detectarSinHorarios, detectarSiNo, pareceDolorFinanciero,
+  pareceIncertidumbre,
   etapaParaRetomar, cuentaCifrasDeDinero,
   preguntaPendiente,
 } from '../bot_router_v42.js';
@@ -1333,5 +1334,92 @@ describe('Detectores del cierre (QA 4-sep-2026)', () => {
     assert.ok(!p.mensajes.join('\n').includes(CALENDAR_LINK),
       'y NO le manda el link a quien pidió esperar');
     assert.match(p.mensajes.join('\n'), /Protocolo de Reconexión Financiera/);
+  });
+});
+
+// ===========================================================================
+// PROBLEMA 1 (5-sep-2026): el LLM confundia "no se/no estoy segura"
+// (incertidumbre) con la Objecion 6 "info sensible" (reticencia). El bot
+// anteponia la plantilla de "dato sensible" y repetia P.M2_P1/P.M2_P2 tal cual
+// en vez de usar M2_NO_SABE, que ya existia para este caso exacto.
+// ===========================================================================
+describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', () => {
+  test('pareceIncertidumbre distingue "no se" de una reticencia real', () => {
+    assert.equal(pareceIncertidumbre('no se, la verdad'), true);
+    assert.equal(pareceIncertidumbre('no estoy segura de cuanto debo'), true);
+    assert.equal(pareceIncertidumbre('ni idea'), true);
+    assert.equal(pareceIncertidumbre('no tengo idea de mi endeudamiento'), true);
+    assert.equal(pareceIncertidumbre('prefiero no dar esa info por aqui'), false);
+    assert.equal(pareceIncertidumbre('eso es informacion privada'), false);
+    assert.equal(pareceIncertidumbre(''), false);
+  });
+
+  test('BUG REAL: un "no se" que el LLM marca como Objecion 6 ya NO repite la pregunta inicial', () => {
+    // Antes: cae en manejarObjecion y manda OBJ_6 + P.M2_P1/P.M2_P2 de nuevo.
+    const p = decidirTurno(estadoEn('M2_ENVIADO'),
+      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true },
+      'no se, la verdad no estoy segura');
+    assert.equal(p.etapaNueva, 'M2_NO_SABE');
+    assert.match(p.mensajes.join('\n'), /dame un estimado/i);
+  });
+
+  test('el mismo caso en M2_NO_SABE (insiste con "no se") SI escala, no repite otra vez', () => {
+    const p = decidirTurno(estadoEn('M2_NO_SABE'),
+      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true }, 'no se, de verdad no tengo idea');
+    assert.equal(p.handoffRazon, 'ambiguo');
+  });
+
+  test('una reticencia real (sin "no se") SIGUE yendo a la Objecion 6 -- no se rompe el caso bueno', () => {
+    const p = decidirTurno(estadoEn('M2_ENVIADO'),
+      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true },
+      'prefiero no dar esa info por aqui');
+    assert.notEqual(p.etapaNueva, 'M2_NO_SABE');
+    assert.match(p.mensajes.join('\n'), /sensible/i);
+  });
+});
+
+// ===========================================================================
+// PROBLEMA 2 (5-sep-2026): P.SIN_HORARIOS pregunta la franja, pero el turno
+// saltaba directo a un HANDOFF no recuperable -- la respuesta del lead a esa
+// misma pregunta caia en silencio total (decidirSiResponder cortaba antes de
+// que el bot volviera a hablar).
+// ===========================================================================
+describe('SIN_HORARIOS ya no deja al lead en visto (bug real 5-sep-2026)', () => {
+  test('sin_horarios en M6/M7/M7_ESPERANDO_VINCULO va a un estado intermedio, no directo a HANDOFF', () => {
+    for (const etapa of ['M6_ENVIADO', 'M7_ENVIADO', 'M7_ESPERANDO_VINCULO']) {
+      const p = decidirTurno(estadoEn(etapa), { sin_horarios: true }, 'no me aparece nada');
+      assert.equal(p.etapaNueva, 'SIN_HORARIOS_ESPERANDO_FRANJA', `${etapa}: debe esperar la franja, no cerrar ya`);
+      assert.equal(p.handoffRazon, 'agendamiento_manual_pendiente', `${etapa}: el Setter se entera YA, sin regresion`);
+    }
+  });
+
+  test('decidirSiResponder deja pasar UN turno mas en SIN_HORARIOS_ESPERANDO_FRANJA aunque el handoff ya este puesto', () => {
+    const estado = estadoEn('SIN_HORARIOS_ESPERANDO_FRANJA', { handoff_razon: 'agendamiento_manual_pendiente' });
+    const r = decidirSiResponder(estado);
+    assert.equal(r.responder, true);
+    assert.equal(r.razon, 'cerrando_franja_sin_horarios');
+  });
+
+  test('BUG REAL: la respuesta a "que franja te queda bien" ya NO cae en silencio', () => {
+    const estado = estadoEn('SIN_HORARIOS_ESPERANDO_FRANJA', { handoff_razon: 'agendamiento_manual_pendiente' });
+    assert.equal(decidirSiResponder(estado).responder, true, 'el gate debe dejarlo pasar');
+
+    const p = decidirTurno(estado, {}, 'los sábados en la mañana');
+    assert.ok(p.mensajes.length > 0, 'no se queda mudo');
+    assert.equal(p.etapaNueva, 'HANDOFF', 'y despues si cierra para siempre');
+    assert.equal(p.handoffRazon, 'agendamiento_manual_pendiente');
+    assert.match(p.summary, /sábados en la mañana/, 'la franja queda anotada para el Setter');
+  });
+
+  test('sin catch-all (respuesta_empatica vacia), usa el cierre determinista -- nunca se queda sin mensaje', () => {
+    const estado = estadoEn('SIN_HORARIOS_ESPERANDO_FRANJA', { handoff_razon: 'agendamiento_manual_pendiente' });
+    const p = decidirTurno(estado, { respuesta_empatica: '' }, 'los sábados en la mañana');
+    assert.match(p.mensajes[0], /Ya le avisé al equipo/);
+  });
+
+  test('otra vez en SIN_HORARIOS_ESPERANDO_FRANJA (ya cerrado) el gate vuelve a callar para siempre', () => {
+    // Tras el case, la etapa pasa a HANDOFF -- el carve-out ya no aplica.
+    const estado = estadoEn('HANDOFF', { handoff_razon: 'agendamiento_manual_pendiente' });
+    assert.equal(decidirSiResponder(estado).responder, false, 'sin guarda anti-bucle no habria limite');
   });
 });

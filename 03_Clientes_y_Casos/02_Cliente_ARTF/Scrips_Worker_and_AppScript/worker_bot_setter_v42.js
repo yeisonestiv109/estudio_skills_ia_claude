@@ -489,6 +489,10 @@ export const ESQUEMA_POR_ETAPA = {
   M6_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"confirmo_agendo": boolean, "pide_link": boolean, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
   M7_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"acompanado": boolean|null, "pide_link": boolean, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
   M7_ESPERANDO_VINCULO: `{${CAMPO_RAZONAMIENTO}"sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
+  // Un solo turno: captura la franja de SIN_HORARIOS y cierra bien (5-sep-2026).
+  // Solo CAMPOS_COMUNES -- lo unico que importa aca es "respuesta_empatica"
+  // (el cierre) y que crisis/hostil sigan evaluandose, como en toda etapa.
+  SIN_HORARIOS_ESPERANDO_FRANJA: `{${CAMPO_RAZONAMIENTO}${CAMPOS_COMUNES}}`,
   RETORNO_PREGUNTA:     `{${CAMPO_RAZONAMIENTO}"retoma": true|false|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
 };
 
@@ -509,6 +513,7 @@ const CONTEXTO_POR_ETAPA = {
   M6_ENVIADO: 'Ya se le envio el link del calendario y se espera a que diga que YA AGENDO. "confirmo_agendo" es true SOLO si dice que ya reservo/agendo/separo el espacio ("listo, ya agende", "ya quedo para el jueves"). "pide_link" es true si pregunta donde agendarse o dice que no le llego el link.',
   M7_ENVIADO: 'El lead YA agendo. Se le pregunto: "¿asistiras solo tu o consideras importante que participe alguien mas?". "acompanado" es true si dice que ira con alguien (pareja, esposo/a, socio), false si va solo. Un "si" a secas aca significa "si, ira alguien mas" -> acompanado=true. NO existe "confirmo_agendo" en esta etapa: ya agendo.',
   M7_ESPERANDO_VINCULO: 'Dijo que ya agendo y se le acuso recibo; se espera a que el equipo verifique la reserva.',
+  SIN_HORARIOS_ESPERANDO_FRANJA: 'Dijo que no encontraba un horario disponible; se le pidio que cuente que dia/franja le queda bien porque el equipo lo va a agendar a mano. Este mensaje es su respuesta con esa franja. En "respuesta_empatica" escribe un cierre CORTO (1-2 frases) que retome la franja que dio en sus propias palabras y confirme que el equipo ya la tiene para buscarle un horario -- sin prometer un dia u hora exactos, sin pedir mas datos, y sin decir que ya quedo agendado.',
   RETORNO_PREGUNTA: 'Es un lead que fue descartado antes y volvio a escribir. Se le pregunto si su situacion cambio desde entonces. "retoma" es true si dice que si cambio/mejoro, false si dice que sigue igual.',
 };
 
@@ -532,6 +537,7 @@ REGLAS DE EXTRACCION:
 - GLOSARIO CRITICO: "salario integral" o "minimo integral" = ingreso ALTO (~18-22 millones), NO es el salario minimo. Si ves "integral", devuelve null en ingreso_cop (se le pedira la cifra exacta aparte).
 - "objecion_num": ${DISPARADORES_OBJECIONES}
 - OJO: "¿cuanto cuesta la CONSULTA/LLAMADA/SESION?" es objecion 1 (la llamada es gratis), NO la 7.
+- ⚠️ INCERTIDUMBRE vs OBJECION 6, no las confundas: "no se", "no estoy segura", "ni idea de cuanto debo" es que el lead NO TIENE el dato -> objecion_num debe ser null (deja que el flujo le pida un estimado). La Objecion 6 es cuando el lead SI sabe el dato pero se NIEGA a compartirlo ("eso es privado", "prefiero no decir eso por aqui", "no doy esa info por mensaje"). Bug real que esto corrige: un "no se" en la pregunta de endeudamiento se leyo como Objecion 6 y el lead recibio la respuesta de "dato sensible" en vez de que se le pidiera un estimado.
 - "objecion_conocida": false si el lead objeta algo que NO esta en esa lista de 9.
 - "crisis": true SOLO ante señales reales de crisis emocional grave (duelo, crisis de pareja, ansiedad mencionada, autolesion, desesperacion profunda).
   ⚠️ FALSO POSITIVO FRECUENTE, no lo cometas: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION, no crisis -> crisis=false. Escalar eso quema un lead bueno.

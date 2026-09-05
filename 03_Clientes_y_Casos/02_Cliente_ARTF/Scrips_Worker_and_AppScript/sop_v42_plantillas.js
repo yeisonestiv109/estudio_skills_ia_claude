@@ -460,6 +460,17 @@ P.SIN_HORARIOS = `Entendido, {nombre}. Vamos a revisar qué espacios se liberan 
 Cuéntame, ¿qué fecha y bloques de horarios te quedan bien?`;
 
 // ---------------------------------------------------------------------------
+// CIERRE tras capturar la franja de SIN_HORARIOS (bug real 5-sep-2026)
+// ---------------------------------------------------------------------------
+// `P.SIN_HORARIOS` hace una pregunta, pero el turno quedaba escalado a un
+// HANDOFF no recuperable en el mismo turno -- la respuesta del lead a esa
+// pregunta caia en silencio total (`decidirSiResponder` corta antes de que el
+// bot vuelva a hablar). Fallback DETERMINISTA para cuando el catch-all del LLM
+// (`respuesta_empatica`) no esta habilitado o no sobrevive el saneo: nunca deja
+// al lead sin un cierre tras haberle preguntado algo.
+P.SIN_HORARIOS_CIERRE = `¡Listo, {nombre}! Ya le avisé al equipo con tu disponibilidad para que te consigan un horario que te sirva. En un momento te confirmamos por aquí 🙌`;
+
+// ---------------------------------------------------------------------------
 // RETORNO DE UN LEAD DESCALIFICADO (3-sep-2026)
 // ---------------------------------------------------------------------------
 // Caso real reportado por el fundador: "me ha pasado que leads que ya he
