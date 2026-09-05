@@ -99,6 +99,14 @@ graphify-out/
 # abarca los 3 repos hermanos, no solo este.
 .obsidian/
 
+# Cache y bundles de wrangler: artefactos de build, no fuente.
+# Estuvieron rastreados por error (27 ficheros) hasta el 5-sep-2026.
+.wrangler/
+# Ficheros sueltos que deja un redireccionamiento accidental de shell
+etapa=*
+wrangler.pid
+wrangler.log
+
 # Secrets locales de wrangler (Worker del bot) -- NUNCA se commitean
 .dev.vars
 .dev.vars.*
