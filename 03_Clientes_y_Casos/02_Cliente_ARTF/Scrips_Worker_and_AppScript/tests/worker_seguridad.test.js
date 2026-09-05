@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
+  MAX_TOKENS_LLM,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -389,5 +390,34 @@ describe('Canario: la lista blanca frena la VOZ, no el OÍDO', () => {
     // El canario no puede haber desmontado la protección para cuando hable.
     assert.equal(enModoSecretaria({ BOT_ACTIVO: 'true' }), false);
     assert.equal(enModoSecretaria({}), false, 'sin la variable, el bot se considera ACTIVO');
+  });
+});
+
+// ===========================================================================
+// EL TOPE DE TOKENS DEL CLASIFICADOR (5-sep-2026)
+//
+// Sin `max_tokens`, Groq usa el máximo del modelo (2048) y el tier RECHAZA la
+// llamada entera: "output tokens per minute (OTPM): Limit 1000, Requested 2048".
+// Fallaba de forma intermitente y peor cuanto más tráfico.
+//
+// Lo grave no era el 429: era que el fallo es SILENCIOSO. `clasificarConLLM`
+// atrapa y devuelve {}, así que el bot seguía con solo deterministas -- ciego a
+// crisis emocional, a las objeciones y a la suma de ingresos.
+// ===========================================================================
+describe('Tope de tokens del clasificador', () => {
+  const LIMITE_TIER_GROQ = 1000;
+
+  test('hay un tope explícito y cabe en el límite del tier', () => {
+    assert.equal(typeof MAX_TOKENS_LLM, 'number');
+    assert.ok(MAX_TOKENS_LLM < LIMITE_TIER_GROQ,
+      `${MAX_TOKENS_LLM} no puede superar el límite de ${LIMITE_TIER_GROQ} tokens/minuto del tier`);
+  });
+
+  test('deja margen sobre el peor caso medido (421 tokens)', () => {
+    const PEOR_CASO_MEDIDO = 421; // tres fuentes de ingreso, con razonamiento
+    assert.ok(MAX_TOKENS_LLM > PEOR_CASO_MEDIDO,
+      'el tope tiene que dejar terminar la respuesta, o el JSON llega truncado');
+    assert.ok(MAX_TOKENS_LLM >= PEOR_CASO_MEDIDO * 1.3,
+      'margen de al menos 30% sobre lo medido');
   });
 });

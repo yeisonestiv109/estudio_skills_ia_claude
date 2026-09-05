@@ -70,6 +70,18 @@ const CACHE_IDEMPOTENCIA_S = 60;
 // json_schema/strict de forma inconsistente (bug documentado en la bitacora).
 const GROQ_MODEL = 'qwen/qwen3.8-27b';
 
+/**
+ * Tope de tokens de salida del clasificador.
+ *
+ * Medido: 421 en el peor caso real. 600 deja margen y queda por debajo del
+ * limite del tier de Groq (1000 tokens de salida por minuto), que es lo que
+ * hacia rebotar la llamada entera.
+ *
+ * ⚠️ TECHO DE CAPACIDAD: 1000 OTPM / ~420 por clasificacion = ~2 leads por
+ * minuto. Suficiente para el canario; para volumen real hay que subir de tier.
+ */
+export const MAX_TOKENS_LLM = 600;
+
 export default {
   async fetch(request, env, ctx) {
     try {
@@ -673,8 +685,8 @@ async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null) {
 
 CONTEXTO DEL TURNO: ${CONTEXTO_POR_ETAPA[etapa] || ''}
 
-REGLA 0 — "analisis_paso_a_paso" (OBLIGATORIO, y va PRIMERO):
-Antes de llenar cualquier otro campo, escribe en 1-3 frases:
+REGLA 0 — "analisis_paso_a_paso" (OBLIGATORIO, va PRIMERO y es BREVE: maximo 2 frases cortas, estilo telegrama, sin numerar ni explicar tu metodo):
+Antes de llenar cualquier otro campo, anota:
   a) TODAS las cifras que menciona el lead, una por una, y si se SUMAN (varias fuentes de ingreso), se RESTAN (ingreso menos gastos) o son ALTERNATIVAS (un rango). Si son varias fuentes, escribe la suma explicita: "4 + 3 + 4 = 11 millones".
   b) Que quiere el lead en este mensaje, en una frase.
 Recien despues llena el resto. Ejemplo real que se clasifico MAL por no hacer esto: "en mi trabajo son 4 millones, de mi negocio familiar 3 millones y de un local 4 millones" -> son TRES fuentes que SUMAN 11 millones, no "4 millones".
@@ -732,6 +744,18 @@ ${esquema}`;
       body: JSON.stringify({
         model: GROQ_MODEL,
         temperature: 0,
+        // ⚠️ SIN ESTO, Groq usa el maximo del modelo (2048) y el tier rechaza la
+        // llamada entera: "output tokens per minute (OTPM): Limit 1000,
+        // Requested 2048". Fallaba de forma INTERMITENTE, y peor cuanto mas
+        // trafico -- justo cuando mas importa.
+        //
+        // Y el fallo era silencioso: `clasificarConLLM` atrapa y devuelve {},
+        // asi que el bot seguia con solo deterministas. Eso significa quedarse
+        // CIEGO a crisis emocional, a las objeciones y a la suma de ingresos.
+        //
+        // 600 sale de medirlo: el peor caso real (tres fuentes de ingreso, con
+        // razonamiento) uso 421 tokens de salida.
+        max_tokens: MAX_TOKENS_LLM,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: system },
