@@ -1,7 +1,7 @@
 {
   "nombre": "01 · Lead calificado que cierra limpio",
   "fuente": "Setter-IA-Claude-Code-Project/examples/01-lead-calificado-cierra.md",
-  "nota": "Conversacion REAL (Daniela, ingeniera de software, cerro el programa). Las frases del lead son literales del ejemplo de Javier. Adaptada a V4.2 y a los ajustes del 3-sep: mensajes largos troceados, M7 va junto al link (antes de el), y el cierre exige que la reunion este vinculada en la base.",
+  "nota": "Camino feliz completo con el ORDEN NUEVO del cierre (4-sep-2026): M5 pitch -> M6 link SOLO -> M7 acompañante -> M8 preguntas pre-llamada. Antes el acompañante viajaba junto al link y un 'emm si' era ambiguo. Lo que NO cambia y este corpus protege: el link es siempre la última burbuja y va solo, y el estado nunca pasa a 'agendado'.",
   "lead": {
     "nombre": "Daniela"
   },
@@ -56,53 +56,33 @@
     {
       "lead": "Sí, dale. Agendemos",
       "espera": {
-        "etapa": "M7_ENVIADO",
+        "etapa": "M6_ENVIADO",
         "estado": "calificado",
-        "burbujas": 4,
-        "contiene": [
-          "asistirás solo tú",
-          "Confirmame cuando te hayas agendado",
-          "https://calendar.app.google/hMEGoX9T6DVsThft6"
+        "contiene": "Acá te dejo el link",
+        "no_contiene": [
+          "asistirás solo tú"
         ]
       }
     },
     {
-      "lead": "voy solo",
+      "lead": "listo, ya agendé",
+      "pista": {
+        "confirmo_agendo": true
+      },
       "espera": {
         "etapa": "M7_ENVIADO",
-        "contiene": "Quedo pendiente de tu confirmación"
+        "contiene": "asistirás solo tú"
       }
     },
     {
-      "lead": "Listo, ya agendé para el sábado a las 11am",
-      "espera": {
-        "etapa": "M7_ESPERANDO_VINCULO",
-        "burbujas": 1,
-        "contiene": "¡Perfecto, Daniela! 🙌"
-      }
-    },
-    {
-      "lead": "gracias, ahi nos vemos",
-      "espera": {
-        "etapa": null,
-        "burbujas": 0
-      }
-    },
-    {
-      "lead": "ok",
-      "base": {
-        "tiene_reunion": true
+      "lead": "voy solo",
+      "pista": {
+        "acompanado": false
       },
       "espera": {
         "etapa": "CIERRE_PRECALL",
         "estado": "calificado",
         "contiene": "estimado total de créditos"
-      }
-    },
-    {
-      "lead": "Gracias!",
-      "espera": {
-        "etapa": null
       }
     }
   ]

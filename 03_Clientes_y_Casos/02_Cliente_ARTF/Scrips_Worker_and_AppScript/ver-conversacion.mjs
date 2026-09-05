@@ -15,7 +15,7 @@ let fallos = 0;
 
 for (const f of readdirSync(DIR).filter((x) => x.endsWith('.json') && x.includes(filtro)).sort()) {
   const conv = JSON.parse(readFileSync(join(DIR, f), 'utf8'));
-  const r = simular(conv);
+  const r = await simular(conv);
   console.log(imprimir(conv, r));
   if (!r.ok) fallos++;
 }

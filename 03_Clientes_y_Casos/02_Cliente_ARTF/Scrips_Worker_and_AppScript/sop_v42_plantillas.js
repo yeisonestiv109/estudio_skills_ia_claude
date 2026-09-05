@@ -37,19 +37,108 @@ export const CALENDAR_ARTF = 'https://calendar.app.google/iMW5LBbkcAvorypF9';
 export const CALENDAR_LINK = CALENDAR_PRUEBAS;
 
 /**
- * Empatia dinamica del LLM: APAGADA (decision del fundador, 3-sep-2026).
+ * APERTURA PERSONALIZADA — el LLM enlaza lo que dijo el lead con la plantilla.
  *
- * Razon literal tras ver la primera prueba en vivo: "solo hace el mensaje mas
- * largo, parece mucha IA". Y eso es exactamente lo que el playbook prohibe
- * (nunca revelar que es una IA).
+ * HISTORIA, porque esto se apago una vez: nacio como "oracion_empatia" y el
+ * fundador la apago el 3-sep ("parece mucha IA"). Se vuelve a encender el
+ * 4-sep, pero NO es la misma decision: entonces el texto generado no lo
+ * verificaba nadie. Ahora pasa por `verificarTextoGenerado`, que no existia.
  *
- * Efecto lateral importante: era el UNICO texto que veia el lead que no salia
- * de esta biblioteca. Con esto apagado el bot es 100% copy aprobado y
- * desaparece por completo la superficie de inyeccion de prompt.
+ * QUE GENERA Y QUE NO. Genera SOLO la frase de apertura; el cuerpo sigue siendo
+ * la plantilla aprobada, literal. La forma es la que pidio el fundador:
  *
- * El codigo y sus salvaguardas siguen ahi, listos para volver.
+ *   "Entiendo que tu meta principal sea ahorrar, Marly."   <- generado
+ *   ""                                                      <- linea en blanco
+ *   "Lo que pasa es que nos especializamos en..."           <- plantilla literal
+ *
+ * POR QUE ESE CORTE Y NO MAS: la compuerta puede verificar que la apertura sea
+ * SEGURA (sin links, sin voseo, sin promesas, sin cifras inventadas), pero NO
+ * puede verificar que sea CIERTA. Si el LLM reescribiera el cuerpo, nada
+ * comprobaria que lo que dice del programa es verdad. Dejando el cuerpo intacto,
+ * todo lo que afirma el bot sobre el programa sigue saliendo de copy aprobado.
  */
-export const EMPATIA_HABILITADA = false;
+export const EMPATIA_HABILITADA = true;
+
+/**
+ * ===========================================================================
+ * ESCALERA DE REPREGUNTAS — un peldaño más antes de escalar (4-sep-2026)
+ * ===========================================================================
+ * Decision del fundador: el bot escalaba a un humano demasiado pronto por
+ * ambiguedad. En vez de escalar al primer "no entendi", reformula UNA vez con
+ * una pregunta mas facil de contestar, y solo si ahi tampoco se puede leer,
+ * pasa a un humano.
+ *
+ * Los reintentos NO los redacta el LLM: cada peldaño es una plantilla de esta
+ * biblioteca. Si el LLM redactara las reformulaciones volveriamos exactamente
+ * a lo que se rechazo en la auditoria del 4-sep.
+ *
+ * ⚠️ APAGADA hasta que Javier apruebe el copy nuevo (ver COPY_PENDIENTE_APROBACION).
+ * Encenderla es cambiar este false por true y desplegar.
+ */
+export const ESCALERA_REPREGUNTAS_HABILITADA = false;
+
+/**
+ * Perilla unica para TODO el copy que aun no aprueba el fundador.
+ *
+ * Cualquier plantilla marcada con `_pendienteAprobacion` solo sale al lead con
+ * esto en true. Existe porque una plantilla nueva entra sola a la lista blanca
+ * del verificador (se construye desde `P`), asi que sin esta puerta el copy sin
+ * revisar llegaria a leads reales pasando la compuerta en verde.
+ *
+ * Encenderla es cambiar este false por true, y hacerlo DESPUES de que Javier
+ * revise `COPY_PENDIENTE_APROBACION`.
+ */
+export const COPY_PENDIENTE_HABILITADO = false;
+
+/**
+ * Catch-all del LLM (decision del fundador, 4-sep-2026).
+ *
+ * Cuando el mensaje del lead no encaja en ningun camino del guion, el LLM
+ * redacta UNA respuesta empatica corta apoyandose en la informacion de las
+ * objeciones, y despues se reenvia la pregunta pendiente.
+ *
+ * ⚠️ Es la unica pieza de texto libre que ve el lead. No se puede verificar
+ * contra la biblioteca (no hay plantilla que comparar), asi que pasa por
+ * `verificarTextoGenerado`: nada de links, de datos de contacto, de voseo, de
+ * tercera persona, de lexico prohibido, ni de afirmar un agendamiento. Si falla
+ * cualquiera de esas, se descarta y queda solo el reencauce determinista.
+ *
+ * El fundador pidio probarlo asi y avisara si se quita.
+ */
+export const CATCHALL_LLM_HABILITADO = true;
+
+/**
+ * ===========================================================================
+ * AUTO-RECUPERACION DE HANDOFF (fundador, 4-sep-2026)
+ * ===========================================================================
+ * QA real: el bot escalo a la lead y 40 segundos despues ella escribio "pero
+ * igual quiero seguir, me da 40%". El bot ya estaba mudo y se perdio la venta.
+ *
+ * Ahora, si el lead pide claramente continuar (`recupera_handoff` del LLM), el
+ * bot puede sacarlo del handoff y retomar el guion.
+ *
+ * ⚠️ TRES RAZONES QUEDAN FUERA, Y NO SE NEGOCIAN:
+ *  - `crisis_emocional`: es la regla de MAXIMA prioridad del diseño y cubre
+ *    señales de duelo, ansiedad y autolesion. Alguien en crisis que escribe
+ *    "no, sigamos" necesita a una persona, no que el bot siga vendiendo.
+ *  - `ex_cliente`: un ex alumno que vuelve es una conversacion comercial
+ *    distinta y no hay copy para ella.
+ *  - `agendamiento_manual_pendiente`: el Setter tiene que agendar a mano. Que
+ *    el bot retome no hace aparecer la reunion.
+ *
+ * `contenido_hostil` SI es recuperable: tras arreglar su clasificacion (la
+ * frustracion ya no cuenta como hostilidad) esa razon significa agresion real,
+ * y que alguien se disculpe y quiera seguir es normal en ventas. El Setter ve
+ * todo en el log igual.
+ */
+export const HANDOFF_NO_RECUPERABLE = new Set([
+  'crisis_emocional',
+  'ex_cliente',
+  'agendamiento_manual_pendiente',
+]);
+
+/** Centinela que la RPC entiende como "limpia el handoff". */
+export const LIMPIAR_HANDOFF = '__LIMPIAR__';
 
 export const REELS = {
   ingresos_bajos: 'https://www.instagram.com/reel/DJDejvjtfzH/',
@@ -60,15 +149,55 @@ export const REELS = {
 
 /** Umbrales de los 3 filtros del SOP V4.2. */
 export const UMBRALES = {
-  INGRESO_MINIMO: 7_000_000,
+  // ───────────────────────────────────────────────────────────────────────
+  // FILTRO 1 — ingreso. Bajado de 7M a 6M por el fundador (4-sep-2026).
+  //
+  // ⚠️ EL COPY TODAVIA DICE $7M. `M1_PEDIR_RANGO` pregunta "¿estas entre $7M y
+  // $15M?" y `DESC_INGRESO` dice "diseñado para quien gana mas de $7M". Con el
+  // umbral en 6M, la banda 6M-7M es zona de trampa: el lead califica pero
+  // contesta NO al rango porque el texto le pregunta por otra cifra.
+  //
+  // Por eso un "No" al rango NO descalifica: se le pide la cifra y se decide
+  // sobre el numero real (ver el case M1_RANGO_PREGUNTADO). Descalificar sobre
+  // un "No" que es ambiguo respecto al umbral violaria la regla dura V4.1.
+  //
+  // El copy con 6M ya esta escrito y espera aprobacion de Javier
+  // (COPY_PENDIENTE_APROBACION). Al aprobarse, ese "No" ya sera inequivoco.
+  // ───────────────────────────────────────────────────────────────────────
+  INGRESO_MINIMO: 6_000_000,
   INGRESO_BORDERLINE_BAJO: 4_000_000,
-  // Tope de endeudamiento condicional al ingreso (V4.0/V4.2)
-  INGRESO_TOPE_ALTO: 9_000_000,
-  ENDEUDAMIENTO_TOPE_BASE: 50,
-  ENDEUDAMIENTO_TOPE_ALTO: 60,
-  // "apenas por encima de su tope (hasta ~10 puntos)" -> borderline
-  ENDEUDAMIENTO_MARGEN_BORDERLINE: 10,
+
+  // Cifra que se asume cuando el lead confirma el rango sin dar numero.
+  // Es el PISO de lo que el propio lead afirmo ("si, estoy entre $7M y $15M"),
+  // no una invencion: sale del texto de M1_PEDIR_RANGO. Si ese copy cambia a
+  // 6M, esta constante tiene que cambiar con el -- hay un test que lo exige.
+  INGRESO_ASUMIDO_POR_RANGO: 7_000_000,
+
+  // ───────────────────────────────────────────────────────────────────────
+  // FILTRO 2 — el criterio real es el REMANENTE, no el porcentaje.
+  //
+  // remanente = ingreso × (1 − deuda%)
+  //
+  // Reemplaza al tope condicional por ingreso de V4.0/V4.2. Lo que le importa
+  // al negocio no es que deba poco, sino que le QUEDE con qué trabajar.
+  //
+  // Ojo con el acoplamiento: con ingreso >= 6M, el remanente de 2.5M solo
+  // muerde por encima del ~58% de deuda. Por debajo de ese punto el filtro es
+  // inoperante por construccion, no por error.
+  // ───────────────────────────────────────────────────────────────────────
+  REMANENTE_MINIMO: 2_500_000,
+  // Umbral que separa "le sobra poco porque debe mucho" (se pregunta que tipo
+  // de deuda es: la hipotecaria no cuenta igual) de "le sobra poco y punto".
+  ENDEUDAMIENTO_PARA_BORDERLINE: 50,
   SMLV_2026: 1_420_000,
+
+  // Escalamiento por resistencia. El SOP V4.2 de Javier dice 2 (misma objecion
+  // repetida) y 3 (objeciones acumuladas); el fundador los subio a 3 y 4 el
+  // 4-sep-2026 para que el bot aguante una ronda mas antes de pasar a un humano.
+  // ⚠️ ESTO CONTRADICE EL PDF DEL CLIENTE — hay que comentarselo a Javier.
+  // Volver a 2 y 3 es cambiar estos dos numeros.
+  RESISTENCIA_MISMA_OBJECION: 3,
+  RESISTENCIA_ACUMULADA: 4,
 };
 
 const P = {};
@@ -89,9 +218,48 @@ P.M1_GENERAL = `¡Hola {nombre}! 👋 Llegas al lugar correcto si buscas frenar 
 Para saber si mi método aplica 100% a tu caso, cuéntame: ¿A qué te dedicas y cuánto ganas al mes aproximadamente?`;
 
 /** Escenario B: dio profesion pero evadio el ingreso. */
+// La pregunta del rango tiene DOS variantes (QA en vivo, 4-sep-2026).
+//
+// El QA mostro el problema: a una lead que simplemente OLVIDO decir su salario
+// se le respondia con el texto defensivo ("Te pregunto porque el proceso
+// funciona mejor para personas que..."), que esta escrito para desactivar una
+// objecion. Sin objecion delante, eso se lee a la defensiva y suena raro.
+//
+//  - SIMPLE: el lead no objeto, solo no dio la cifra. Se pregunta y ya.
+//  - DEFENSIVA: el lead SI objeto por privacidad. Ahi el "te pregunto porque..."
+//    cumple su funcion: justifica por que se insiste tras un "no quiero decirlo".
+P.M1_PEDIR_RANGO_SIMPLE = `Entiendo {nombre}. Para validar si mi programa aplica a ti, ¿puedes indicarme si tu salario se encuentra entre $7M y $15M COP o más?`;
+
 P.M1_PEDIR_RANGO = `Te pregunto porque el proceso funciona mejor para personas que ganan entre $7M y $15M COP o más al mes. ¿Estás en ese rango?`;
 
 /** Escenario E (★ V4.1): ingreso ambiguo, sin cifra clara. NUNCA descalificar aca. */
+// NOTA (4-sep-2026): se escribio copy alineado al umbral de $6M y el fundador
+// decidio NO usarlo. El texto del rango sigue diciendo $7M y un "No" descalifica
+// directo, asumiendo comercialmente la perdida de la banda $6M-$7M. Queda
+// anotado aca para que no se vuelva a proponer como si fuera un descuido.
+
+// Segundo dato del borderline. El tipo de deuda solo no alcanza: la regla del
+// fundador tambien acepta al lead si RECTIFICA que le sobran >= $2.5M.
+P.M2_PEDIR_SOBRANTE = `Y una última cosa para no sacar conclusiones: después de pagar todo eso, ¿cuánto te queda libre al mes, más o menos?`;
+P.M2_PEDIR_SOBRANTE_pendienteAprobacion = true;
+
+// --- Peldaños de la escalera de repreguntas (PENDIENTES DE APROBACION) ---
+//
+// Se midio cuantas veces pregunta cada filtro antes de escalar, en vez de
+// asumirlo: M1 y M2 YA preguntaban dos veces (M1_ENVIADO -> M1_INGRESO_AMBIGUO
+// -> handoff; M2_ENVIADO -> M2_NO_SABE -> handoff). Los unicos que escalaban al
+// PRIMER intento eran M4 y M5. Por eso la escalera son 2 peldaños, no 5.
+
+// Segundo intento del Filtro 3. Cambia el marco temporal en vez de repetir la
+// misma pregunta, que es lo que se siente como bot roto.
+P.M4_URGENCIA_REINTENTO = `Te lo pregunto de otra forma, {nombre}: si tuvieras el mapa claro esta semana, ¿empezarías ya, o lo dejarías para más adelante?`;
+P.M4_URGENCIA_REINTENTO_pendienteAprobacion = true;
+
+// Segundo intento tras el pitch. Le da salida honesta para que un "no" tambien
+// sea una respuesta valida y no un lead atascado.
+P.M5_PITCH_REINTENTO = `Para no darte vueltas, {nombre}: ¿te sirve que reservemos esos 30 minutos? Si no es el momento, me lo dices sin problema.`;
+P.M5_PITCH_REINTENTO_pendienteAprobacion = true;
+
 P.M1_PEDIR_CIFRA = `Para calcularlo bien, ¿me confirmas el número aproximado que te queda al mes en pesos? Así te digo con certeza si te podemos ayudar.`;
 
 // ---------------------------------------------------------------------------
@@ -463,39 +631,222 @@ P.FALLBACK_ERROR_esExtension = true;
 
 export const PLANTILLAS = P;
 
-/** Mapa objecion_num -> plantilla. Las 9 estan construidas y probadas. */
-export const OBJECIONES = {
-  1: P.OBJ_1, 2: P.OBJ_2, 3: P.OBJ_3, 4: P.OBJ_4, 5: P.OBJ_5,
-  6: P.OBJ_6, 7: P.OBJ_7, 8: P.OBJ_8, 9: P.OBJ_9,
+/**
+ * Copy que TODAVIA no aprobo el fundador.
+ *
+ * Existe porque una plantilla nueva entra sola a la lista blanca del
+ * verificador (se construye desde `P`), asi que sin esto el copy sin aprobar
+ * pasaria la compuerta en silencio. La lista esta fijada por un test: agregar
+ * copy pendiente sin declararlo aca pone la compuerta en rojo.
+ *
+ * Al aprobarse: se quita la marca `_pendienteAprobacion` de la plantilla.
+ */
+export const COPY_PENDIENTE_APROBACION = Object.keys(P)
+  .filter((k) => k.endsWith('_pendienteAprobacion') && P[k])
+  .map((k) => k.replace('_pendienteAprobacion', ''))
+  .sort();
+
+/**
+ * ===========================================================================
+ * PLAYBOOK DE OBJECIONES — UNA SOLA TABLA DE DATOS
+ * ===========================================================================
+ * Antes esto vivia en 4 sitios sueltos (`OBJECIONES`, `OBJECIONES_HABILITADAS`,
+ * `CORTE_PRE_PITCH`, y la lista de disparadores hardcodeada en el prompt del
+ * Worker). Agregar una objecion obligaba a tocar los cuatro y era facil olvidar
+ * uno -- que es exactamente como la Objecion 1 termino cerrando agenda antes
+ * del pitch durante dias.
+ *
+ * AHORA: agregar una objecion es agregar UNA entrada aca. Todo lo demas se
+ * deriva: el mapa, el Set de habilitadas, las variantes sin cierre de agenda y
+ * la lista de disparadores que ve el clasificador. **Cero logica JS que tocar.**
+ *
+ * Campos:
+ *   id            numero de la objecion en el SOP.
+ *   nombre        etiqueta corta, para logs y tests.
+ *   disparador    como se le describe al clasificador. ESTE TEXTO VA AL PROMPT.
+ *   plantilla     copy aprobado. Vive en codigo a proposito: la compuerta de
+ *                 cumplimiento construye su lista blanca desde aca, offline,
+ *                 en cada commit. Si esto viviera en una tabla remota, la
+ *                 compuerta 3 dejaria de poder verificar el texto real.
+ *   habilitada    si el bot la contesta solo. Si no, va al Setter.
+ *   cortePrePitch cuantos parrafos FINALES se recortan cuando la objecion cae
+ *                 antes del pitch. Son los que cierran agenda: ofrecerle la
+ *                 llamada a alguien que no paso los filtros rompe el embudo.
+ *                 Se recorta POR CODIGO -- nunca se reescribe copy.
+ *   preguntaPropia  la plantilla ya termina preguntando algo. Si es true no se
+ *                 le pega ademas la pregunta pendiente: serian dos preguntas
+ *                 seguidas y el lead no sabe cual contestar.
+ */
+export const PLAYBOOK_OBJECIONES = [
+  { id: 1, nombre: 'es_gratis',        disparador: '1=¿es gratis?/¿me van a vender algo?',
+    plantilla: P.OBJ_1, habilitada: true,  cortePrePitch: 1, preguntaPropia: false,
+    fasesPermitidas: ['M5', 'M6', 'M7', 'M8'],
+    cuentaComoResistencia: false },
+
+  { id: 2, nombre: 'no_tengo_tiempo',  disparador: '2=no tengo tiempo',
+    plantilla: P.OBJ_2, habilitada: true,  cortePrePitch: 1, preguntaPropia: false,
+    fasesPermitidas: ['M5', 'M6'],
+    cuentaComoResistencia: true },
+
+  { id: 3, nombre: 'dejame_pensarlo',  disparador: '3=dejame pensarlo',
+    plantilla: P.OBJ_3, habilitada: true,  cortePrePitch: 2, preguntaPropia: false,
+    fasesPermitidas: ['M5', 'M6'],
+    cuentaComoResistencia: true },
+
+  { id: 4, nombre: 'ya_probe',         disparador: '4=ya probe cosas asi/desconfia',
+    plantilla: P.OBJ_4, habilitada: true,  cortePrePitch: 1, preguntaPropia: false,
+    fasesPermitidas: 'TODAS',
+    cuentaComoResistencia: true },
+
+  // La 5 es UNA sola frase y esa frase ES la pregunta ("¿que te gustaria
+  // saber?"). No hay parrafo de cierre que recortar, y pegarle la pregunta
+  // pendiente dejaria dos preguntas seguidas.
+  { id: 5, nombre: 'necesito_info',    disparador: '5=necesito mas informacion',
+    plantilla: P.OBJ_5, habilitada: true,  cortePrePitch: 0, preguntaPropia: true,
+    fasesPermitidas: 'TODAS',
+    cuentaComoResistencia: false },
+
+  { id: 6, nombre: 'info_sensible',    disparador: '6=info muy sensible para DM',
+    plantilla: P.OBJ_6, habilitada: true,  cortePrePitch: 2, preguntaPropia: false,
+    fasesPermitidas: ['M1', 'M2', 'M3', 'M4'],
+    cuentaComoResistencia: true },
+
+  { id: 7, nombre: 'precio_programa',  disparador: '7=¿cuanto cuesta el PROGRAMA/mentoria?',
+    plantilla: P.OBJ_7, habilitada: true,  cortePrePitch: 1, preguntaPropia: false,
+    fasesPermitidas: 'TODAS',
+    cuentaComoResistencia: false },
+
+  { id: 8, nombre: 'que_es_protocolo', disparador: '8=¿que es el Protocolo de Reconexion?',
+    plantilla: P.OBJ_8, habilitada: true,  cortePrePitch: 1, preguntaPropia: false,
+    fasesPermitidas: 'TODAS',
+    cuentaComoResistencia: false },
+
+  // Excepcion fundamentada del SOP: la 9 la predice justo en M4 y su
+  // bifurcacion oficial contempla que el lead acepte agendar ahi mismo. No
+  // lleva link y cierra con su propia pregunta.
+  { id: 9, nombre: 'por_que_ahora',    disparador: '9=¿por que resolverlo ahora?',
+    plantilla: P.OBJ_9, habilitada: true,  cortePrePitch: 0, preguntaPropia: true,
+    fasesPermitidas: ['M4', 'M5'],
+    cuentaComoResistencia: false },
+];
+
+/** Acceso por id, para no repetir el `.find` en cada sitio. */
+/**
+ * ===========================================================================
+ * FASES DEL EMBUDO — el puente entre la numeracion del fundador y las etapas
+ * ===========================================================================
+ * El fundador razona en M1..M8. El router tiene 20 etapas cuyos nombres NO
+ * coinciden con esa numeracion, y confundirlas es una fuente de bugs garantizada.
+ * Este mapa es el unico sitio donde se traduce.
+ *
+ * OJO con dos desalineaciones reales:
+ *  - Su "M6" (envio del link) es nuestra `M7_ENVIADO`: en nuestro flujo la
+ *    pregunta del acompañante y el link van en el MISMO turno, con el link de
+ *    ultimo. Se decidio asi tras una prueba en vivo donde la pregunta nunca
+ *    llegaba a enviarse, y el fundador confirmo el 4-sep que se mantiene.
+ *  - Su "M8" (despedida) es nuestra `CIERRE_PRECALL` / `M7_ESPERANDO_VINCULO`.
+ */
+export const FASE_POR_ETAPA = {
+  M1_ENVIADO: 'M1', M1_INGRESO_AMBIGUO: 'M1', M1_RANGO_PREGUNTADO: 'M1', M1_ACLARAR_REMANENTE: 'M1',
+  M2_ENVIADO: 'M2', M2_NO_SABE: 'M2', M2_BORDERLINE: 'M2',
+  M3_ENVIADO: 'M3', M3_RECONDUCIR: 'M3',
+  M4_ENVIADO: 'M4', M4_URGENCIA_REINTENTO: 'M4',
+  M5_ENVIADO: 'M5', M5_PITCH_REINTENTO: 'M5',
+  M6_ENVIADO: 'M6',
+  M7_ENVIADO: 'M6',            // aca sale el link -> es su M6
+  M7_ESPERANDO_VINCULO: 'M8',  // ya agendo, esperando vinculo -> su M8
+  CIERRE_PRECALL: 'M8',
+  RETORNO_PREGUNTA: 'M1',      // un descalificado que vuelve arranca de nuevo
 };
+
+/** La fase del embudo en la que esta el lead, o null si la etapa no mapea. */
+export function faseDeEtapa(etapa) {
+  return FASE_POR_ETAPA[etapa] ?? null;
+}
+
+/**
+ * ¿Puede el bot contestar esta objecion estando en esta etapa?
+ *
+ * La matriz la definio el fundador con la experiencia del Setter humano
+ * (4-sep-2026): p.ej. "no tengo tiempo" solo tiene sentido cuando ya se le
+ * propuso una llamada, y "esa info es sensible" solo mientras se le piden datos.
+ * Una objecion fuera de su fase NO se contesta con su plantilla: se reencauza
+ * (ver `manejarObjecion`), porque casi siempre significa que el clasificador
+ * leyo mal, no que el lead objete eso de verdad.
+ */
+export function objecionPermitidaEn(objecionNum, etapa) {
+  const o = OBJECION_POR_ID.get(Number(objecionNum));
+  if (!o) return false;
+  if (o.fasesPermitidas === 'TODAS') return true;
+  const fase = faseDeEtapa(etapa);
+  // Sin etapa (lead nuevo) no hay objecion que contestar todavia.
+  if (!fase) return false;
+  return o.fasesPermitidas.includes(fase);
+}
+
+/** Acceso por id, para no repetir el `.find` en cada sitio. */
+export const OBJECION_POR_ID = new Map(PLAYBOOK_OBJECIONES.map((o) => [o.id, o]));
+
+/** Mapa objecion_num -> plantilla completa (post-pitch). */
+export const OBJECIONES = Object.fromEntries(
+  PLAYBOOK_OBJECIONES.map((o) => [o.id, o.plantilla]),
+);
 
 /**
  * ===========================================================================
  * PERILLA DE ALCANCE — cuales objeciones contesta el bot POR SI MISMO.
  * ===========================================================================
- * Las 9 estan implementadas y pasando la compuerta; esto NO es una limitacion
- * tecnica, es una decision de riesgo para la primera prueba con leads reales
- * (fundador, 2-sep-2026): arrancar dejando que el bot conteste solo lo mas
- * mecanico, y que todo lo delicado lo vea un humano.
+ * Se deriva del campo `habilitada` de PLAYBOOK_OBJECIONES. Las que no lo esten
+ * se entregan al Setter con razon `objecion_no_habilitada` -- distinta a
+ * proposito de `objecion_fuera_playbook`, que significa "esto no es ninguna de
+ * las del playbook y el bot no sabe que es".
  *
- * Las que NO estan aca se entregan al Setter con razon `objecion_no_habilitada`
- * -- distinta a proposito de `objecion_fuera_playbook`, que significa "esto no
- * es ninguna de las 9 y el bot no sabe que es".
+ * HISTORIA: arranco en {1,2,3,6,9} como decision de riesgo del fundador
+ * (2-sep-2026) para la primera prueba con leads reales. El 4-sep se abrieron
+ * las 9, ya con la compuerta cubriendo el cierre de agenda antes del pitch
+ * para TODAS (antes solo se verificaba en las que llevaban link, y por eso la
+ * Objecion 1 estuvo cerrando agenda en M1 sin que nadie lo viera).
  *
- * PARA AMPLIAR: agrega el numero a este Set. Eso es todo -- el copy, el ruteo
- * y los contadores de escalamiento ya existen para las 9.
- *
- *   1 = "¿Es gratis realmente?"        (habilitada)
- *   2 = "No tengo tiempo"              (habilitada)
- *   3 = "Dejame pensarlo"              (habilitada)
- *   4 = "Ya probe cosas asi"
- *   5 = "Necesito mas informacion"
- *   6 = "Info muy sensible para DM"
- *   7 = "¿Cuanto cuesta el programa?"
- *   8 = "¿Que es el Protocolo de Reconexion?"
- *   9 = "¿Por que resolverlo ahora?"
+ * PARA AMPLIAR O CERRAR: cambia `habilitada` en la tabla. Eso es todo.
  */
-export const OBJECIONES_HABILITADAS = new Set([1, 2, 3, 6, 9]);
+export const OBJECIONES_HABILITADAS = new Set(
+  PLAYBOOK_OBJECIONES.filter((o) => o.habilitada).map((o) => o.id),
+);
+
+/**
+ * La lista de disparadores que ve el clasificador, generada desde la tabla.
+ *
+ * Antes esto era un string hardcodeado en el prompt del Worker, o sea un
+ * CUARTO sitio que actualizar al agregar una objecion. Ahora sale de la misma
+ * fuente que el resto: agregar una entrada actualiza el prompt solo.
+ */
+export const DISPARADORES_OBJECIONES =
+  PLAYBOOK_OBJECIONES.map((o) => o.disparador).join(' ');
+
+/**
+ * ¿Esta objecion es RESISTENCIA, o es CURIOSIDAD?
+ *
+ * QA en vivo del 4-sep-2026, y es el hallazgo que mas cuesta ver: una lead
+ * pregunto, en cuatro mensajes seguidos, "¿es gratis?", "quiero saber mas del
+ * metodo", "¿cuanto cuesta el programa?" y "lo voy a pensar". El bot conto
+ * cuatro objeciones consecutivas y la escalo por `resistencia_acumulada`.
+ * Treinta segundos despues escribio "pero mejor si, agendemos" -- y el bot ya
+ * estaba en silencio porque el handoff estaba activo.
+ *
+ * Las tres primeras NO eran resistencia: eran señales de COMPRA. La regla se
+ * llama "resistencia_acumulada" pero estaba contando curiosidad. Un lead
+ * interesado que hace cuatro preguntas se veia igual que uno que se resiste.
+ *
+ * Desde aca, solo las que de verdad frenan el embudo cuentan para el tope.
+ */
+export const OBJECION_ES_RESISTENCIA = new Set(
+  PLAYBOOK_OBJECIONES.filter((o) => o.cuentaComoResistencia).map((o) => o.id),
+);
+
+/** Objeciones cuya plantilla ya cierra con su propia pregunta. */
+export const OBJECIONES_CON_PREGUNTA_PROPIA = new Set(
+  PLAYBOOK_OBJECIONES.filter((o) => o.preguntaPropia).map((o) => o.id),
+);
 
 /**
  * Por que se sumaron la 6 y la 9 (3-sep-2026, tras la primera prueba):
@@ -573,18 +924,47 @@ export function partirEnBurbujas(plantilla) {
 // La Objecion 9 NO lleva variante a proposito: no tiene link, y el SOP la
 // predice justo en M4 con su propio cierre ("¿Agendamos los 30 minutos...?").
 // Su bifurcacion oficial contempla que el lead acepte agendar ahi mismo.
-const CORTE_PRE_PITCH = { 2: 1, 3: 2, 6: 2 };
-
 function sinCierreDeAgenda(plantilla, parrafos) {
+  if (!parrafos) return plantilla;
   const partes = plantilla.split('\n\n');
   if (partes.length <= parrafos) return plantilla;
   return partes.slice(0, -parrafos).join('\n\n').trim();
 }
 
-/** Objecion -> version sin cierre de agenda, para las etapas de calificacion. */
+/**
+ * Objecion -> version sin cierre de agenda, para las etapas de calificacion.
+ * El recorte de cada una sale de `cortePrePitch` en PLAYBOOK_OBJECIONES.
+ */
 export const OBJECIONES_PRE_PITCH = Object.fromEntries(
-  Object.entries(CORTE_PRE_PITCH).map(([num, n]) => [num, sinCierreDeAgenda(OBJECIONES[num], n)]),
+  PLAYBOOK_OBJECIONES
+    .filter((o) => o.cortePrePitch > 0)
+    .map((o) => [String(o.id), sinCierreDeAgenda(o.plantilla, o.cortePrePitch)]),
 );
+
+/**
+ * La Objecion 6 en M1 (Filtro 1) — psicologia de venta, 3-sep-2026 (noche).
+ *
+ * El lead acaba de decir "ese dato es delicado". Contestarle la 6 y rematar con
+ * la pregunta pendiente de M1 ("¿A que te dedicas y cuanto ganas al mes?") es
+ * volver a pedirle EXACTAMENTE lo que acaba de negarse a dar: se lee como
+ * presion, no como empatia. En su lugar se le quita la profesion de encima y se
+ * le pregunta solo por el RANGO, que se responde con un "Si".
+ *
+ * Se corta un parrafo mas que la variante pre-pitch normal (3 en vez de 2)
+ * porque el que sigue empieza con "Te pregunto porque..." y M1_PEDIR_RANGO
+ * abre igual: pegados quedan dos justificaciones seguidas con la misma
+ * cabeza de frase. Igual que las otras variantes, esto es RECORTE POR CODIGO
+ * sobre el copy aprobado — no hay una sola palabra nueva.
+ */
+export const OBJ_6_EN_M1 = sinCierreDeAgenda(OBJECIONES[6], 3);
+
+/**
+ * Etapas donde se esta evaluando el Filtro 1 (ingreso). Son las de M1 y son
+ * las unicas donde aplica el trato especial de la Objecion 6.
+ */
+export const ETAPAS_FILTRO_1 = new Set([
+  'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
+]);
 
 /**
  * Etapas donde el lead TODAVIA se esta calificando. Una objecion aca no debe
@@ -595,7 +975,7 @@ export const ETAPAS_PRE_PITCH = new Set([
   'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
   'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
   'M3_ENVIADO', 'M3_RECONDUCIR',
-  'M4_ENVIADO',
+  'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
 ]);
 
 /**

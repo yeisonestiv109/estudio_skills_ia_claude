@@ -1,24 +1,73 @@
 {
-  "nombre": "04 · Objeción de precio — fuera del alcance de la v1",
+  "nombre": "04 · Objeción de precio (ahora la contesta el bot) + objeción fuera del playbook",
   "fuente": "Setter-IA-Claude-Code-Project/examples/04-objecion-precio-superada.md (alcance ajustado)",
-  "nota": "En el proyecto original el bot resolvía la objeción de precio. En la v1 nuestra NO: la Objeción 7 no está habilitada, así que el lead pasa a un humano. Esta conversación fija ese comportamiento -- si alguien habilita la 7 sin querer, este test se pone rojo.",
-  "lead": { "nombre": "Mauricio" },
+  "nota": "El 4-sep-2026 el fundador abrió las 9 objeciones, así que la 7 (precio del programa) YA la contesta el bot con su plantilla aprobada, post-pitch y con cierre de agenda. Lo que sigue yendo a un humano es lo que NO es ninguna de las 9: `objecion_fuera_playbook`. Esta conversación fija ambas cosas -- que la 7 se responde sin escalar, y que una objeción desconocida sí escala y NO le manda copy al lead.",
+  "lead": {
+    "nombre": "Mauricio"
+  },
   "turnos": [
-    { "lead": "CONTROL", "espera": { "etapa": "M1_ENVIADO" } },
+    {
+      "lead": "CONTROL",
+      "espera": {
+        "etapa": "M1_ENVIADO"
+      }
+    },
     {
       "lead": "soy ingeniero civil, gano 15 millones",
-      "pista": { "profesion": "Ingeniero civil" },
-      "espera": { "etapa": "M2_ENVIADO" }
+      "pista": {
+        "profesion": "Ingeniero civil"
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO"
+      }
     },
-    { "lead": "40%", "espera": { "etapa": "M3_ENVIADO" } },
-    { "lead": "C", "espera": { "etapa": "M4_ENVIADO" } },
-    { "lead": "sí, es ahora", "espera": { "etapa": "M5_ENVIADO", "estado": "calificado" } },
+    {
+      "lead": "40%",
+      "espera": {
+        "etapa": "M3_ENVIADO"
+      }
+    },
+    {
+      "lead": "C",
+      "espera": {
+        "etapa": "M4_ENVIADO"
+      }
+    },
+    {
+      "lead": "sí, es ahora",
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "estado": "calificado"
+      }
+    },
     {
       "lead": "y cuánto cuesta el programa?",
-      "pista": { "objecion_num": 7, "objecion_conocida": true },
+      "pista": {
+        "objecion_num": 7,
+        "objecion_conocida": true
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null,
+        "contiene": [
+          "el programa no tiene un precio único",
+          "¿Te suena que agendemos"
+        ],
+        "no_contiene": [
+          "Dame un momento"
+        ]
+      }
+    },
+    {
+      "lead": "¿y ustedes tienen sede física en Medellín?",
+      "pista": {
+        "objecion_num": null,
+        "objecion_detectada": true,
+        "objecion_conocida": false
+      },
       "espera": {
         "etapa": "HANDOFF",
-        "handoff": "objecion_no_habilitada",
+        "handoff": "objecion_fuera_playbook",
         "burbujas": 0
       }
     }

@@ -11,7 +11,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo } from '../worker_bot_setter_v42.js';
+import {
+  secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
+  ESQUEMA_POR_ETAPA,
+} from '../worker_bot_setter_v42.js';
+import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
+import { decidirTurno } from '../bot_router_v42.js';
 
 describe('Autenticación del webhook', () => {
   test('acepta el secreto correcto', () => {
@@ -110,5 +115,161 @@ describe('Frenos para probar sobre el ManyChat de PRODUCCIÓN', () => {
 
   test('el prefijo se limpia de espacios accidentales', () => {
     assert.equal(conPrefijo({ TAG_PREFIX: '  V42_  ' }, 'DESCALIFICADO'), 'V42_DESCALIFICADO');
+  });
+});
+
+// ===========================================================================
+// AGUJERO DE COBERTURA que costó un P0 (4-sep-2026).
+//
+// `clasificar` corre en CADA turno y no tenía un solo test. Un `limpio` que
+// quedó de un copy-paste desde `validarClasificacionLLM` la hacía reventar con
+// ReferenceError en M2_ENVIADO y M2_NO_SABE -- o sea, en el Filtro 2, para
+// TODOS los leads. El crash ocurre ANTES de la escritura sincrona, asi que el
+// turno no se registraba en la base y el lead recibia FALLBACK_ERROR con
+// handoff `error_tecnico`.
+//
+// Ni los 183 tests ni el type-check ni el simulador lo vieron: los tests del
+// router entran por `decidirTurno` con pistas ya clasificadas, saltandose por
+// completo esta funcion.
+//
+// La regla que queda: toda etapa del router tiene que poder clasificarse sin
+// reventar, sin LLM y sin red.
+// ===========================================================================
+describe('clasificar: ninguna etapa puede reventar', () => {
+  // Sin GROQ_API_KEY, `clasificarConLLM` retorna {} de inmediato: se prueba la
+  // mitad determinista, sin red.
+  const ENV_SIN_LLM = {};
+
+  const ETAPAS = [
+    'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
+    'M2_ENVIADO', 'M2_NO_SABE', 'M2_BORDERLINE',
+    'M3_ENVIADO', 'M3_RECONDUCIR',
+    'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
+    'M5_ENVIADO', 'M5_PITCH_REINTENTO',
+    'M6_ENVIADO', 'M7_ENVIADO', 'M7_ESPERANDO_VINCULO',
+    'RETORNO_PREGUNTA', 'DESCALIFICADO', 'HANDOFF',
+  ];
+
+  const TEXTOS = [
+    'Me da 30%',
+    'pago como 2 millones al mes en deudas',
+    'me quedan 4 millones libres',
+    'soy ingeniero y gano 8 millones',
+    'C y B',
+    'no se',
+    'es un dato delicado para compartir por aqui',
+    '',
+    '40%',
+  ];
+
+  for (const etapa of ETAPAS) {
+    test(`${etapa} clasifica sin lanzar`, async () => {
+      for (const texto of TEXTOS) {
+        const estado = { etapa_bot: etapa, estado_codigo: 'contactado', salario_monto: 8_000_000 };
+        const c = await clasificar(ENV_SIN_LLM, estado, texto);
+        assert.equal(typeof c, 'object', `${etapa} / "${texto}" no devolvio objeto`);
+        assert.notEqual(c, null);
+      }
+    });
+  }
+
+  test('lead nuevo (sin etapa) no revienta', async () => {
+    const c = await clasificar(ENV_SIN_LLM, null, 'PRUEBAV42');
+    assert.equal(typeof c, 'object');
+  });
+
+  // El caso del que se quejó el fundador: en M2 el lead contesta con PLATA, no
+  // con un porcentaje. El router sabe convertirlo (deuda/ingreso x100), pero
+  // solo si la clasificacion llega viva hasta el.
+  test('M2 con un monto en pesos llega al router y se convierte a %', async () => {
+    const estado = { etapa_bot: 'M2_ENVIADO', estado_codigo: 'contactado', salario_monto: 8_000_000 };
+    const c = await clasificar(ENV_SIN_LLM, estado, 'pago 2 millones al mes en deudas');
+    // Sin LLM no hay deuda_cop, pero la clasificacion NO puede reventar: esa
+    // es la precondicion para que el LLM pueda aportarla en produccion.
+    assert.equal(typeof c, 'object');
+
+    // Y con el dato puesto a mano (lo que haria el LLM), el router lo convierte.
+    const plan = decidirTurno(estado, { ...c, deuda_cop: 2_000_000 }, 'pago 2 millones al mes');
+    assert.equal(plan.campos.endeudamiento_pct, 25, '2M sobre 8M = 25%');
+    assert.equal(plan.handoffRazon, null, 'no escala a un humano por responder con plata');
+  });
+});
+
+// ===========================================================================
+// EL SITIO 2 DE LA TRAMPA, hecho verificable.
+//
+// `clasificarConLLM` hace `if (!esquema) return {}`. Una etapa sin entrada en
+// ESQUEMA_POR_ETAPA NO llama al LLM -- y como crisis/hostil/objeciones solo
+// salen de ahi, esa etapa se queda CIEGA a la regla de maxima prioridad del
+// diseño. Ya paso el 3-sep con 3 etapas nuevas y nadie lo vio hasta la
+// auditoria de seguridad.
+// ===========================================================================
+describe('Toda etapa conversacional tiene esquema de LLM', () => {
+  // Las terminales no clasifican: en HANDOFF y DESCALIFICADO el bot no responde
+  // (decidirSiResponder corta antes), y el retorno del descalificado tiene su
+  // propia etapa, RETORNO_PREGUNTA, que si esta cubierta.
+  const TERMINALES_SIN_ESQUEMA = new Set(['HANDOFF', 'DESCALIFICADO']);
+
+  // Espejo de la lista que enforza `fn_etapa_bot_valida` en Postgres.
+  // Si la base acepta una etapa que aca no esta, smoke_rpc.mjs lo detecta.
+  const ETAPAS_DE_LA_BASE = [
+    'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
+    'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
+    'M3_ENVIADO', 'M3_RECONDUCIR',
+    'M4_ENVIADO', 'M5_ENVIADO', 'M6_ENVIADO', 'M7_ENVIADO',
+    'M7_ESPERANDO_VINCULO',
+    'CIERRE_PRECALL', 'RETORNO_PREGUNTA',
+    'BLINDAJE_ENVIADO', 'BLINDAJE_CERRADO',
+    'DESCALIFICADO', 'HANDOFF',
+    'M4_URGENCIA_REINTENTO', 'M5_PITCH_REINTENTO',
+  ];
+
+  for (const etapa of ETAPAS_DE_LA_BASE) {
+    if (TERMINALES_SIN_ESQUEMA.has(etapa)) continue;
+    // Las de blindaje y CIERRE_PRECALL son de una funcionalidad retirada; no se
+    // escriben nunca. Se saltan a proposito y queda dicho aca.
+    if (['BLINDAJE_ENVIADO', 'BLINDAJE_CERRADO', 'CIERRE_PRECALL'].includes(etapa)) continue;
+
+    test(`${etapa} evalua crisis y objeciones`, () => {
+      const esquema = ESQUEMA_POR_ETAPA[etapa];
+      assert.ok(esquema, `${etapa} no tiene esquema: el LLM no correria y quedaria ciega a crisis`);
+      assert.match(esquema, /"crisis"/, `${etapa} no evalua crisis`);
+      assert.match(esquema, /"hostil"/, `${etapa} no evalua hostilidad`);
+      assert.match(esquema, /"objecion_num"/, `${etapa} no clasifica objeciones`);
+    });
+  }
+});
+
+// ===========================================================================
+// AUTO-RECUPERACIÓN DE HANDOFF + Chain of Thought (4-sep-2026)
+// ===========================================================================
+describe('Chain of Thought en el esquema del LLM', () => {
+  test('el razonamiento va PRIMERO en todas las etapas', () => {
+    // El orden importa de verdad: el modelo genera secuencialmente, así que
+    // escribir el análisis antes que los campos hace que los campos salgan
+    // condicionados por él. Puesto al final no sirve de nada.
+    for (const [etapa, esquema] of Object.entries(ESQUEMA_POR_ETAPA)) {
+      assert.ok(esquema.startsWith('{"analisis_paso_a_paso"'),
+        `${etapa} no arranca con el razonamiento: ${esquema.slice(0, 60)}`);
+    }
+  });
+
+  test('toda etapa puede recuperar un handoff', () => {
+    for (const [etapa, esquema] of Object.entries(ESQUEMA_POR_ETAPA)) {
+      assert.match(esquema, /"recupera_handoff"/, `${etapa} no puede recuperar handoff`);
+    }
+  });
+});
+
+describe('El centinela de limpieza nunca llega a la base', () => {
+  test('LIMPIAR_HANDOFF es un valor imposible como razón real', () => {
+    // Si alguna vez coincidiera con una razón de handoff de verdad, limpiaría
+    // handoffs legítimos en silencio.
+    const RAZONES_REALES = ['crisis_emocional', 'contenido_hostil', 'ex_cliente', 'ambiguo',
+      'objecion_fuera_playbook', 'pregunta_precio', 'resistencia_repetida',
+      'resistencia_acumulada', 'objecion_no_habilitada', 'agendamiento_manual_pendiente',
+      'error_tecnico'];
+    assert.ok(!RAZONES_REALES.includes(LIMPIAR_HANDOFF));
+    assert.match(LIMPIAR_HANDOFF, /^__.*__$/, 'se ve como centinela a simple vista');
   });
 });

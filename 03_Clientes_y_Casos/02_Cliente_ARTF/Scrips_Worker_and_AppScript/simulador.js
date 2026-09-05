@@ -25,56 +25,26 @@ import {
   detectarSinHorarios,
 } from './bot_router_v42.js';
 import { verificarMensajes } from './verificador_cumplimiento.js';
+import { clasificar } from './worker_bot_setter_v42.js';
 
 /**
  * Los mismos deterministas que corre el Worker antes del LLM.
  * Si esto resuelve el turno, el Worker tampoco habria llamado al modelo.
  */
-export function clasificarDeterminista(etapa, texto) {
-  const c = { hostil: detectarHostilidad(texto) };
-  if (!etapa || c.hostil) return c;
-
-  if (['M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_ACLARAR_REMANENTE', 'DESCALIFICADO',
-       'RETORNO_PREGUNTA'].includes(etapa)) {
-    const ing = parseIngresoCOP(texto);
-    if (!ing.ambiguo) { c.ingreso_cop = ing.monto; c.ingreso_glosario = ing.glosario; }
-    else if (ing.glosario) { c.ingreso_glosario = ing.glosario; c.ingreso_cop = null; }
-  }
-  if (etapa === 'M2_ENVIADO' || etapa === 'M2_NO_SABE') {
-    const pct = detectarEndeudamientoPct(texto);
-    if (pct !== null) c.endeudamiento_pct = pct;
-  }
-  if (etapa === 'M3_ENVIADO') {
-    const letras = detectarDolorLetras(texto);
-    if (letras.length) {
-      c.dolores = letras;
-      c.dolor_financiero = !letras.every((l) => l === 'D');
-    }
-  }
-  if (etapa === 'M1_RANGO_PREGUNTADO') {
-    const r = detectarSiNo(texto);
-    if (r !== null) c.confirma_rango = r;
-    const ing = parseIngresoCOP(texto);
-    if (!ing.ambiguo) c.ingreso_cop = ing.monto;
-  }
-  if (etapa === 'M4_ENVIADO') {
-    const u = detectarUrgencia(texto);
-    if (u) c.urgencia = u;
-  }
-  if (etapa === 'M5_ENVIADO' && detectarAceptacion(texto)) c.acepta = true;
-  if (etapa === 'M7_ESPERANDO_VINCULO' && detectarSinHorarios(texto)) c.sin_horarios = true;
-  if (etapa === 'M6_ENVIADO' || etapa === 'M7_ENVIADO') {
-    if (detectarConfirmacionAgenda(texto)) c.confirmo_agendo = true;
-    if (detectarSinHorarios(texto)) c.sin_horarios = true;
-    const acomp = detectarAcompanante(texto);
-    if (acomp !== null) c.acompanado = acomp;
-  }
-  if (etapa === 'CIERRE_PRECALL' && detectarAgradecimiento(texto)) c.agradece = true;
-  if (etapa === 'BLINDAJE_ENVIADO') {
-    const comp = detectarCompromiso(texto);
-    if (comp) c.compromiso = comp;
-  }
-  return c;
+/**
+ * Clasificacion determinista: se usa LA DEL WORKER, no una copia.
+ *
+ * Antes esto era una reimplementacion paralela de `clasificar()`, y se
+ * desincronizo mas de una vez -- la ultima el 4-sep, cuando el Worker aprendio
+ * a leer un "si" pelado en M7 y el simulador no, asi que el corpus fallaba por
+ * una diferencia que no existia en produccion.
+ *
+ * `clasificar` con `env = {}` no llama al LLM (corta en `if (!env.GROQ_API_KEY)`),
+ * que es justo lo que necesita el simulador: la mitad determinista, sin red.
+ * Ahora el corpus ejercita EL MISMO camino que corre en produccion.
+ */
+export async function clasificarDeterminista(etapa, texto) {
+  return clasificar({}, etapa ? { etapa_bot: etapa, estado_codigo: 'contactado' } : null, texto);
 }
 
 /**
@@ -108,12 +78,12 @@ function aplicarPlan(estado, plan) {
  * @param {object} conversacion  fixture del corpus
  * @returns {{ok: boolean, pasos: Array, errores: Array<string>}}
  */
-export function simular(conversacion) {
+export async function simular(conversacion) {
   let estado = null;
   const pasos = [];
   const errores = [];
 
-  conversacion.turnos.forEach((turno, i) => {
+  for (const [i, turno] of conversacion.turnos.entries()) {
     const n = i + 1;
 
     // `base` simula algo que cambio en la base de datos ENTRE turnos, sin que
@@ -128,7 +98,7 @@ export function simular(conversacion) {
       if (turno.espera && turno.espera.contiene) {
         errores.push(`Turno ${n}: se esperaba respuesta pero el bot quedo mudo (${puerta.razon}).`);
       }
-      return;
+      continue;
     }
 
     // Deterministas primero; la `pista` cubre lo que resolveria el LLM.
@@ -136,7 +106,7 @@ export function simular(conversacion) {
       // El nombre viaja aca porque en el primer turno `estado` es null (el lead
       // todavia no existe en la base). Es exactamente lo que hace el Worker.
       nombre: conversacion.lead?.nombre || '',
-      ...clasificarDeterminista(estado?.etapa_bot ?? null, turno.lead),
+      ...await clasificarDeterminista(estado?.etapa_bot ?? null, turno.lead),
       ...(turno.pista || {}),
     };
 
@@ -187,7 +157,7 @@ export function simular(conversacion) {
     }
 
     pasos.push({ turno: n, lead: turno.lead, mensajes: plan.mensajes, etapa: estado.etapa_bot, estado: estado.estado_codigo, handoff: plan.handoffRazon });
-  });
+  }
 
   return { ok: errores.length === 0, pasos, errores, estadoFinal: estado };
 }

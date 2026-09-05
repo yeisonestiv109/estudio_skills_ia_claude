@@ -1,0 +1,33 @@
+{
+  "nombre": "07 · QA en vivo: varias fuentes de ingreso y recuperación tras el roce",
+  "fuente": "activity_log del lead 1269883784 (QA del 4-sep-2026, 21:00-21:04 UTC)",
+  "nota": "Conversación REAL que descalificó a una lead buena y terminó en silencio. La lead dio TRES fuentes de ingreso (4M + 3M + 4M = 11M); el parser determinista se quedó con la primera (4M) y, como los deterministas ganan sobre el LLM, tapó la suma. La descalificó. Ella reclamó, el RetornoLead la rescató bien, pero al decir 'eso es inaceptable' el LLM la marcó hostil y el bot se calló para siempre -- justo cuando ella dijo 'pero igual quiero seguir, me da 40%'. Este corpus fija los tres arreglos: (1) el parser se abstiene ante varias cifras y deja sumar al LLM; (2) la frustración no es hostilidad; (3) un handoff recuperable se deshace si el lead pide continuar.",
+  "lead": { "nombre": "Marly" },
+  "turnos": [
+    { "lead": "PRUEBAV42", "espera": { "etapa": "M1_ENVIADO", "estado": "contactado" } },
+    {
+      "lead": "soy pediatra",
+      "pista": { "ingreso_cop": null, "profesion": "Pediatra" },
+      "espera": { "etapa": "M1_RANGO_PREGUNTADO", "contiene": "¿puedes indicarme si tu salario se encuentra entre" }
+    },
+    {
+      "lead": "tengo ingresos de diferentes fuentes, en mi trajo son mas o menos 4 millones, de mi negocio familiar son 3 millones, y de un local donde soy socia recibo casi 4 millones",
+      "pista": { "ingreso_cop": 11000000 },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "handoff": null,
+        "no_contiene": ["todavía no es el mejor fit"]
+      }
+    },
+    {
+      "lead": "no gracias, eso es inaceptable las confusiones",
+      "pista": { "hostil": false, "objecion_detectada": false },
+      "espera": { "handoff": null }
+    },
+    {
+      "lead": "pero igual quiero seguir, me da 40%",
+      "pista": { "endeudamiento_pct": 40 },
+      "espera": { "etapa": "M3_ENVIADO", "handoff": null }
+    }
+  ]
+}

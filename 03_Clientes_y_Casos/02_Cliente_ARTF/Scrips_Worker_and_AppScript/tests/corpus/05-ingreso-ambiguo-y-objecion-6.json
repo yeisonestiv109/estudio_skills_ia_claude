@@ -1,7 +1,7 @@
 {
   "nombre": "05 · Ingreso ambiguo: el caso REAL de Marly + confirmación de rango",
   "fuente": "activity_log del lead 1269883784 (prueba en vivo del 3-sep-2026, 21:46)",
-  "nota": "Conversación REAL que se atascó. Marly respondió 'es un dato delicado para compartir por aqui' -- que es la Objeción 6 del SOP -- y el bot lo leyó como ingreso ambiguo y le pidió el rango. Este corpus fija el comportamiento corregido: primero se atiende la objeción, y despues un 'Sí' al rango CONFIRMA el Filtro 1 en vez de escalar a un humano. Ademas fija el arreglo del 3-sep: una objecion ANTES del pitch no puede rematar con el link del calendario -- el lead todavia no ha pasado los filtros de deuda, dolor y urgencia.",
+  "nota": "Conversación REAL que se atascó. Marly respondió 'es un dato delicado para compartir por aqui' -- que es la Objeción 6 del SOP -- y el bot lo leyó como ingreso ambiguo. Este corpus fija el comportamiento corregido en tres capas: (1) primero se atiende la objeción; (2) una objeción ANTES del pitch no remata con el link del calendario, porque el lead todavía no ha pasado los filtros de deuda, dolor y urgencia; y (3) regla de negocio del 3-sep-2026 (noche): la Objeción 6 durante el Filtro 1 NO le vuelve a pedir profesión ni cifra exacta -- le quita esa presión y le pregunta solo por el rango, que se contesta con un 'Sí' y confirma el Filtro 1 en vez de escalar a un humano.",
   "lead": {
     "nombre": "Marly"
   },
@@ -14,31 +14,24 @@
       }
     },
     {
-      "lead": "es un dato delicado para compartir por aqui",
+      "lead": "no me gusta la idea de dar a conocer esos datos personales",
       "pista": {
         "objecion_num": 6,
         "objecion_conocida": true
       },
       "espera": {
-        "etapa": "M1_ENVIADO",
+        "etapa": "M1_RANGO_PREGUNTADO",
         "handoff": null,
         "burbujas": 2,
         "contiene": [
           "Esa info es sensible y no tienes por qué compartirla acá",
-          "¿A qué te dedicas y cuánto ganas al mes aproximadamente?"
+          "¿Estás en ese rango?"
         ],
         "no_contiene": [
           "https://calendar.app.google",
-          "O directamente agenda la llamada"
+          "O directamente agenda la llamada",
+          "¿A qué te dedicas y cuánto ganas al mes aproximadamente?"
         ]
-      }
-    },
-    {
-      "lead": "bueno, prefiero no decir la cifra exacta",
-      "espera": {
-        "etapa": "M1_RANGO_PREGUNTADO",
-        "estado": "contactado",
-        "contiene": "¿Estás en ese rango?"
       }
     },
     {

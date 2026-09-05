@@ -35,8 +35,8 @@ describe('Corpus de conversaciones reales', () => {
   for (const archivo of archivos) {
     const conversacion = JSON.parse(readFileSync(join(DIR, archivo), 'utf8'));
 
-    test(`${conversacion.nombre}`, () => {
-      const r = simular(conversacion);
+    test(`${conversacion.nombre}`, async () => {
+      const r = await simular(conversacion);
       assert.equal(r.ok, true, imprimir(conversacion, r));
     });
   }
@@ -45,9 +45,10 @@ describe('Corpus de conversaciones reales', () => {
 describe('Invariantes que ninguna conversación puede romper', () => {
   for (const archivo of archivos) {
     const conversacion = JSON.parse(readFileSync(join(DIR, archivo), 'utf8'));
-    const r = simular(conversacion);
-
-    test(`${archivo}: el bot nunca escribe "agendado"`, () => {
+    // `simular` es async desde que usa el clasificador REAL del Worker, así que
+    // cada test resuelve su propia corrida en vez de compartir una de arriba.
+    test(`${archivo}: el bot nunca escribe "agendado"`, async () => {
+      const r = await simular(conversacion);
       // Ese estado es exclusivo de la sincronización con Google Calendar.
       for (const p of r.pasos) {
         assert.notEqual(p.estado, 'agendado',
@@ -55,7 +56,8 @@ describe('Invariantes que ninguna conversación puede romper', () => {
       }
     });
 
-    test(`${archivo}: si hay link, es siempre la última burbuja y va solo`, () => {
+    test(`${archivo}: si hay link, es siempre la última burbuja y va solo`, async () => {
+      const r = await simular(conversacion);
       for (const p of r.pasos) {
         const conLink = (p.mensajes || []).filter((m) => /https?:\/\//.test(m));
         if (conLink.length === 0) continue;
@@ -66,7 +68,8 @@ describe('Invariantes que ninguna conversación puede romper', () => {
       }
     });
 
-    test(`${archivo}: nunca se descalifica sin una cifra de ingreso confirmada`, () => {
+    test(`${archivo}: nunca se descalifica sin una cifra de ingreso confirmada`, async () => {
+      const r = await simular(conversacion);
       // Regla de oro V4.1 del playbook: el descarte por ingreso es de 2 pasos.
       let descalificoPorIngreso = false;
       for (const p of r.pasos) {

@@ -59,12 +59,23 @@ r.status >= 400 && /no puede escribir el estado/.test(r.cuerpo)
   ? ok('guarda dura: el bot NO puede escribir "agendado"')
   : malo(`la guarda de "agendado" NO salto (status ${r.status})`);
 
-// 4. Las etapas nuevas siguen aceptadas por el CHECK
-for (const etapa of ['M1_ACLARAR_REMANENTE', 'M6_ENVIADO', 'BLINDAJE_ENVIADO', 'BLINDAJE_CERRADO']) {
+// 4. SITIO 1 de la trampa: el CHECK de la base (via fn_etapa_bot_valida).
+// Una etapa que el router escribe pero la base rechaza tumba el turno entero.
+// Esta lista tiene que incluir TODA etapa que el router pueda escribir.
+const ETAPAS_QUE_ESCRIBE_EL_ROUTER = [
+  'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
+  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
+  'M3_ENVIADO', 'M3_RECONDUCIR',
+  'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
+  'M5_ENVIADO', 'M5_PITCH_REINTENTO',
+  'M6_ENVIADO', 'M7_ENVIADO', 'M7_ESPERANDO_VINCULO',
+  'RETORNO_PREGUNTA', 'HANDOFF',
+];
+for (const etapa of ETAPAS_QUE_ESCRIBE_EL_ROUTER) {
   r = await rpc('fn_bot_procesar_turno', { p_manychat_id: ID, p_etapa_bot: etapa });
   if (r.status !== 200) { malo(`la base rechazo la etapa ${etapa}: ${r.cuerpo.slice(0, 100)}`); break; }
 }
-fallos === 0 && ok('la base acepta las 4 etapas nuevas');
+fallos === 0 && ok(`la base acepta las ${ETAPAS_QUE_ESCRIBE_EL_ROUTER.length} etapas que escribe el router`);
 
 // 5. Limpieza: el lead queda en terminal (activity_log es append-only, no se borra)
 await rpc('fn_bot_procesar_turno', {

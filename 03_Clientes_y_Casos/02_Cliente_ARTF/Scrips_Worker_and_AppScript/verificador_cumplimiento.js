@@ -26,7 +26,7 @@
  */
 
 import {
-  PLANTILLAS as P, OBJECIONES, OBJECIONES_PRE_PITCH, CALENDAR_LINK, REELS, partirEnBurbujas,
+  PLANTILLAS as P, OBJECIONES, OBJECIONES_PRE_PITCH, OBJ_6_EN_M1, CALENDAR_LINK, REELS, partirEnBurbujas,
 } from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
@@ -110,6 +110,9 @@ const HUELLAS_APROBADAS = (() => {
     // derivan de las plantillas aprobadas recortando parrafos, asi que son
     // copy aprobado tambien.
     ...Object.values(OBJECIONES_PRE_PITCH),
+    // Misma familia: la Objecion 6 recortada un parrafo mas para que enganche
+    // con la pregunta del rango en M1 sin repetir "Te pregunto porque...".
+    OBJ_6_EN_M1,
     CALENDAR_LINK,
     ...Object.values(REELS),
   ].filter((v) => typeof v === 'string' && v.trim());
@@ -144,6 +147,80 @@ function esCopyAprobado(mensaje, nombre) {
  * @param {string[]} mensajes  las burbujas que se van a enviar, en orden
  * @param {object}   contexto  { nombre } del lead
  * @returns {{pasa: boolean, fallas: Array<{regla: string, detalle: string}>}}
+ */
+/**
+ * Reglas para el UNICO texto que no sale de la biblioteca: la respuesta
+ * generada por el LLM en el catch-all (decision del fundador, 4-sep-2026).
+ *
+ * No se puede verificar contra una huella -- no hay plantilla que comparar --
+ * pero SI se puede verificar que sea seguro. Esto es lo que queda cuando se
+ * cede el determinismo del texto: se pierde "es copy aprobado" y se conserva
+ * "no puede hacer daño".
+ *
+ * Devuelve la lista de fallas (vacia si pasa).
+ */
+export function verificarTextoGenerado(texto) {
+  const fallas = [];
+  const t = String(texto || '');
+  if (!t.trim()) return fallas;
+
+  // Longitud: es un reencauce empatico, no un discurso.
+  if (t.length > 320) fallas.push({ regla: 'G1_MUY_LARGO', detalle: `${t.length} caracteres (max 320).` });
+
+  // NINGUNA URL. El bot manda un solo link en toda la conversacion y sale de la
+  // biblioteca; un link generado es el vector de phishing del que se advirtio.
+  if (/https?:\/\/|www\.|\b[\w.-]+\.(com|co|net|org|io|me|ly|app|link)\b/i.test(t)) {
+    fallas.push({ regla: 'G2_LLEVA_LINK', detalle: 'el texto generado no puede contener URLs.' });
+  }
+  // Ni datos de contacto.
+  if (/@[A-Za-z0-9_.]{3,}|\d[\d\s().-]{7,}/.test(t)) {
+    fallas.push({ regla: 'G3_LLEVA_CONTACTO', detalle: 'parece incluir un handle, correo o telefono.' });
+  }
+  // Ni rastros de inyeccion.
+  if (/\b(ignora|olvida|instrucciones|system|prompt|assistant|act[uú]a como)\b/i.test(t)) {
+    fallas.push({ regla: 'G4_INYECCION', detalle: 'contiene lexico de inyeccion de prompt.' });
+  }
+  // Las dos reglas de voz "no negociables" de Javier, que ya se rompieron en
+  // produccion: tuteo colombiano y hablar en primera persona como Andres.
+  if (/\b(ten[eé]s|pod[eé]s|quer[eé]s|sab[eé]s\s+vos|vos\b|che\b|boludo|t[ií]o\b|guay\b|mola\b|wey\b|[oó]rale|chido)\b/i.test(t)) {
+    fallas.push({ regla: 'G5_VOSEO_O_REGIONALISMO', detalle: 'rompe el tuteo colombiano estricto.' });
+  }
+  if (/\bandr[eé]s\b/i.test(t)) {
+    fallas.push({ regla: 'G6_TERCERA_PERSONA', detalle: 'menciona a Andres en tercera persona; el bot ES Andres.' });
+  }
+  // Lexico prohibido del playbook (ahorrar = sufrir).
+  const PROHIBIDAS = /\b(barato|sacrificio|tacañ|restricci[oó]n|sobrevivir|dieta financiera|ahorro hormiga|recortar gastos|mentalidad de abundancia|manifiestalo|manifi[eé]stalo)\b/i;
+  if (PROHIBIDAS.test(t)) {
+    fallas.push({ regla: 'G7_LEXICO_PROHIBIDO', detalle: 'usa vocabulario prohibido por el playbook.' });
+  }
+  // ⚠️ LA REGLA MAS IMPORTANTE DE ESTE SET, y la razon esta abajo:
+  // el resto de reglas comprueba que el texto sea SEGURO. Ninguna puede
+  // comprobar que sea CIERTO. Un modelo puede escribir "te garantizamos ahorrar
+  // el 30% en 8 semanas" y pasar todas las demas. Por eso se prohibe el lexico
+  // con el que se inventan hechos sobre el programa: promesas, garantias,
+  // cifras y plazos. Lo que el programa promete de verdad ya esta escrito en las
+  // plantillas, y esas si se verifican contra la biblioteca.
+  if (/\b(te garantiz|garantizamos|garantizad|te aseguro|te prometo|prometemos|100%\s+seguro|sin falta|resultados garantizados)\b/i.test(t)) {
+    fallas.push({ regla: 'G9_PROMESA', detalle: 'promete o garantiza un resultado.' });
+  }
+  if (/\b\d+\s*%|\b\d+\s*(semanas?|meses?|d[ií]as?|años?)\b/i.test(t)) {
+    fallas.push({ regla: 'G10_CIFRA_INVENTADA', detalle: 'cita porcentajes o plazos: esos solo pueden salir de una plantilla aprobada.' });
+  }
+
+  // No puede prometer ni negar el agendamiento: eso lo decide la base.
+  if (/\b(ya quedaste agendad|tu reunion esta confirmada|te confirmo la reunion)\b/i.test(t)) {
+    fallas.push({ regla: 'G8_AFIRMA_AGENDA', detalle: 'afirma un agendamiento que solo la base puede confirmar.' });
+  }
+  return fallas;
+}
+
+/**
+ * @param {object} contexto
+ *   - nombre: para renderizar las plantillas al comparar huellas.
+ *   - generado: string opcional. La burbuja que produjo el LLM en el catch-all;
+ *     se exime de R8 (no hay huella que comparar) y se somete a
+ *     `verificarTextoGenerado`. Todo lo demas sigue igual: el link, el precio y
+ *     las otras reglas se le aplican como a cualquier burbuja.
  */
 export function verificarMensajes(mensajes, contexto = {}) {
   const fallas = [];
@@ -220,8 +297,32 @@ export function verificarMensajes(mensajes, contexto = {}) {
       falla('R7_MENCIONA_PRECIO', `${donde}: menciona cifras fuera del copy aprobado.`);
     }
 
-    // R8 -- todo lo que ve el lead sale de la biblioteca (+ empatia opcional)
-    if (!esCopyAprobado(msg, nombre)) {
+    // R8 -- todo lo que ve el lead sale de la biblioteca (+ empatia opcional).
+    // Excepcion unica y explicita: la burbuja generada por el LLM en el
+    // catch-all, que no tiene huella contra la cual comparar y por eso pasa por
+    // su propio set de reglas.
+    const esLaGenerada = contexto.generado && msg.trim() === String(contexto.generado).trim();
+    if (esLaGenerada) {
+      for (const f of verificarTextoGenerado(msg)) {
+        falla(f.regla, `${donde} (texto generado): ${f.detalle}`);
+      }
+    } else if (esCopyAprobado(msg, nombre)) {
+      // HUECO QUE ESTO CIERRA (4-sep-2026): `esCopyAprobado` acepta
+      // "prefijo generado\n\nplantilla aprobada" mirando solo lo que va DESPUES
+      // de la linea en blanco. Eso hacia que el prefijo -- que lo escribe el LLM
+      // y es lo unico que el lead lee sin aprobar -- pasara sin verificarse.
+      // Ahora el cuerpo se valida contra la biblioteca Y el prefijo contra las
+      // reglas del texto generado.
+      const corte = msg.indexOf('\n\n');
+      if (corte > -1 && !HUELLAS_APROBADAS.has(huella(msg, nombre))) {
+        const prefijo = msg.slice(0, corte).trim();
+        if (prefijo) {
+          for (const f of verificarTextoGenerado(prefijo)) {
+            falla(f.regla, `${donde} (apertura generada): ${f.detalle}`);
+          }
+        }
+      }
+    } else {
       falla('R8_COPY_NO_APROBADO',
         `${donde}: el texto no corresponde a ninguna plantilla aprobada. Empieza con: "${msg.slice(0, 70)}..."`);
     }

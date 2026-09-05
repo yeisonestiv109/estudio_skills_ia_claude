@@ -1,0 +1,141 @@
+{
+  "nombre": "06 · QA en vivo: la lead que preguntó 4 veces y el bot la escaló",
+  "fuente": "activity_log del lead 1269883784 (QA del 4-sep-2026, 16:04-16:11 UTC)",
+  "nota": "Conversación REAL que terminó en silencio. La lead preguntó '¿es gratis?', 'quiero saber más del método' y '¿cuánto cuesta?' -- tres señales de COMPRA -- y después 'lo voy a pensar'. El bot contó 4 objeciones consecutivas y escaló por resistencia_acumulada. 30 segundos más tarde escribió 'pero mejor sí, agendemos' y ya estaba en silencio porque el handoff estaba activo. Este corpus fija los tres arreglos del QA: (1) la curiosidad no acumula resistencia; (2) 'D + deudas' es dolor financiero aunque el LLM diga que no; (3) sin objeción de por medio, la pregunta del rango usa la variante simple, no la defensiva.",
+  "lead": {
+    "nombre": "Marly"
+  },
+  "turnos": [
+    {
+      "lead": "PRUEBAV42",
+      "espera": {
+        "etapa": "M1_ENVIADO",
+        "estado": "contactado"
+      }
+    },
+    {
+      "lead": "soy ingeniera",
+      "pista": {
+        "ingreso_cop": null,
+        "profesion": "Ingeniera"
+      },
+      "espera": {
+        "etapa": "M1_RANGO_PREGUNTADO",
+        "contiene": "¿puedes indicarme si tu salario se encuentra entre",
+        "no_contiene": [
+          "Te pregunto porque el proceso funciona mejor"
+        ]
+      }
+    },
+    {
+      "lead": "si",
+      "pista": {
+        "confirma_rango": true
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO"
+      }
+    },
+    {
+      "lead": "no estoy segura",
+      "pista": {
+        "endeudamiento_pct": null
+      },
+      "espera": {
+        "etapa": "M2_NO_SABE"
+      }
+    },
+    {
+      "lead": "si queda como 5m",
+      "pista": {
+        "endeudamiento_pct": 29
+      },
+      "espera": {
+        "etapa": "M3_ENVIADO"
+      }
+    },
+    {
+      "lead": "D, me siento preocupada por la cantidad de deudas que tengo",
+      "pista": {
+        "dolores": [
+          "D"
+        ],
+        "dolor_financiero": false,
+        "dolor_detalle": "preocupada por la cantidad de deudas"
+      },
+      "espera": {
+        "etapa": "M4_ENVIADO",
+        "no_contiene": [
+          "puede que no seamos el mejor fit"
+        ]
+      }
+    },
+    {
+      "lead": "pues es un problema que llevo enfrentando hace tiempo, pero creo que es hora de frenarlo",
+      "pista": {
+        "urgencia": "ahora"
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "estado": "calificado"
+      }
+    },
+    {
+      "lead": "es gratis? de que se trata el programa?",
+      "pista": {
+        "objecion_num": 1,
+        "objecion_conocida": true
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null,
+        "contiene": "100% gratis"
+      }
+    },
+    {
+      "lead": "pero quiero saber mas sobre el metodo",
+      "pista": {
+        "objecion_num": 5,
+        "objecion_conocida": true
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null
+      }
+    },
+    {
+      "lead": "cuanto cuesta el programa",
+      "pista": {
+        "objecion_num": 7,
+        "objecion_conocida": true
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null,
+        "contiene": "no tiene un precio único"
+      }
+    },
+    {
+      "lead": "lo voy a pensar",
+      "pista": {
+        "objecion_num": 3,
+        "objecion_conocida": true
+      },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null
+      }
+    },
+    {
+      "lead": "pero mejor si, agendemos",
+      "pista": {
+        "acepta": true
+      },
+      "espera": {
+        "etapa": "M6_ENVIADO",
+        "handoff": null,
+        "contiene": "Acá te dejo el link"
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "nombre": "08 · QA en vivo: el cierre en su orden nuevo (M5→M6→M7→M8)",
+  "fuente": "activity_log del lead 1269883784 (QA del 4-sep-2026, 21:42-21:44 UTC)",
+  "nota": "Conversación REAL que saltó etapas. Tres fallos encadenados: (1) 'espérame, antes me gustaría tener más claro de que trata el protocolo' se leyó como aceptación -- 'claro' casaba dentro de 'más claro' -- y se le mandó el link a quien pidió esperar; (2) 'emm si', que contestaba a la pregunta del acompañante, se leyó como 'ya agendé' porque acompañante y link iban en el MISMO turno; (3) '¿dónde me agendo?' recibió silencio. El orden nuevo separa link y acompañante en turnos distintos, así que el sí/no deja de ser ambiguo.",
+  "lead": { "nombre": "Marly" },
+  "turnos": [
+    { "lead": "PRUEBAV42", "espera": { "etapa": "M1_ENVIADO" } },
+    { "lead": "soy administradora, gano 9 millones", "pista": { "ingreso_cop": 9000000 }, "espera": { "etapa": "M2_ENVIADO" } },
+    { "lead": "como el 30%", "pista": { "endeudamiento_pct": 30 }, "espera": { "etapa": "M3_ENVIADO" } },
+    { "lead": "B", "espera": { "etapa": "M4_ENVIADO" } },
+    { "lead": "debo solucionarlo de una vez por todas", "pista": { "urgencia": "ahora" }, "espera": { "etapa": "M5_ENVIADO", "estado": "calificado" } },
+    {
+      "lead": "esperame, antes me gustaria tener mas claro de que trata el protocolo del que hablas en los reels",
+      "pista": { "objecion_num": 8, "objecion_conocida": true },
+      "espera": {
+        "etapa": "M5_ENVIADO",
+        "handoff": null,
+        "contiene": "Protocolo de Reconexión Financiera",
+        "no_contiene": ["https://calendar.app.google", "asistirás solo tú"]
+      }
+    },
+    {
+      "lead": "listo, si agendemos",
+      "espera": {
+        "etapa": "M6_ENVIADO",
+        "contiene": "Acá te dejo el link",
+        "no_contiene": ["asistirás solo tú"]
+      }
+    },
+    {
+      "lead": "listo ya agende",
+      "espera": { "etapa": "M7_ENVIADO", "contiene": "asistirás solo tú" }
+    },
+    {
+      "lead": "emm si",
+      "espera": { "etapa": "CIERRE_PRECALL", "contiene": "estimado total de créditos" }
+    }
+  ]
+}
