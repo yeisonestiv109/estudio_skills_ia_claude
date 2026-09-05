@@ -205,10 +205,17 @@ describe('clasificar: ninguna etapa puede reventar', () => {
 // auditoria de seguridad.
 // ===========================================================================
 describe('Toda etapa conversacional tiene esquema de LLM', () => {
-  // Las terminales no clasifican: en HANDOFF y DESCALIFICADO el bot no responde
-  // (decidirSiResponder corta antes), y el retorno del descalificado tiene su
-  // propia etapa, RETORNO_PREGUNTA, que si esta cubierta.
-  const TERMINALES_SIN_ESQUEMA = new Set(['HANDOFF', 'DESCALIFICADO']);
+  // DESCALIFICADO no clasifica: el retorno del descalificado tiene su propia
+  // etapa, RETORNO_PREGUNTA, que si esta cubierta.
+  //
+  // ⚠️ HANDOFF SI clasifica -- BUG REAL que esto corrige (5-sep-2026): se
+  // asumia que "el bot no responde en handoff" cubria tambien a HANDOFF, pero
+  // `decidirSiResponder` solo calla ante razones NO recuperables. Ante una
+  // razon recuperable (ambiguo, contenido_hostil, pregunta_precio...) el
+  // mensaje SI llega a `clasificar()` -- y sin esquema aca, `recupera_handoff`
+  // (que SOLO llena el LLM) nunca podia ser true. Ningun handoff recuperable
+  // se recuperaba jamas en produccion real.
+  const TERMINALES_SIN_ESQUEMA = new Set(['DESCALIFICADO']);
 
   // Espejo de la lista que enforza `fn_etapa_bot_valida` en Postgres.
   // Si la base acepta una etapa que aca no esta, smoke_rpc.mjs lo detecta.

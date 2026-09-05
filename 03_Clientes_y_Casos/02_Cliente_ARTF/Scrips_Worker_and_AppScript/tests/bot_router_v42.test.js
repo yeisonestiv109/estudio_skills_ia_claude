@@ -199,7 +199,13 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.equal(p.etapaNueva, null, 'y no toca la etapa');
   });
 
-  test('handoff recuperable + el lead pide seguir: se recupera y retoma', () => {
+  // Reescrito el 5-sep-2026: el fundador prohibio mandarle al lead la misma
+  // pregunta dos veces. Antes este test fijaba el bug -- "retoma en
+  // M2_ENVIADO" significaba REENVIAR "Sin presion, dame un estimado..." pese
+  // a que el mensaje de vuelta YA traia el 40% ("me da 40%"). Ahora, si el
+  // dato que falta llega en el mismo mensaje de recuperacion, se avanza
+  // derecho (aca a M3) en vez de repreguntar algo que el lead ya contesto.
+  test('handoff recuperable + el lead pide seguir CON el dato: avanza derecho, no repregunta', () => {
     // El caso exacto del QA: "pero igual quiero seguir, me da 40%".
     const estado = estadoEn('HANDOFF', {
       handoff_razon: 'contenido_hostil', salario_monto: 11_000_000,
@@ -207,9 +213,44 @@ describe('Convivencia bot <-> Setter humano', () => {
     const p = decidirTurno(estado, { recupera_handoff: true, endeudamiento_pct: 40 },
       'pero igual quiero seguir, me da 40%');
     assert.equal(p.handoffRazon, LIMPIAR_HANDOFF, 'limpia el handoff');
-    assert.equal(p.etapaNueva, 'M2_ENVIADO', 'retoma donde dicen los datos, no en HANDOFF');
+    assert.equal(p.etapaNueva, 'M3_ENVIADO', 'el 40% SI resuelve el Filtro 2: avanza, no se queda pidiendo el mismo dato');
     assert.ok(p.mensajes.length > 0, 'y le vuelve a hablar');
+    assert.ok(!/Sin presión, dame un estimado/.test(p.mensajes.join('\n')), 'nunca repite la pregunta que el mensaje ya contesto');
     assert.equal(p.permitirEmpatia, true, 'viene de un roce: la apertura personalizada importa');
+  });
+
+  test('handoff recuperable + el lead pide seguir SIN el dato: re-escala en silencio, nunca repite la pregunta', () => {
+    // Mismo roce, pero esta vez el mensaje de vuelta no trae ninguna cifra
+    // util. La regla dura: JAMAS se manda dos veces el mismo mensaje -- ni
+    // siquiera "Sin presion, dame un estimado..." una segunda vez.
+    const estado = estadoEn('HANDOFF', {
+      handoff_razon: 'ambiguo', salario_monto: 11_000_000,
+    });
+    const p = decidirTurno(estado, { recupera_handoff: true }, 'pues sigo sin saber bien');
+    assert.equal(p.etapaNueva, 'HANDOFF', 'sigue sin resolver: se re-escala, no se reintenta una tercera vez');
+    assert.equal(p.mensajes.length, 0, 'CERO mensajes -- nunca repite la pregunta de M2_NO_SABE');
+    assert.equal(p.handoffRazon, 'ambiguo');
+  });
+
+  // BUG REAL reportado (5-sep-2026): "no lo se, no estoy segura" (fallback
+  // exitoso, escala a HANDOFF ambiguo) -> lead responde en DOS mensajes:
+  // "pues si me queda no se cuanto exactamente" (msg 1, sin cifra) y "por ahi
+  // unos 4m" (msg 2). El msg 1 re-escala (ya cubierto arriba); el msg 2 es
+  // este test: llega con el lead YA en HANDOFF, y antes NUNCA se clasificaba
+  // (HANDOFF no tenia esquema de LLM -> recupera_handoff nunca podia ser
+  // true). Aca se simula lo que el LLM real deberia extraer ahora que
+  // ESQUEMA_POR_ETAPA.HANDOFF existe: remanente_cop=4_000_000.
+  test('BUG REAL: remanente dado en un mensaje separado tras el handoff avanza sin repreguntar', () => {
+    const estado = estadoEn('HANDOFF', {
+      handoff_razon: 'ambiguo', salario_monto: 10_000_000,
+    });
+    const p = decidirTurno(estado,
+      { recupera_handoff: true, remanente_cop: 4_000_000 },
+      'por ahi unos 4m');
+    // deuda = 10M - 4M = 6M -> 60% de 10M -> remanente ya calculado = 4M >= 2.5M -> ok
+    assert.equal(p.handoffRazon, LIMPIAR_HANDOFF);
+    assert.equal(p.etapaNueva, 'M3_ENVIADO', 'el remanente de 4M SI alcanza (>= 2.5M): avanza al dolor');
+    assert.ok(!/Sin presión, dame un estimado/.test(p.mensajes.join('\n')));
   });
 
   test('la crisis NO se recupera aunque el lead diga que quiere seguir', () => {

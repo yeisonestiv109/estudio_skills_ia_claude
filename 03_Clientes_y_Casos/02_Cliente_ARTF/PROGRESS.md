@@ -5,8 +5,8 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **355 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
-**Estado del bot: DESPLEGADO** (versión `d9fb8642`, **con los 2 fixes de la It. 16**) **— 4 rondas de QA en vivo aplicadas.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **358 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
+**Estado del bot: DESPLEGADO** (versión `a0a819ec`, **con los 2 fixes de la It. 16 + el fix de HANDOFF de la It. 17, sin verificar E2E por trafico real concurrente en el lead de prueba**) **— 4 rondas de QA en vivo aplicadas.**
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -531,6 +531,62 @@ funciona -- coalesce preserva el valor viejo, limitacion ya documentada):
    despues si se calla para siempre (`handoff_activo`). Confirmado.
 
 Lead de prueba reiniciado a `etapa_bot=null`/`handoff_razon=null` al terminar.
+
+---
+
+### It. 17 — HANDOFF nunca tenia esquema de LLM: ningun handoff recuperable se recuperaba de verdad (hecho, sin verificar E2E)
+
+Ticket real: tras el fallback de M2 ("no se, no estoy segura" -> "Sin presion,
+dame un estimado..."), el lead contesto en DOS mensajes ("si me queda, no se
+cuanto" + "por ahi unos 4m") y el bot se quedo mudo. El ticket asumia que el
+LLM era "rigido"; **la causa real era otra y mas grave**, verificada en vivo
+con `wrangler tail` (no por hipotesis): `ESQUEMA_POR_ETAPA` **nunca tuvo una
+entrada para `'HANDOFF'`**. `clasificarConLLM` hace `if (!esquema) return {}`
+-- asi que el LLM **jamas corria** para un mensaje que llega con el lead ya
+escalado, y `recupera_handoff` (que SOLO llena el LLM, sin determinista) nunca
+podia ser `true`. **Ningun handoff recuperable se recuperaba jamas en
+produccion real**, pese a estar documentado como feature validada en el QA del
+4-sep -- ese QA probo la logica con un test unitario que simulaba
+`recupera_handoff:true` a mano, nunca el camino real. Mismo patron de bug ya
+visto 3 veces antes (etapas nuevas sin esquema apagaban crisis/hostil en
+silencio), esta vez en la etapa mas importante de todas.
+
+**Arreglado:**
+1. `ESQUEMA_POR_ETAPA.HANDOFF` + `CONTEXTO_POR_ETAPA.HANDOFF` agregados
+   (`worker_bot_setter_v42.js`) -- evalua `recupera_handoff`, crisis/hostil, y
+   extrae `ingreso_cop`/`endeudamiento_pct`/`deuda_cop`/`remanente_cop` del
+   mensaje de vuelta.
+2. **Regla dura del fundador: nunca mandar el mismo mensaje dos veces.** La
+   logica de M2 (`evaluarEndeudamiento`+plantillas) se extrajo a
+   `evaluarYResponderEndeudamiento()` (`bot_router_v42.js`), reusada por el
+   `case M2_ENVIADO/M2_NO_SABE` **y** por la recuperacion de handoff. Al
+   recuperar hacia M2, se fuerza `etapaEntrada:'M2_NO_SABE'` (llegar a un
+   handoff implica que la pregunta YA se hizo): si el dato de este mismo
+   mensaje resuelve, avanza derecho (a M3/borderline/descalifica) sin volver a
+   preguntar; si sigue sin resolver, se re-escala **en silencio**, nunca
+   repitiendo "Sin presion, dame un estimado...".
+
+**Un test existente se reescribio, y por que esta permitido** (regla de
+`LOOPS.md`): el test de auto-recuperacion fijaba el bug -- afirmaba que
+recuperar con "me da 40%" debia "retomar en M2_ENVIADO" (o sea, REPREGUNTAR
+pese a traer el dato). Ahora afirma lo correcto: avanza a `M3_ENVIADO` sin
+repetir la pregunta. Se agregaron 2 tests nuevos (el caso sin dato -> re-escala
+en silencio, y la reproduccion exacta del bug real con el remanente partido en
+mensajes separados).
+
+358 tests (antes 355). Desplegado: `a0a819ec-a7da-498b-ad9a-d458ab7a84ce`.
+
+**⚠️ No se pudo verificar E2E contra el Worker real esta vez.** El lead de
+prueba `1269883784` (Marly) tuvo trafico REAL concurrente durante la prueba
+(confirmado: el `version`/estado de la fila cambiaba entre mi PATCH de reset y
+mi mensaje de prueba, sin que mi escritura quedara reflejada) -- alguien mas
+(Yeisiton, o el ManyChat real de la propia Marly) lo esta usando en paralelo.
+La verificacion de esta iteracion descansa en los 358 tests unitarios
+(incluida la reproduccion exacta del bug con datos simulados del LLM), no en
+un smoke E2E como las iteraciones anteriores. **Pendiente real:** conseguir un
+manychat_id de prueba dedicado y aislado (agregarlo a `MANYCHAT_IDS_PRUEBA`
+sin tocar los que ya estan) para que las pruebas en vivo dejen de compartir
+lead con el trabajo real de Yeisiton.
 
 ---
 

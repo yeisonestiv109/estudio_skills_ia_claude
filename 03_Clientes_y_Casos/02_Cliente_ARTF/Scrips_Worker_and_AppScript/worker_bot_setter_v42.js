@@ -494,6 +494,20 @@ export const ESQUEMA_POR_ETAPA = {
   // (el cierre) y que crisis/hostil sigan evaluandose, como en toda etapa.
   SIN_HORARIOS_ESPERANDO_FRANJA: `{${CAMPO_RAZONAMIENTO}${CAMPOS_COMUNES}}`,
   RETORNO_PREGUNTA:     `{${CAMPO_RAZONAMIENTO}"retoma": true|false|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
+  // ⚠️ BUG REAL Y GRAVE que esto corrige (5-sep-2026): 'HANDOFF' NUNCA tuvo
+  // entrada aca. Como `clasificarConLLM` hace `if (!esquema) return {}`, el
+  // LLM JAMAS corria para un mensaje que llega con el lead ya escalado -- y
+  // "recupera_handoff" SOLO lo llena el LLM (no hay determinista para el). En
+  // la practica, NINGUN handoff recuperable (ambiguo, contenido_hostil,
+  // pregunta_precio...) se podia recuperar jamas en produccion real, pese a
+  // estar documentado como feature ya validada en QA -- ese QA solo probo la
+  // logica con un test unitario que simulaba recupera_handoff:true a mano,
+  // nunca el camino real. Mismo patron de bug que ya paso 3 veces con etapas
+  // nuevas sin esquema (apagaba crisis/hostil en silencio), esta vez en la
+  // etapa mas importante de todas. Los campos de dinero van aca tambien: si
+  // el lead retoma dando la cifra pendiente (ingreso o endeudamiento), que
+  // no se pierda y haya que volver a preguntarla.
+  HANDOFF: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
 };
 
 const CONTEXTO_POR_ETAPA = {
@@ -515,6 +529,7 @@ const CONTEXTO_POR_ETAPA = {
   M7_ESPERANDO_VINCULO: 'Dijo que ya agendo y se le acuso recibo; se espera a que el equipo verifique la reserva.',
   SIN_HORARIOS_ESPERANDO_FRANJA: 'Dijo que no encontraba un horario disponible; se le pidio que cuente que dia/franja le queda bien porque el equipo lo va a agendar a mano. Este mensaje es su respuesta con esa franja. En "respuesta_empatica" escribe un cierre CORTO (1-2 frases) que retome la franja que dio en sus propias palabras y confirme que el equipo ya la tiene para buscarle un horario -- sin prometer un dia u hora exactos, sin pedir mas datos, y sin decir que ya quedo agendado.',
   RETORNO_PREGUNTA: 'Es un lead que fue descartado antes y volvio a escribir. Se le pregunto si su situacion cambio desde entonces. "retoma" es true si dice que si cambio/mejoro, false si dice que sigue igual.',
+  HANDOFF: 'El lead fue escalado a un humano y este es un mensaje NUEVO que escribe despues. "recupera_handoff" es true SOLO si el lead da un dato pendiente, dice que quiere seguir/continuar, o pide agendar -- NO ante un simple saludo, un "hola" suelto, o una queja sin intencion de avanzar. Si el lead da una cifra de ingreso o de deuda/remanente -- aunque sea aproximada ("por ahi unos 4 millones") o partida en dos mensajes ("si me queda algo" + despues "unos 4m") -- extraela en los campos de dinero: sirve para no volver a preguntarla al retomar.',
 };
 
 async function clasificarConLLM(env, etapa, texto, det) {

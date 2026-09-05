@@ -369,6 +369,95 @@ const HANDOFF = (razon, estado, extra = {}) => ({
 });
 
 /**
+ * Filtro 2 completo -- extraida del case M2_ENVIADO/M2_NO_SABE (5-sep-2026)
+ * para que la recuperacion de handoff pueda reusarla en vez de solo reenviar
+ * la pregunta pendiente.
+ *
+ * `etapaEntrada` decide si un "no_sabe" manda el fallback (primera vez) o
+ * escala en silencio (ya se penso, ver mas abajo por que la recuperacion
+ * SIEMPRE entra aca como si fuera la segunda vez).
+ */
+function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLead) {
+  const ingreso = estado?.salario_monto ?? c.ingreso_cop ?? null;
+  let pct = c.endeudamiento_pct ?? null;
+
+  if (pct === null && ingreso !== null && ingreso > 0) {
+    if (c.deuda_cop != null) {
+      pct = Math.round((c.deuda_cop / ingreso) * 100);
+    } else if (c.remanente_cop != null) {
+      const gastado = Math.max(0, ingreso - c.remanente_cop);
+      pct = Math.round((gastado / ingreso) * 100);
+    }
+  }
+
+  const veredicto = evaluarEndeudamiento(pct, ingreso);
+
+  // BUG REAL (5-sep-2026): el LLM confunde "no se/no estoy segura" (INCERTIDUMBRE)
+  // con la Objecion 6 "es un dato sensible" (RETICENCIA) -- son intenciones
+  // vecinas y el prompt no las distinguia. Resultado: el bot anteponia la
+  // plantilla de "dato sensible" y repetia P.M2_P1/P.M2_P2 tal cual, en vez de
+  // usar M2_NO_SABE que ya existe para este caso exacto. `pareceIncertidumbre`
+  // es el mismo tipo de guarda determinista que ya usa `pareceDolorFinanciero`:
+  // no le quita al LLM la decision en el caso general, solo la anula cuando el
+  // texto es un "no se" inequivoco.
+  if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)
+      && !pareceIncertidumbre(textoLead)) {
+    // Igual que en M1: "esa info es sensible" es la Objecion 6, no un
+    // "no se". Preguntar por deudas la dispara con la misma frecuencia.
+    return manejarObjecion(estado, c, nombre, 'Objecion al pedir el endeudamiento (M2).');
+  }
+  if (veredicto === 'no_sabe') {
+    if (etapaEntrada === 'M2_NO_SABE') {
+      return HANDOFF('ambiguo', estado, {
+        summary: 'No logra estimar su endeudamiento tras insistir. Handoff.',
+      });
+    }
+    return {
+      mensajes: [render(P.M2_NO_SABE, nombre)],
+      etapaNueva: 'M2_NO_SABE', estadoDestino: 'contactado',
+      handoffRazon: null, motivoPerdida: null, campos: {},
+      permitirEmpatia: false,
+      summary: 'No sabe su endeudamiento. Se insiste suave con un estimado.',
+    };
+  }
+  if (veredicto === 'borderline') {
+    return {
+      // El tipo de deuda solo no alcanza: la regla del fundador tambien
+      // acepta al lead si RECTIFICA que le sobran >= REMANENTE_MINIMO. La
+      // segunda burbuja es copy pendiente de aprobacion; sin ella el
+      // borderline sigue funcionando si el lead suelta la cifra por su cuenta.
+      mensajes: COPY_PENDIENTE_HABILITADO
+        ? [render(P.M2_BORDERLINE, nombre), render(P.M2_PEDIR_SOBRANTE, nombre)]
+        : [render(P.M2_BORDERLINE, nombre)],
+      etapaNueva: 'M2_BORDERLINE', estadoDestino: 'contactado',
+      handoffRazon: null, motivoPerdida: null,
+      campos: { endeudamiento_pct: pct },
+      permitirEmpatia: false,
+      summary: `Remanente ${calcularRemanente(ingreso, pct)} < ${UMBRALES.REMANENTE_MINIMO} con deuda ${pct}% (>=${UMBRALES.ENDEUDAMIENTO_PARA_BORDERLINE}%). Puede ser deuda buena: se pregunta antes de descartar.`,
+    };
+  }
+  if (veredicto === 'descalifica') {
+    return {
+      mensajes: partirEnBurbujas(render(P.DESC_ENDEUDAMIENTO, nombre)),
+      etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
+      handoffRazon: null,
+      motivoPerdida: 'Descalificado - Endeudamiento sobre su tope',
+      campos: { endeudamiento_pct: pct, califica: false },
+      permitirEmpatia: false,
+      summary: `Filtro 2 no superado: remanente ${calcularRemanente(ingreso, pct)} < ${UMBRALES.REMANENTE_MINIMO} y la deuda (${pct}%) no lo explica.`,
+    };
+  }
+  return {
+    mensajes: [render(P.M3, nombre)],
+    etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
+    handoffRazon: null, motivoPerdida: null,
+    campos: { endeudamiento_pct: pct },
+    permitirEmpatia: true,
+    summary: `Filtro 2 superado: le quedan ${calcularRemanente(ingreso, pct)} libres al mes (deuda ${pct}%). Se pregunta el dolor.`,
+  };
+}
+
+/**
  * @param {object} estado         fila de fn_bot_get_estado (null si es el primer mensaje)
  * @param {object} clasificacion  salida del clasificador (LLM + deterministas)
  * @param {string} textoLead      mensaje crudo del lead
@@ -404,6 +493,31 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // Pide continuar: se limpia el handoff y se retoma donde el DATO dice que
     // iba, no donde quedo la etapa (que es 'HANDOFF' y no dice nada).
     const retomaEn = etapaParaRetomar(estado);
+
+    // CASO ESPECIAL M2 (5-sep-2026): si lo que falta es el endeudamiento, NUNCA
+    // se reenvia P.M2_NO_SABE -- ya se le pregunto antes de escalar, y mandar
+    // la misma pregunta otra vez esta prohibido (regla dura del fundador). En
+    // vez de reenviarla, se evalua el DATO que trae ESTE mensaje de vuelta
+    // (bug real: el lead lo dio dividido en dos mensajes -- "si me queda, no
+    // se cuanto" y despues "por ahi unos 4m" -- y el bot se quedo mudo porque
+    // el LLM ni corria en HANDOFF, ver ESQUEMA_POR_ETAPA.HANDOFF). Se fuerza
+    // `etapaEntrada: 'M2_NO_SABE'` a proposito: llegar a un handoff implica
+    // que la pregunta YA se hizo, asi que este intento es la segunda vez de
+    // verdad, nunca la primera -- si sigue sin resolver, se re-escala en
+    // silencio (nunca con la misma pregunta), nunca se vuelve a preguntar.
+    if (retomaEn === 'M2_ENVIADO') {
+      const resultado = evaluarYResponderEndeudamiento(estado, c, nombre, 'M2_NO_SABE', textoLead);
+      if (resultado.etapaNueva === 'HANDOFF') {
+        // Sigue ambiguo (o es otra escalada, ej. objecion no habilitada): se
+        // queda escalado, sin mandarle nada de nuevo al lead.
+        return resultado;
+      }
+      // Se resolvio de verdad (avanza a M3, borderline, descalifica, o una
+      // objecion valida lo regresa al carril): ahora si se limpia el handoff,
+      // no se deja "ambiguo" pegado mientras la conversacion ya sigue.
+      return { ...resultado, handoffRazon: LIMPIAR_HANDOFF };
+    }
+
     return {
       mensajes: preguntaPendiente(retomaEn, nombre),
       etapaNueva: retomaEn, estadoDestino: null,
@@ -701,85 +815,8 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
     // =====================================================================
     case 'M2_ENVIADO':
-    case 'M2_NO_SABE': {
-      const ingreso = estado?.salario_monto ?? c.ingreso_cop ?? null;
-      let pct = c.endeudamiento_pct ?? null;
-      
-      if (pct === null && ingreso !== null && ingreso > 0) {
-        if (c.deuda_cop != null) {
-          pct = Math.round((c.deuda_cop / ingreso) * 100);
-        } else if (c.remanente_cop != null) {
-          const gastado = Math.max(0, ingreso - c.remanente_cop);
-          pct = Math.round((gastado / ingreso) * 100);
-        }
-      }
-      
-      const veredicto = evaluarEndeudamiento(pct, ingreso);
-
-      // BUG REAL (5-sep-2026): el LLM confunde "no se/no estoy segura" (INCERTIDUMBRE)
-      // con la Objecion 6 "es un dato sensible" (RETICENCIA) -- son intenciones
-      // vecinas y el prompt no las distinguia. Resultado: el bot anteponia la
-      // plantilla de "dato sensible" y repetia P.M2_P1/P.M2_P2 tal cual, en vez de
-      // usar M2_NO_SABE que ya existe para este caso exacto. `pareceIncertidumbre`
-      // es el mismo tipo de guarda determinista que ya usa `pareceDolorFinanciero`:
-      // no le quita al LLM la decision en el caso general, solo la anula cuando el
-      // texto es un "no se" inequivoco.
-      if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)
-          && !pareceIncertidumbre(textoLead)) {
-        // Igual que en M1: "esa info es sensible" es la Objecion 6, no un
-        // "no se". Preguntar por deudas la dispara con la misma frecuencia.
-        return manejarObjecion(estado, c, nombre, 'Objecion al pedir el endeudamiento (M2).');
-      }
-      if (veredicto === 'no_sabe') {
-        if (etapa === 'M2_NO_SABE') {
-          return HANDOFF('ambiguo', estado, {
-            summary: 'No logra estimar su endeudamiento tras insistir. Handoff.',
-          });
-        }
-        return {
-          mensajes: [render(P.M2_NO_SABE, nombre)],
-          etapaNueva: 'M2_NO_SABE', estadoDestino: 'contactado',
-          handoffRazon: null, motivoPerdida: null, campos: {},
-          permitirEmpatia: false,
-          summary: 'No sabe su endeudamiento. Se insiste suave con un estimado.',
-        };
-      }
-      if (veredicto === 'borderline') {
-        return {
-          // El tipo de deuda solo no alcanza: la regla del fundador tambien
-          // acepta al lead si RECTIFICA que le sobran >= REMANENTE_MINIMO. La
-          // segunda burbuja es copy pendiente de aprobacion; sin ella el
-          // borderline sigue funcionando si el lead suelta la cifra por su cuenta.
-          mensajes: COPY_PENDIENTE_HABILITADO
-            ? [render(P.M2_BORDERLINE, nombre), render(P.M2_PEDIR_SOBRANTE, nombre)]
-            : [render(P.M2_BORDERLINE, nombre)],
-          etapaNueva: 'M2_BORDERLINE', estadoDestino: 'contactado',
-          handoffRazon: null, motivoPerdida: null,
-          campos: { endeudamiento_pct: pct },
-          permitirEmpatia: false,
-          summary: `Remanente ${calcularRemanente(ingreso, pct)} < ${UMBRALES.REMANENTE_MINIMO} con deuda ${pct}% (>=${UMBRALES.ENDEUDAMIENTO_PARA_BORDERLINE}%). Puede ser deuda buena: se pregunta antes de descartar.`,
-        };
-      }
-      if (veredicto === 'descalifica') {
-        return {
-          mensajes: partirEnBurbujas(render(P.DESC_ENDEUDAMIENTO, nombre)),
-          etapaNueva: 'DESCALIFICADO', estadoDestino: 'descalificado',
-          handoffRazon: null,
-          motivoPerdida: 'Descalificado - Endeudamiento sobre su tope',
-          campos: { endeudamiento_pct: pct, califica: false },
-          permitirEmpatia: false,
-          summary: `Filtro 2 no superado: remanente ${calcularRemanente(ingreso, pct)} < ${UMBRALES.REMANENTE_MINIMO} y la deuda (${pct}%) no lo explica.`,
-        };
-      }
-      return {
-        mensajes: [render(P.M3, nombre)],
-        etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
-        handoffRazon: null, motivoPerdida: null,
-        campos: { endeudamiento_pct: pct },
-        permitirEmpatia: true,
-        summary: `Filtro 2 superado: le quedan ${calcularRemanente(ingreso, pct)} libres al mes (deuda ${pct}%). Se pregunta el dolor.`,
-      };
-    }
+    case 'M2_NO_SABE':
+      return evaluarYResponderEndeudamiento(estado, c, nombre, etapa, textoLead);
 
     // =====================================================================
     case 'M2_BORDERLINE': {
