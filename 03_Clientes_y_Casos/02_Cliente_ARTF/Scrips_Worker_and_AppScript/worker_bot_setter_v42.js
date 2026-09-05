@@ -362,7 +362,14 @@ export async function clasificar(env, estado, texto) {
       if (ing.glosario !== 'varias_fuentes') det.ingreso_forzado_ambiguo = true;
     }
   }
-  if (etapa === 'M2_ENVIADO' || etapa === 'M2_NO_SABE') {
+  // ⚠️ 'HANDOFF' va aca tambien (5-sep-2026): si el lead retoma dando el %
+  // pendiente ("el 40%", "o 3 millones") mientras esta escalado, la
+  // recuperacion (bot_router_v42.js) solo avanza si el dato llega -- sin este
+  // determinista, dependia 100% de que el LLM lo extrajera bien, sin red de
+  // seguridad (mismo criterio que ya usan M2_ENVIADO/M2_NO_SABE). Es seguro
+  // ejecutarlo siempre en HANDOFF: el router solo USA `endeudamiento_pct` si
+  // `etapaParaRetomar` ya habia decidido que eso es justo lo que falta.
+  if (etapa === 'M2_ENVIADO' || etapa === 'M2_NO_SABE' || etapa === 'HANDOFF') {
     const pct = detectarEndeudamientoPct(texto);
     if (pct !== null) det.endeudamiento_pct = pct;
     // `deuda_cop` y `remanente_cop` NO se ponen aca: no hay detector

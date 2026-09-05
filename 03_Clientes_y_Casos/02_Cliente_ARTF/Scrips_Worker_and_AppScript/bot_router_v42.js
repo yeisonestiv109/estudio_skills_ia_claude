@@ -1506,14 +1506,26 @@ export function detectarAcompanante(texto) {
   return null;
 }
 
-/** Urgencia: mecanico en la mayoria de casos. */
+/**
+ * Urgencia: mecanico en la mayoria de casos.
+ *
+ * BUG REAL (5-sep-2026): "¿cuál es la diferencia si lo hago ahora o después?"
+ * es la Objecion 9 en otras palabras (sin decir "por que"), pero contiene la
+ * palabra "ahora" -- y el determinista, que le gana al LLM, la leia como
+ * afirmacion de urgencia y mandaba directo al pitch de M5, ignorando la
+ * pregunta del lead por completo.
+ */
 export function detectarUrgencia(texto) {
   const t = String(texto || '').toLowerCase();
   if (/\b(por\s*qu[eé]|porqu[eé])\b.*\b(ahora|ya|urgen|importante)\b/.test(t)
-      || /\b(por\s*qu[eé]|porqu[eé])\s*(es\s*)?(tan\s*)?(importante|urgente)/.test(t)) {
+      || /\b(por\s*qu[eé]|porqu[eé])\s*(es\s*)?(tan\s*)?(importante|urgente)/.test(t)
+      || /\b(cu[aá]l\s*es\s*la\s*diferencia|qu[eé]\s*diferencia\s*hay|qu[eé]\s*gano\s*si|qu[eé]\s*pasa\s*si\s*(lo\s*)?(dejo|espero|hago\s*despu[eé]s))\b/.test(t)) {
     return 'pregunta_por_que';
   }
-  if (/\b(ahora|ya|prioridad|urgente|lo\s*antes\s*posible|cuanto\s*antes|s[ií]\s*es\s*urgente|inmediato)\b/.test(t)) {
+  // "Ahora" solo cuenta como AFIRMACION de urgencia, nunca dentro de una
+  // pregunta -- sin este freno, "¿ahora o después?" se leia como "ahora".
+  const esPregunta = /\?|^(cu[aá]l|qu[eé]|c[oó]mo)\b/.test(t);
+  if (!esPregunta && /\b(ahora|ya|prioridad|urgente|lo\s*antes\s*posible|cuanto\s*antes|s[ií]\s*es\s*urgente|inmediato)\b/.test(t)) {
     return 'ahora';
   }
   if (/\b(m[aá]s\s*adelante|despu[eé]s|alg[uú]n\s*d[ií]a|cuando\s*tenga|no\s*es\s*urgente|el\s*otro\s*a[ñn]o|luego)\b/.test(t)) {

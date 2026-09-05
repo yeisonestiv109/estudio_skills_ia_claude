@@ -5,8 +5,8 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **358 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
-**Estado del bot: DESPLEGADO** (versión `a0a819ec`, **con los 2 fixes de la It. 16 + el fix de HANDOFF de la It. 17, sin verificar E2E por trafico real concurrente en el lead de prueba**) **— 4 rondas de QA en vivo aplicadas.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **360 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
+**Estado del bot: DESPLEGADO** (versión `ceff5147`, **con los fixes de las It. 16, 17 y 18, sin verificar E2E por trafico real concurrente en el lead de prueba**) **— 4 rondas de QA en vivo aplicadas.**
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -587,6 +587,60 @@ un smoke E2E como las iteraciones anteriores. **Pendiente real:** conseguir un
 manychat_id de prueba dedicado y aislado (agregarlo a `MANYCHAT_IDS_PRUEBA`
 sin tocar los que ya estan) para que las pruebas en vivo dejen de compartir
 lead con el trabajo real de Yeisiton.
+
+---
+
+### It. 18 — auditoria de un chat real: "ahora vs despues" se leia como urgencia + respaldo determinista en HANDOFF (hecho, sin verificar E2E)
+
+Gaby pego un chat real de Marly con varios mensajes "faciles de responder" que
+el bot manejaba mal. Se diagnosticaron 4 episodios; 2 con causa raiz
+verificada y arreglados, 1 que necesita copy nuevo (queda pendiente,
+fundador decide) y 1 que no se pudo diagnosticar con confianza (el pegado
+mezclaba texto de Gaby con el chat sin limites claros).
+
+**1. "¿Cuál es la diferencia si lo hago ahora o después?" se leia como
+"ahora" (bug real, causa raiz confirmada en `detectarUrgencia`).** El patron
+de `pregunta_por_que` exige la palabra literal "por que"; sin ella, cae al
+patron de "ahora" que solo busca esa palabra EN CUALQUIER PARTE del texto --
+y la encuentra, porque el lead la uso para preguntar, no para afirmar. Como
+el determinista le gana al LLM, el bot ignoraba la pregunta y saltaba directo
+al pitch de M5. Arreglo: (a) mas frases equivalentes reconocidas como
+`pregunta_por_que` ("cual es la diferencia", "que gano si", "que pasa si
+espero"), y (b) el patron de "ahora" ya NO dispara dentro de una pregunta
+(detecta `?`/"cual"/"que"/"como" al inicio) -- si no calza en ningun patron
+especifico, se abstiene (`null`) y deja que decida el LLM, mismo principio de
+"abstenerse es mejor que adivinar" que ya usa el resto del router.
+
+**2. Respaldo determinista de endeudamiento en `HANDOFF`.** Con el fix de la
+It. 17, "el 40%"/"o 3 millones" tras un fallback SI pueden recuperar la
+conversacion -- pero dependian 100% de que el LLM extrajera bien la cifra,
+porque `detectarEndeudamientoPct` solo corria en `M2_ENVIADO`/`M2_NO_SABE`. Se
+extendio a correr tambien en `HANDOFF` (`worker_bot_setter_v42.js`): es seguro
+porque el router solo USA ese dato si `etapaParaRetomar` ya decidio que eso es
+justo lo que falta.
+
+**3. Elegir "D" (otra frustracion) sin detalle salta directo a reconducir --
+PENDIENTE, necesita copy nuevo.** Confirmado en `case 'M3_ENVIADO'`: si el
+lead responde solo `"d"` sin explicar cual es su frustracion, el bot asume
+que no es financiero y reconduce de inmediato, sin preguntar primero cual es
+esa otra frustracion. No se implementa sin que el fundador apruebe la
+pregunta nueva (no existe hoy en el playbook).
+
+**4. NO diagnosticado: un "hola" que parecia reiniciar todo a M1 en medio de
+una conversacion activa.** Por codigo, "si agendemos" en M5 SIEMPRE debe
+mandar el link de agenda (nunca queda mudo) -- lo que hace sospechar que el
+pegado mezclaba dos conversaciones distintas o un reset (`PRUEBAV42`) que no
+quedo registrado en el texto. Se le pidio a Gaby confirmar antes de tocar
+nada aca; sigue abierto.
+
+**Hallazgo aparte, documentado pero NO arreglado (fuera del alcance
+aprobado):** el mismo riesgo de "recuperar y repreguntar lo mismo" que se
+cerro para M2 en la It. 17 tambien existe para M1 -- si `etapaParaRetomar`
+resuelve a `M1_ENVIADO` y el lead da su ingreso en el mismo mensaje de
+recuperacion, hoy se reenviaria la pregunta de M1 igual. Simetrico al arreglo
+de M2, pendiente de aprobacion para implementarlo.
+
+358 → **360 tests**. Desplegado: `ceff5147-e60f-418f-9fd6-1fae3bb51a2f`.
 
 ---
 

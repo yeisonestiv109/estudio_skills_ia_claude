@@ -193,6 +193,17 @@ describe('clasificar: ninguna etapa puede reventar', () => {
     assert.equal(plan.campos.endeudamiento_pct, 25, '2M sobre 8M = 25%');
     assert.equal(plan.handoffRazon, null, 'no escala a un humano por responder con plata');
   });
+
+  // BUG REAL (5-sep-2026): el lead retoma tras un handoff dando el %
+  // pendiente ("el 40%"), pero el determinista de M2 solo corria en
+  // M2_ENVIADO/M2_NO_SABE -- en HANDOFF dependia 100% del LLM, sin red de
+  // seguridad (el mismo criterio que ya protege al resto de M2).
+  test('BUG REAL: el % de endeudamiento se detecta tambien en HANDOFF, sin LLM', async () => {
+    const estado = { etapa_bot: 'HANDOFF', estado_codigo: 'calificado',
+      salario_monto: 10_000_000, handoff_razon: 'ambiguo' };
+    const c = await clasificar(ENV_SIN_LLM, estado, 'el 40%');
+    assert.equal(c.endeudamiento_pct, 40, 'el determinista lo extrae sin necesitar al LLM');
+  });
 });
 
 // ===========================================================================

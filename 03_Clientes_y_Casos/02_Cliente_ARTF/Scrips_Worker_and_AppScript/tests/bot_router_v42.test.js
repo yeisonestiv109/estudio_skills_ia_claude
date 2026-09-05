@@ -809,6 +809,19 @@ describe('Detectores deterministas', () => {
     assert.equal(detectarUrgencia('por que es importante resolverlo ahora?'), 'pregunta_por_que');
   });
 
+  // BUG REAL (5-sep-2026): "ahora" dentro de una PREGUNTA se leia como
+  // afirmacion de urgencia -- el bot ignoraba la pregunta del lead y mandaba
+  // directo al pitch de M5.
+  test('BUG REAL: una pregunta sobre "ahora vs despues" no se lee como afirmacion de urgencia', () => {
+    assert.equal(detectarUrgencia('cual es la diferencia si lo hago ahora o despues?'), 'pregunta_por_que');
+    assert.equal(detectarUrgencia('que gano si lo hago ahora?'), 'pregunta_por_que');
+    // Una pregunta que no calza en ningun patron especifico: se abstiene
+    // (null), no fuerza "ahora" -- que decida el LLM.
+    assert.equal(detectarUrgencia('debo hacerlo ahora?'), null);
+    // La afirmacion normal (sin "?") sigue funcionando igual que siempre.
+    assert.equal(detectarUrgencia('si, quiero resolverlo ahora'), 'ahora');
+  });
+
   test('dolor: letra sola y letra con texto (mejorado con el corpus)', () => {
     // El corpus real mostro que el lead NO responde "B" a secas, responde
     // "B sin duda. Siento que me llega la plata...". Antes eso caia al LLM sin
