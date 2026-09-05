@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
-  ESQUEMA_POR_ETAPA,
+  ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -289,5 +289,105 @@ describe('El centinela de limpieza nunca llega a la base', () => {
       'error_tecnico'];
     assert.ok(!RAZONES_REALES.includes(LIMPIAR_HANDOFF));
     assert.match(LIMPIAR_HANDOFF, /^__.*__$/, 'se ve como centinela a simple vista');
+  });
+});
+
+// ===========================================================================
+// MODO SECRETARIA INVISIBLE (`BOT_ACTIVO='false'`) — 5-sep-2026
+//
+// El bot lee, clasifica y guarda para el dashboard, pero no le responde al lead
+// ni avanza el embudo. La propuesta original congelaba la etapa y reusaba
+// `ESQUEMA_POR_ETAPA`; eso NO capturaba nada, porque con la etapa congelada un
+// lead nuevo se queda en `null` para siempre y ahí no hay esquema. Por eso el
+// modo secretaria usa un esquema universal, independiente de la etapa.
+// ===========================================================================
+describe('Modo secretaria invisible', () => {
+  test('la perilla se lee bien y por defecto está ENCENDIDO', () => {
+    assert.equal(enModoSecretaria({}), false, 'sin la variable, el bot funciona normal');
+    assert.equal(enModoSecretaria({ BOT_ACTIVO: 'true' }), false);
+    assert.equal(enModoSecretaria({ BOT_ACTIVO: 'false' }), true);
+    assert.equal(enModoSecretaria({ BOT_ACTIVO: 'FALSE' }), true, 'no distingue mayúsculas');
+    assert.equal(enModoSecretaria({ BOT_ACTIVO: ' false ' }), true, 'tolera espacios');
+  });
+
+  test('el esquema de secretaria NO depende de la etapa y trae el razonamiento', () => {
+    assert.ok(ESQUEMA_SECRETARIA.startsWith('{"analisis_paso_a_paso"'));
+    for (const campo of ['profesion', 'ingreso_cop', 'endeudamiento_pct', 'dolores',
+                         'urgencia', 'crisis', 'hostil']) {
+      assert.match(ESQUEMA_SECRETARIA, new RegExp(`"${campo}"`), `falta ${campo}`);
+    }
+  });
+
+  test('clasifica un lead SIN etapa (el caso que la propuesta original perdía)', async () => {
+    // Sin GROQ_API_KEY no hay LLM, pero lo que se comprueba es que NO corta
+    // antes por `if (!etapa) return c`.
+    const c = await clasificar({ BOT_ACTIVO: 'false' }, null, 'soy médica y gano 12 millones');
+    assert.equal(typeof c, 'object');
+    assert.equal(c.hostil, false);
+  });
+
+  test('los campos extraídos se mapean para Supabase, sin decidir nada', () => {
+    const campos = camposDesdeClasificacion({
+      profesion: 'Médica', ingreso_cop: 12_000_000, endeudamiento_pct: 30,
+      dolores: ['B'], urgencia: 'ahora', acompanado: true,
+    });
+    assert.equal(campos.profesion, 'Médica');
+    assert.equal(campos.salario_monto, 12_000_000);
+    assert.equal(campos.endeudamiento_pct, 30);
+    assert.equal(campos.dolor, 'B');
+    assert.equal(campos.urgencia_raw, 'ahora');
+    assert.equal(campos.asiste_acompanado, true);
+
+    // Lo que NO debe hacer: decidir. Calificar o descalificar sigue siendo del
+    // humano mientras el bot esté callado.
+    assert.equal(campos.califica, undefined, 'no marca calificado');
+    assert.equal(campos.handoff_razon, undefined, 'no escala');
+  });
+
+  test('una cifra dicha a un humano se guarda como NO confirmada', () => {
+    // El guion del bot no la validó: el dashboard tiene que saberlo.
+    assert.equal(camposDesdeClasificacion({ ingreso_cop: 9_000_000 }).ingreso_confirmado, false);
+  });
+
+  test('sin datos no inventa campos', () => {
+    assert.deepEqual(camposDesdeClasificacion({}), {});
+    assert.deepEqual(camposDesdeClasificacion(null), {});
+  });
+
+  test('el dolor D conserva el detalle, como en el flujo normal', () => {
+    const campos = camposDesdeClasificacion({ dolores: ['D', 'B'], dolor_detalle: 'quiero ahorrar' });
+    assert.equal(campos.dolor, 'B,D|quiero ahorrar');
+  });
+});
+
+// ===========================================================================
+// EL CANARIO: modo secretaria sobre tráfico REAL
+//
+// La lista blanca gobierna a quién el bot le HABLA, no a quién escucha. En modo
+// secretaria el bot no le escribe a nadie, así que el freno no aplica -- y sin
+// esa excepción el canario no capturaría nada, porque la lista blanca corta
+// ANTES de clasificar. Lo que NO se desmonta es la lista: sigue intacta para
+// cuando `BOT_ACTIVO=true`.
+// ===========================================================================
+describe('Canario: la lista blanca frena la VOZ, no el OÍDO', () => {
+  test('en modo secretaria el bot NUNCA produce mensajes', async () => {
+    // Es la premisa de seguridad de todo el canario. Si esto se rompe, un lead
+    // real recibiría un mensaje que nadie revisó.
+    const env = { BOT_ACTIVO: 'false' };
+    for (const texto of ['hola', 'gano 12 millones', 'quiero agendar', 'eres un estafador']) {
+      const c = await clasificar(env, { etapa_bot: 'M5_ENVIADO', estado_codigo: 'calificado' }, texto);
+      assert.equal(typeof c, 'object');
+    }
+    // El plan silencioso se arma en el handler; aquí se fija el contrato de que
+    // los campos se extraen pero NO se decide nada.
+    const campos = camposDesdeClasificacion({ ingreso_cop: 12_000_000, urgencia: 'ahora' });
+    assert.equal(campos.califica, undefined);
+    assert.equal(campos.handoff_razon, undefined);
+  });
+
+  test('con el bot ACTIVO la lista blanca sigue siendo el freno', () => {
+    // El canario no puede haber desmontado la protección para cuando hable.
+    assert.equal(enModoSecretaria({ BOT_ACTIVO: 'true' }), false);
+    assert.equal(enModoSecretaria({}), false, 'sin la variable, el bot se considera ACTIVO');
   });
 });

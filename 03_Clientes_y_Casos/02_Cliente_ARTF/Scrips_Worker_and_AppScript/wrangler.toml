@@ -23,5 +23,18 @@ compatibility_date = "2026-09-01"
 # caches). Se deja fuera a proposito para mantener el bundle chico y el
 # arranque en frio bajo.
 
+# ---------------------------------------------------------------------------
+# MODO DEL BOT
+# ---------------------------------------------------------------------------
+# "false" = SECRETARIA INVISIBLE: lee, clasifica y guarda en Supabase para
+#           alimentar el dashboard, pero NO le responde al lead ni avanza el
+#           embudo. Es el canario para salir a trafico real con riesgo cero.
+# "true"  = el bot conversa normalmente.
+#
+# Va como VAR y no como secret a proposito: no es informacion sensible y asi
+# queda versionado -- se ve en el diff quien encendio el bot y cuando.
+[vars]
+BOT_ACTIVO = "false"
+
 [observability]
 enabled = true

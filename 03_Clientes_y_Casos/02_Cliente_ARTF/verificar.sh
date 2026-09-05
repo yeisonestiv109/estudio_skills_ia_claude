@@ -14,6 +14,29 @@ titulo() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 ok()     { printf '\033[32m  PASA\033[0m  %s\n' "$1"; }
 malo()   { printf '\033[31m  FALLA\033[0m %s\n' "$1"; FALLOS=$((FALLOS+1)); }
 
+titulo "0. Sincronia con el control de versiones"
+# POR QUE EXISTE (5-sep-2026): se descubrio que el Worker desplegado en
+# Cloudflare NO era el del repo -- tenia logs `_TMP_DIAG` que no existen en el
+# codigo versionado. Alguien desplego desde otra copia de trabajo. Con dos
+# personas o dos herramientas tocando el mismo Worker, eso reaparece, y el
+# sintoma es el peor posible: se depura un codigo que no es el que corre.
+#
+# No BLOQUEA (avisa), porque en medio de una iteracion es normal tener cambios
+# sin commitear. Lo que no puede pasar es desplegar sin saberlo.
+if git -C "$AQUI" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  SUCIO=$(git -C "$AQUI" status --porcelain -- "$AQUI" 2>/dev/null | wc -l)
+  RAMA=$(git -C "$AQUI" branch --show-current 2>/dev/null)
+  if [ "$SUCIO" -eq 0 ]; then
+    ok "arbol limpio en '$RAMA' -- lo desplegado sera exactamente lo commiteado"
+  else
+    printf '\033[33m  AVISO\033[0m %s cambio(s) sin commitear en '"'"'%s'"'"'\n' "$SUCIO" "$RAMA"
+    printf '         Si despliegas ahora, Cloudflare tendra codigo que NO esta en git.\n'
+    git -C "$AQUI" status --porcelain -- "$AQUI" | head -8 | sed 's/^/           /'
+  fi
+else
+  echo "  (omitido: no es un repo git)"
+fi
+
 titulo "1+3. Tests del bot (router, seguridad, cumplimiento del playbook)"
 if (cd "$AQUI/Scrips_Worker_and_AppScript" && node --test "tests/*.test.js" >/tmp/artf_tests.log 2>&1); then
   ok "$(grep -E '^ℹ pass' /tmp/artf_tests.log | tr -d '\n')"

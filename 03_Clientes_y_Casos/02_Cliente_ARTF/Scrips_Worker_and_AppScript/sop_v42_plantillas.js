@@ -34,7 +34,11 @@
 export const CALENDAR_PRUEBAS = 'https://calendar.app.google/hMEGoX9T6DVsThft6';
 export const CALENDAR_ARTF = 'https://calendar.app.google/iMW5LBbkcAvorypF9';
 
-export const CALENDAR_LINK = CALENDAR_PRUEBAS;
+// PRODUCCION (5-sep-2026): se cambia al calendario de ARTF. Hasta hoy apuntaba
+// al calendario PERSONAL de Andres, que era el bloqueante rojo #1 para salir a
+// leads reales -- cada lead que agendaba entraba en la agenda equivocada.
+// Ambos links se verificaron con HTTP 200 antes del cambio.
+export const CALENDAR_LINK = CALENDAR_ARTF;
 
 /**
  * APERTURA PERSONALIZADA — el LLM enlaza lo que dijo el lead con la plantilla.
@@ -131,6 +135,30 @@ export const CATCHALL_LLM_HABILITADO = true;
  * y que alguien se disculpe y quiera seguir es normal en ventas. El Setter ve
  * todo en el log igual.
  */
+/**
+ * TODAS las razones de handoff que el router puede emitir.
+ *
+ * Existe para que los tags de ManyChat se puedan derivar de aca en vez de
+ * crearse a mano. El 5-sep se descubrio que en la cuenta solo existia un tag
+ * llamado literalmente `V42_HANDOFF_*` -- alguien creyo que el asterisco era un
+ * comodin. ManyChat no soporta comodines: cada tag debe existir con su nombre
+ * exacto, y por eso TODOS los `addTagByName` de handoff devolvian
+ * "Tag does not exist" y la señal al Setter estaba muerta.
+ */
+export const RAZONES_HANDOFF = [
+  'crisis_emocional', 'contenido_hostil', 'ex_cliente', 'ambiguo',
+  'objecion_fuera_playbook', 'objecion_no_habilitada', 'pregunta_precio',
+  'resistencia_repetida', 'resistencia_acumulada',
+  'agendamiento_manual_pendiente', 'error_tecnico',
+];
+
+/** Los tags que el bot puede aplicar, SIN el prefijo de entorno. */
+export const TAGS_DEL_BOT = [
+  'ATENDIDO_BOT', 'HANDOFF_ANDRES', 'DESCALIFICADO', 'CALENDARIO_ENVIADO',
+  'ERROR_TECNICO_BOT',
+  ...RAZONES_HANDOFF.map((r) => `HANDOFF_${r.toUpperCase()}`),
+];
+
 export const HANDOFF_NO_RECUPERABLE = new Set([
   'crisis_emocional',
   'ex_cliente',

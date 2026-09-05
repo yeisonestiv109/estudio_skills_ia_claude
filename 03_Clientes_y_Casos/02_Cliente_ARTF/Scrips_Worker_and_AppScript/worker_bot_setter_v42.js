@@ -58,6 +58,7 @@ import {
   CATCHALL_LLM_HABILITADO, LIMPIAR_HANDOFF,
 } from './sop_v42_plantillas.js';
 import { verificarTextoGenerado } from './verificador_cumplimiento.js';
+import { notificarSetterGoogleChat } from './notificador_google_chat.js';
 
 // Presupuesto de latencia: ManyChat corta la External Request cerca de los
 // 12-15s. Se deja margen para responder SIEMPRE algo antes de ese corte.
@@ -75,6 +76,17 @@ export default {
       return await manejar(request, env, ctx);
     } catch (err) {
       console.error('UNCAUGHT bot v4.2:', err?.stack || err);
+      // El caso mas grave de todos: el bot se colgo. Aca no hay `estado` ni
+      // `plan` (la excepcion pudo ocurrir antes de leerlos), asi que la alerta
+      // va con lo minimo -- pero VA. Antes este camino era mudo por completo.
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(notificarSetterGoogleChat(
+          env,
+          { nombre: 'Lead sin identificar (fallo tecnico)', ig_handle: null },
+          { handoffRazon: 'error_tecnico' },
+          `El bot lanzo una excepcion: ${String(err?.message || err).slice(0, 200)}`,
+        ));
+      }
       // Nunca dejar al lead sin respuesta por un error nuestro.
       return json({
         ok: false, responder: true, msg: render(P.FALLBACK_ERROR, ''),
@@ -148,7 +160,16 @@ async function manejar(request, env, ctx) {
   const hayListaBlanca = idsPrueba.length > 0;
   const esPrueba = idsPrueba.includes(subId);
 
-  if (hayListaBlanca && !esPrueba) {
+  // La lista blanca gobierna a quien el bot le HABLA, no a quien ESCUCHA.
+  //
+  // En modo secretaria el bot no le escribe a nadie por definicion, asi que el
+  // freno no aplica: lo que se busca justamente es oir trafico REAL y llenar el
+  // dashboard. Sin esta excepcion, el canario en modo secretaria no capturaria
+  // absolutamente nada -- este `return` corta antes de clasificar.
+  //
+  // Lo importante: la lista blanca NO se desmonta. Sigue intacta para el dia que
+  // se encienda `BOT_ACTIVO=true`, que es cuando el bot puede decir algo malo.
+  if (hayListaBlanca && !esPrueba && !enModoSecretaria(env)) {
     console.warn(`Ignorado por lista blanca: ${subId} no esta en MANYCHAT_IDS_PRUEBA.`);
     return json({ ok: true, responder: false, motivo: 'fuera_de_lista_blanca' });
   }
@@ -213,7 +234,24 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // 4. Ruteo determinista -> que se envia y a que estado se pasa
   // -------------------------------------------------------------------------
-  const plan = decidirTurno(estado, clasificacion, lastText);
+  // -------------------------------------------------------------------------
+  // 4.b MODO SECRETARIA: se guarda lo aprendido, pero el bot no habla ni avanza
+  // -------------------------------------------------------------------------
+  // La etapa se congela a proposito: el guion lo lleva un humano, y avanzarla
+  // dejaria al bot creyendo que hizo preguntas que nunca hizo. Si el dia de
+  // mañana se enciende `BOT_ACTIVO=true`, el lead retoma donde el humano lo dejo.
+  const plan = enModoSecretaria(env)
+    ? {
+      mensajes: [],
+      etapaNueva: estado?.etapa_bot ?? null,
+      estadoDestino: null,
+      handoffRazon: null,
+      motivoPerdida: null,
+      campos: camposDesdeClasificacion(clasificacion),
+      permitirEmpatia: false,
+      summary: 'Modo secretaria: se registro el mensaje y se extrajeron datos; el bot no respondio.',
+    }
+    : decidirTurno(estado, clasificacion, lastText);
 
   // Empatia dinamica: 1-2 frases del LLM antepuestas a la plantilla literal.
   // Limite duro de caracteres en el Worker -- no se confia solo en el prompt.
@@ -272,6 +310,14 @@ async function manejar(request, env, ctx) {
       ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, conPrefijo(env, 'HANDOFF_ANDRES'), 'add'));
       ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, conPrefijo(env, 'ERROR_TECNICO_BOT'), 'add'));
     }
+    // HUECO QUE ESTO CIERRA: este camino tambien deja al lead en manos de un
+    // humano, pero la alerta vivia mas abajo (paso 6b) y aca se retorna antes.
+    // O sea: justo cuando el bot se "cuelga" -- el caso mas urgente -- nadie se
+    // enteraba. Reportado por el equipo el 5-sep.
+    if (ctx?.waitUntil) {
+      ctx.waitUntil(notificarSetterGoogleChat(
+        env, estado, { handoffRazon: 'error_tecnico' }, lastText));
+    }
     return json({
       ok: false, responder: true, msg: render(P.FALLBACK_ERROR, nombre),
       msg2: '', msg3: '', msg4: '', handoff: true, handoff_razon: 'error_tecnico',
@@ -281,7 +327,7 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // 6. Tags de ManyChat (fire-and-forget, nunca retrasan la respuesta)
   // -------------------------------------------------------------------------
-  if (env.MANYCHAT_API_TOKEN && ctx?.waitUntil) {
+  if (env.MANYCHAT_API_TOKEN && ctx?.waitUntil && !enModoSecretaria(env)) {
     const tag = (nombreTag) => conPrefijo(env, nombreTag);
     ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('ATENDIDO_BOT'), 'add'));
     if (plan.handoffRazon) {
@@ -295,6 +341,13 @@ async function manejar(request, env, ctx) {
     if (plan.campos.calendario_enviado) {
       ctx.waitUntil(aplicarTag(env.MANYCHAT_API_TOKEN, subId, tag('CALENDARIO_ENVIADO'), 'add'));
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // 6b. Alerta Google Chat al Setter (fire-and-forget, misma estrategia que tags)
+  // -------------------------------------------------------------------------
+  if (plan.handoffRazon && plan.handoffRazon !== LIMPIAR_HANDOFF && ctx?.waitUntil) {
+    ctx.waitUntil(notificarSetterGoogleChat(env, estado, plan, lastText));
   }
 
   const respuesta = json({
@@ -329,6 +382,17 @@ async function manejar(request, env, ctx) {
 export async function clasificar(env, estado, texto) {
   const etapa = estado?.etapa_bot || null;
   const c = { hostil: detectarHostilidad(texto) };
+
+  // MODO SECRETARIA: se clasifica SIEMPRE, haya etapa o no, con el esquema
+  // universal. Los deterministas por etapa NO corren: todos asumen que el bot
+  // acaba de hacer una pregunta concreta, y aca las preguntas las hace un
+  // humano, asi que aplicarlos leeria respuestas que nadie pidio.
+  if (enModoSecretaria(env)) {
+    if (c.hostil) return c;
+    const llm = await clasificarConLLM(env, etapa, texto, {}, ESQUEMA_SECRETARIA)
+      .catch((e) => { console.error('LLM (secretaria) fallo:', e?.message); return {}; });
+    return { ...c, ...llm };
+  }
 
   // Lead nuevo: no hay nada que clasificar, se envia M1 y ya.
   if (!etapa) return c;
@@ -475,6 +539,67 @@ const CAMPOS_COMUNES =
   + ', "recupera_handoff": boolean'
   + (CATCHALL_LLM_HABILITADO ? ', "respuesta_empatica": string|null' : '');
 
+/**
+ * ===========================================================================
+ * MODO SECRETARIA INVISIBLE (`BOT_ACTIVO='false'`)
+ * ===========================================================================
+ * El bot lee, clasifica y guarda en Supabase para alimentar el dashboard, pero
+ * NO le responde al lead ni avanza el embudo (las preguntas las hace un humano).
+ *
+ * ⚠️ POR QUE HACE FALTA UN ESQUEMA APARTE, y no vale reusar el de la etapa:
+ * `ESQUEMA_POR_ETAPA` esta indexado por etapa, y en modo secretaria la etapa
+ * NUNCA avanza -- se queda en la que estuviera, y en un lead nuevo se queda en
+ * `null`. Con `null` no hay esquema, `clasificarConLLM` retorna {} y ademas
+ * `clasificar` corta antes con `if (!etapa) return c`. Resultado: NO se
+ * extraeria nada, justo lo contrario de lo que se busca.
+ *
+ * Este esquema no depende de ninguna pregunta previa: saca lo que aparezca en
+ * cualquier mensaje, que es lo que hace una secretaria escuchando la charla.
+ */
+export const ESQUEMA_SECRETARIA =
+  `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, `
+  + '"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, '
+  + '"dolores": ["A"|"B"|"C"|"D"], "dolor_detalle": string|null, '
+  + '"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, '
+  + '"acepta": boolean, "confirmo_agendo": boolean, "acompanado": boolean|null, '
+  + `${CAMPOS_COMUNES}}`;
+
+/** ¿Esta el bot en modo secretaria (lee y guarda, pero no habla)? */
+export function enModoSecretaria(env) {
+  return String(env?.BOT_ACTIVO ?? 'true').trim().toLowerCase() === 'false';
+}
+
+/**
+ * Traduce la clasificacion a los `campos` que espera la RPC.
+ *
+ * En modo normal esto lo produce el router dentro del `plan`. En modo
+ * secretaria no hay router, asi que se mapea aca -- pero SIN decidir nada:
+ * solo se guarda lo que el lead dijo. Ninguna descalificacion, ningun
+ * `califica`, ningun cambio de estado. Eso sigue siendo trabajo del humano.
+ */
+export function camposDesdeClasificacion(c) {
+  const campos = {};
+  if (c?.profesion) campos.profesion = c.profesion;
+  if (typeof c?.ingreso_cop === 'number') {
+    campos.salario_monto = c.ingreso_cop;
+    // Lo dijo en una charla con un humano, no confirmado por el guion del bot.
+    campos.ingreso_confirmado = false;
+  }
+  if (typeof c?.endeudamiento_pct === 'number') campos.endeudamiento_pct = c.endeudamiento_pct;
+  if (Array.isArray(c?.dolores) && c.dolores.length) {
+    campos.dolor = serializarDolorSecretaria(c.dolores, c.dolor_detalle);
+  }
+  if (c?.urgencia) campos.urgencia_raw = c.urgencia;
+  if (typeof c?.acompanado === 'boolean') campos.asiste_acompanado = c.acompanado;
+  return campos;
+}
+
+function serializarDolorSecretaria(letras, detalle) {
+  const orden = [...new Set(letras.map((x) => String(x).toUpperCase()))].sort();
+  const base = orden.join(',');
+  return orden.includes('D') && detalle ? `${base}|${String(detalle).slice(0, 200)}` : base;
+}
+
 export const ESQUEMA_POR_ETAPA = {
   M1_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
   M1_INGRESO_AMBIGUO:   `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
@@ -539,9 +664,9 @@ const CONTEXTO_POR_ETAPA = {
   HANDOFF: 'El lead fue escalado a un humano y este es un mensaje NUEVO que escribe despues. "recupera_handoff" es true SOLO si el lead da un dato pendiente, dice que quiere seguir/continuar, o pide agendar -- NO ante un simple saludo, un "hola" suelto, o una queja sin intencion de avanzar. Si el lead da una cifra de ingreso o de deuda/remanente -- aunque sea aproximada ("por ahi unos 4 millones") o partida en dos mensajes ("si me queda algo" + despues "unos 4m") -- extraela en los campos de dinero: sirve para no volver a preguntarla al retomar.',
 };
 
-async function clasificarConLLM(env, etapa, texto, det) {
+async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null) {
   if (!env.GROQ_API_KEY) return {};
-  const esquema = ESQUEMA_POR_ETAPA[etapa];
+  const esquema = esquemaForzado || ESQUEMA_POR_ETAPA[etapa];
   if (!esquema) return {};
 
   const system = `Eres un clasificador para un bot de ventas colombiano. NO escribes el mensaje que ve el lead: solo extraes datos y una frase corta de empatia.
@@ -880,13 +1005,43 @@ export function conPrefijo(env, nombreTag) {
 async function aplicarTag(token, subscriberId, tagName, accion) {
   if (!token || !subscriberId || !tagName) return;
   const endpoint = accion === 'remove' ? 'removeTagByName' : 'addTagByName';
+  const llamar = () => fetch(`https://api.manychat.com/fb/subscriber/${endpoint}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscriber_id: subscriberId, tag_name: tagName }),
+  });
+
   try {
-    const resp = await fetch(`https://api.manychat.com/fb/subscriber/${endpoint}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subscriber_id: subscriberId, tag_name: tagName }),
-    });
-    if (!resp.ok) console.error('tag', tagName, resp.status, await resp.text());
+    let resp = await llamar();
+    if (resp.ok) return;
+
+    const cuerpo = await resp.text();
+
+    // AUTO-REPARADO. ManyChat exige que el tag EXISTA antes de aplicarlo, y no
+    // soporta comodines: el 5-sep se encontro un tag llamado literalmente
+    // `V42_HANDOFF_*` y por eso TODOS los tags de handoff fallaban en silencio
+    // desde el primer dia -- la señal al Setter estaba muerta.
+    //
+    // `sincronizar_tags_manychat.mjs` siembra los que se conocen hoy. Esto cubre
+    // el dia que agreguemos una razon nueva y nadie corra el script: se crea al
+    // vuelo y se reintenta UNA vez. Sin esto, el fallo vuelve a ser mudo.
+    if (accion !== 'remove' && /tag does not exist/i.test(cuerpo)) {
+      console.warn(`[tag] ${tagName} no existia en ManyChat: se crea al vuelo.`);
+      const creado = await fetch('https://api.manychat.com/fb/page/createTag', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: tagName }),
+      });
+      if (!creado.ok) {
+        console.error('[tag] no se pudo crear', tagName, creado.status, (await creado.text()).slice(0, 200));
+        return;
+      }
+      resp = await llamar();
+      if (resp.ok) { console.log(`[tag] ${tagName} creado y aplicado.`); return; }
+      console.error('[tag] reintento fallo', tagName, resp.status, (await resp.text()).slice(0, 200));
+      return;
+    }
+    console.error('tag', tagName, resp.status, cuerpo.slice(0, 200));
   } catch (e) { console.error('tag error', tagName, e?.message); }
 }
 
