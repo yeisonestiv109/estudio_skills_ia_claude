@@ -517,6 +517,21 @@ confirmo que sabia que eran y autorizo desplegar encima. Pendiente real: ese
 codigo de Yeisiton sigue sin llegar al repo -- sincronizar antes de la proxima
 sesion para no perderlo.
 
+**Verificacion en vivo contra el Worker YA desplegado** (no solo tests locales),
+sobre el lead de prueba real `1269883784` (Marly), reseteado con un PATCH directo
+a `gestion_leads` (limpiar `handoff_razon`/`endeudamiento_pct` via la RPC no
+funciona -- coalesce preserva el valor viejo, limitacion ya documentada):
+
+1. `M2_ENVIADO` + "no se, la verdad no estoy segura" -> `"Sin presión, dame un
+   estimado..."` (`M2_NO_SABE`), NO la plantilla de "info sensible". Confirmado.
+2. `M6_ENVIADO` + "no me aparece nada" -> pide la franja, handoff YA puesto,
+   etapa `SIN_HORARIOS_ESPERANDO_FRANJA`. Respuesta "los sábados en la mañana"
+   -> cierre real (`"¡Listo, [PRUEBA]!..."`, fallback determinista -- el
+   catch-all del LLM no genero nada usable esta vez) en vez de silencio, y
+   despues si se calla para siempre (`handoff_activo`). Confirmado.
+
+Lead de prueba reiniciado a `etapa_bot=null`/`handoff_razon=null` al terminar.
+
 ---
 
 ## Decisiones cerradas (no volver a abrir)
