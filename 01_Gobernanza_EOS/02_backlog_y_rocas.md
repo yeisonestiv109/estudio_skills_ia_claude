@@ -4457,11 +4457,237 @@ También se descubrió por qué un `"40%"` no obtuvo respuesta: **ningún dispar
 - **`"Contame"` es voseo** y aparece en 3 archivos de Javier, violando su propia Regla #2 de tuteo colombiano estricto. En nuestra copia va como `"Cuéntame"`.
 
 ### ⚠️ Pendientes exactos para retomar
-1. **Redesplegar el Worker** (`npx wrangler deploy`) — el código cambió mucho después del último despliegue.
-2. **Reiniciar los leads de prueba** (`813370090`, `1269883784`) — quedaron a mitad de flujo.
+1. ~~**Redesplegar el Worker**~~ — ✅ **hecho el 3-sep de noche** (ver la sesión siguiente).
+2. ~~**Reiniciar los leads de prueba**~~ — ✅ **hecho el 3-sep de noche**.
 3. **Probar de nuevo**, mirando sobre todo: que las **4 burbujas del cierre lleguen en orden y el link quede último y clickeable** (ManyChat no permite pausas menores a 10s, así que van sin pausa; con 2 burbujas ya funcionó, con 4 no se ha probado).
 4. **Probar la vinculación de reserva como Setter** (no como admin) — es lo que arregla H1.
 5. **El link es el PERSONAL del fundador.** Cambiar `CALENDAR_LINK` a `CALENDAR_ARTF` antes de producción.
 6. Bumps del SOP de Recuperación: necesitan un **Cron Trigger** de Cloudflare.
 7. Debounce real (Cloudflare KV) si el double-texting resulta frecuente.
 8. Re-correr `e2e/setter-agendado.spec.ts` cuando el entorno esté estable.
+
+---
+
+## 🤖 Sesión 3-sep-2026 (noche) — Redespliegue + la Objeción 6 con psicología de Setter
+
+**Estado: Worker redesplegado** (`artf-bot-setter-v42`, versión `ebf17b76`) y compuerta **`./verificar.sh` en verde con 183 tests y las 5 de 5 compuertas corridas de verdad** — es la primera vez que se corren las 5, no 3.
+
+### El `activity_log` desmintió lo que creíamos desplegado
+Antes de proponer nada se leyó el log real de los dos leads de prueba. El de Marly (`1269883784`) mostró que el Worker **en vivo seguía siendo el de antes de los arreglos de la It. 6**: su respuesta a la Objeción 6 todavía remataba con *"O directamente agenda la llamada de diagnóstico de..."* y el link. Los arreglos existían en el código, **no en Cloudflare**. Leer el log primero es lo que evitó dar por bueno un arreglo que el lead nunca vio.
+
+### El roce de ventas que quedaba, y la regla nueva
+Ya con los arreglos aplicados, la Objeción 6 en M1 respondía *"esa info es sensible..."* y acto seguido repetía la pregunta pendiente de M1: **"¿A qué te dedicas y cuánto ganas al mes?"** — es volver a pedirle exactamente lo que el lead acaba de negarse a dar. Se lee como presión.
+
+**Decisión del fundador:** la Objeción 6 **durante el Filtro 1** le perdona la profesión y la cifra exacta, y pregunta **solo por el rango**, que se contesta con un "Sí".
+
+| Antes | Ahora |
+|---|---|
+| "Esa info es sensible…" + *"¿A qué te dedicas y cuánto ganas al mes?"* | "Esa info es sensible…" + *"…el proceso funciona mejor para personas que ganan entre $7M y $15M COP. ¿Estás en ese rango?"* |
+| Se queda en `M1_ENVIADO` | Pasa a `M1_RANGO_PREGUNTADO` |
+
+**Cero copy nuevo.** La plantilla es la Objeción 6 aprobada recortada **un párrafo más** que la variante pre-pitch, porque el párrafo que se quita abre con *"Te pregunto porque..."* y `M1_PEDIR_RANGO` abre igual: pegados quedaban dos justificaciones seguidas con la misma cabeza de frase. Mismo mecanismo de recorte por código que ya existía.
+
+**Lo que casi se olvida:** mover la etapa. Sin eso el bot haría la pregunta del rango pero seguiría escuchando en `M1_ENVIADO`, donde un "Sí" pelado no es respuesta válida de ingreso — y se atascaría **exactamente igual que Marly**. Es la única objeción que mueve de etapa.
+
+### La compuerta volvió a hacer su trabajo
+El verificador de cumplimiento rechazó la plantilla nueva con `R8_COPY_NO_APROBADO`, y **tenía razón**: su lista blanca se arma desde la biblioteca y la variante no estaba registrada. Se registró, igual que ya lo estaban las variantes pre-pitch. **No se debilitó la regla.**
+
+**Dos tests se reescribieron, y queda anotado por qué** (LOOPS.md §2 lo permite solo cuando el fundador cambia el comportamiento a propósito, que es este caso). Sus asertos anti-link quedaron intactos; solo cambió la pregunta esperada y la etapa. Se agregaron 4 tests (179 → 183), incluido uno que fija que la 6 **fuera** de M1 sigue igual que siempre, y un guardarraíl que comprueba que la excepción no adelanta al lead más allá del Filtro 1.
+
+### Lo que queda
+1. **Probar en Instagram** (Yeison). Los dos leads de prueba están reiniciados a `nuevo` / `etapa_bot = null` — el UPDATE se ensayó antes con `begin/rollback`.
+2. Lo #1 a vigilar sigue siendo **que las 4 burbujas del cierre lleguen en orden y el link quede último**.
+3. Probar la vinculación de reserva **como Setter, no como admin**.
+4. 🔴 El link sigue siendo el calendario **personal** del fundador: cambiar a `CALENDAR_ARTF` antes de producción.
+
+---
+
+## 🔴 Sesión 4-sep-2026 — Auditoría de arquitectura: 2 bugs P0 encontrados y corregidos
+
+**Contexto:** el fundador pidió una auditoría brutalmente honesta del diseño, proponiendo pivotar a *"LLM como Evaluador de Filtros"* (Vercel AI SDK, router pasivo, playbook en el system prompt). Antes de opinar se verificó la premisa contra el código. **La premisa era cierta; la causa atribuida, no.**
+
+### Los 2 P0 (ambos en la capa determinista, ninguno arquitectónico)
+
+| # | Bug | Impacto real |
+|---|---|---|
+| **P0-1** | `ReferenceError: limpio is not defined` en `clasificar()`, rama M2 | **Reventaba el Filtro 2 completo** (`M2_ENVIADO` + `M2_NO_SABE`) para todos los leads. El crash cae antes de la escritura síncrona: el turno **no se registraba** y el lead recibía `FALLBACK_ERROR` + handoff `error_tecnico` |
+| **P0-2** | `detectarEndeudamientoPct("pago 2 millones al mes")` → **`2`** | **Peor que escalar.** 2 % es un endeudamiento excelente: el lead **pasaba el Filtro 2 en silencio con un dato inventado.** Sin error, sin handoff, sin rastro |
+
+El P0-1 lo introduje yo en las ediciones del 3-sep por la noche y **lo desplegué**. La conversión monto→% del P0-2 ya existía y era correcta en el router — nunca llegaba a ejecutarse.
+
+### La causa raíz de fondo: el agujero de cobertura
+
+183 tests, type-check verde, verificador de cumplimiento verde, smoke en vivo verde… y **`clasificar()`, que corre en cada turno, tenía cero tests.** Los tests del router entran por `decidirTurno` con las pistas **ya clasificadas**, saltándose la capa de clasificación entera. El simulador hace lo mismo.
+
+> **La compuerta verificaba brillantemente la mitad del sistema.** Esa es la lección, no "cambiemos de framework".
+
+Se agregaron 24 tests (183 → **207**), incluido un barrido que exige que ninguna etapa pueda reventar al clasificar, sin LLM y sin red. Desplegado: versión `d446d100`.
+
+### Veredicto de la auditoría
+
+Documento completo: `03_Clientes_y_Casos/02_Cliente_ARTF/auditoria_arquitectura_bot_v42.md`.
+
+**Se rechaza el pivote; se aceptan 2 de sus 5 componentes.**
+
+- ✅ **AI SDK `generateObject` + Zod** — mejora real, pero es cambiar de librería en ~80 líneas, no un pivote. Lo que hay hoy (`ESQUEMA_POR_ETAPA` como string + `parseJsonLLM` con regex + 45 líneas de coerción) es literalmente un Zod mal hecho a mano.
+- ✅ **Memoria corta** (últimos N turnos) — pero **solo al clasificador**, y dentro de `fn_bot_get_estado` para no agregar un viaje.
+- ❌ **`respuesta_generada`** — reabre la decisión cerrada de empatía apagada, reabre toda la superficie de inyección de prompt (**y este bot envía un link de calendario**), **borra la compuerta 3** (el verificador compara contra huellas de plantillas aprobadas: si el LLM redacta, no hay contra qué comparar) y rompe el corpus.
+- ❌ **`estado_siguiente` por LLM** — las transiciones se enforzan en 4 sitios, uno es un CHECK de Postgres. En un embudo auditable, las transiciones son código.
+- ❌ **Playbook en el system prompt** — el copy es del cliente y las variantes pre-pitch se derivan por código para que no puedan desincronizarse.
+
+**La conclusión incómoda:** con `respuesta_generada` los dos P0 de hoy **no habrían sido detectables** — el P0-2 no lanza excepción, califica en silencio. Se encontró porque existe una capa determinista a la que se le puede hacer `assert.equal(...)`. El determinismo no es la deuda técnica de este sistema: es su instrumentación.
+
+---
+
+## 🧩 Sesión 4-sep-2026 (continuación) — Playbook como tabla de datos, las 9 objeciones abiertas y la escalera de repreguntas
+
+**Estado:** desplegado (`c1a7c171`), compuerta en verde con **264 tests** (179 → 264 en el día). Anexo completo en `02_Cliente_ARTF/auditoria_arquitectura_bot_v42.md`.
+
+### Decisiones del fundador tomadas en esta sesión
+| Decisión | Resultado |
+|---|---|
+| Abrir **las 9 objeciones** | Hecho. La perilla es el campo `habilitada` de la tabla |
+| Subir umbrales de resistencia a **3 y 4** | Hecho. ⚠️ **Contradice el PDF V4.2 — comentárselo a Javier** |
+| **2 intentos** de repregunta, copy mío + aprobación de Javier | Construido y **APAGADO** hasta la aprobación |
+| Escaladas de **seguridad** intactas | crisis, hostilidad y ex cliente siguen escalando siempre |
+
+### Lo que se rechazó de la propuesta, y por qué
+- **Tool calling para el glosario:** añade un viaje redondo dentro del timeout de ManyChat para consultar una tabla estática de 20 líneas. Y el ejemplo que motivaba la propuesta —*"gano el mínimo integral"*— **ya funcionaba**: se verificó contra el código.
+- **Copy en Supabase:** la compuerta 3 construye su lista blanca desde la biblioteca, **offline, en cada commit**. Con el copy remoto, o se mete red en los unit tests o se deja de verificar el texto real. Y una fila editada pone copy sin aprobar frente a leads sin revisión.
+
+### Lo que sí se hizo
+**El playbook es ahora UNA tabla de datos.** `PLAYBOOK_OBJECIONES` reemplaza 4 sitios sueltos (mapa, perilla, recortes pre-pitch, y la lista de disparadores que estaba **hardcodeada en el prompt del Worker**). Agregar una objeción = agregar una entrada. Hay tests que verifican que las derivaciones no se desincronizan y que el recorte pre-pitch sigue siendo un **prefijo** del copy aprobado.
+
+**Bug latente destapado:** el barrido de la It. 6 solo miró las objeciones con **link** (2, 3, 6) y se saltó la **1** — habilitada desde el principio y cerrando agenda en M1 con *"Sin presión. ¿Te parece?"*, a un lead sin ningún filtro pasado. Un cierre de agenda no necesita link para serlo. La compuerta ahora barre las 9 × 4 etapas.
+
+**La escalera se midió antes de construirse.** La intuición eran 5 reintentos; al medir, M1 y M2 **ya preguntaban dos veces** y solo M4 y M5 escalaban al primer intento. Son **2 peldaños, no 5**. Con guarda anti-bucle: la etapa de reintento cae en el mismo `case` que su madre, y sin la guarda el lead nunca llegaría a un humano.
+
+**La trampa de los 4 sitios quedó verificable:** el smoke de RPC prueba ahora **las 18 etapas que el router puede escribir** (antes 4), y hay un test que exige esquema de LLM en toda etapa conversacional — que es lo que ya apagó la detección de crisis sin que nadie lo viera.
+
+### Pendientes
+1. Javier aprueba el copy de los 2 peldaños → encender `ESCALERA_REPREGUNTAS_HABILITADA`.
+2. Comentarle a Javier los umbrales de resistencia.
+3. AI SDK + Zod (~80 líneas): verificar antes que Groq soporte structured outputs con el modelo actual y medir el bundle.
+4. Memoria corta (últimos N turnos) dentro de `fn_bot_get_estado`, solo al clasificador.
+5. **3ª prueba en vivo** — sigue siendo lo #1: que las 4 burbujas del cierre lleguen en orden.
+
+---
+
+## 🎯 Sesión 4-sep-2026 (cierre) — Flujo del Setter humano implementado: modelo financiero, matriz de objeciones y catch-all
+
+**Estado: desplegado (`1dc20dcb`), compuerta en verde con 293 tests (179 → 293 en el día). Listo para QA.**
+
+### Auditoría express antes de codificar: 3 bloqueantes y 5 defectos
+Dos habrían descalificado leads buenos. El más caro: **una rama del flujo era matemáticamente inalcanzable** (`remanente < 2.5M` **y** `deuda < 50%` no puede darse con ingreso ≥ 6M — probado sobre todo el espacio, 0 casos). Y **la banda $6M–$7M**: el umbral bajó pero el copy sigue preguntando por 7M, así que esos leads califican y contestarían "No".
+
+### Decisiones comerciales del fundador
+| Tema | Decisión |
+|---|---|
+| Banda $6M–$7M | **Se asume la pérdida.** El copy no cambia; un "No" al rango descalifica directo |
+| Salario asumido al confirmar rango | Se trata como cifra real, atado a la cifra que dice el copy (test lo exige) |
+| Catch-all del LLM | **A prueba**, con verificación propia. El fundador avisará si se quita |
+| Orden final del embudo | **Opción A confirmada**: acompañante ANTES del link (revierte el cambio del prompt anterior) |
+
+### Dos cosas ya estaban hechas — verificarlo evitó duplicarlas
+- **La "versión corta" de la Objeción 9 ya era la nuestra**, idéntica carácter a carácter al documento de Javier.
+- **`P.CIERRE_PRECALL` ya era el texto exacto de M8**, palabra por palabra.
+
+### Bug real encontrado por un test propio mientras se escribía
+La comprobación de la matriz de fases estaba **antes** de las reglas de escalamiento: un lead que insistía con una objeción fuera de fase **se reencauzaba indefinidamente y nunca llegaba a un humano**. Movido y con test.
+
+### El catch-all, construido con lo que sí se puede verificar
+Es la única pieza de texto libre que ve el lead. `verificarTextoGenerado` rechaza links, datos de contacto, léxico de inyección, voseo, tercera persona de Andrés, léxico prohibido y afirmar un agendamiento — y **el saneo del Worker usa esas mismas reglas**, así que enviar y verificar no pueden divergir. La exención de la lista blanca aplica solo a la burbuja marcada como generada; hay test de que no sirve para colar copy.
+
+### Pendientes
+1. **QA final en Instagram** (Yeison). Leads de prueba reiniciados.
+2. Javier: aprobar `M2_PEDIR_SOBRANTE`, `M4_URGENCIA_REINTENTO`, `M5_PITCH_REINTENTO` → encender `COPY_PENDIENTE_HABILITADO` y `ESCALERA_REPREGUNTAS_HABILITADA`.
+3. Javier: los umbrales de resistencia (3 y 4) contradicen su PDF V4.2.
+4. 🔴 El link sigue siendo el calendario **personal** del fundador.
+5. AI SDK + Zod y memoria corta siguen pendientes (ver la auditoría).
+
+---
+
+## 🔬 Sesión 4-sep-2026 (QA) — Primer QA en vivo del flujo nuevo: 3 hallazgos corregidos
+
+**Desplegado `93e6182b`, compuerta en verde con 300 tests.**
+
+### El hallazgo que importa: la regla contaba curiosidad como resistencia
+
+El QA reportó "el bot se quedó en silencio en M5" con dos sospechas: el candado del texto generado, o la máquina de estados. **Ninguna era.** El `activity_log` mostró que las cuatro clasificaciones fueron correctas y que el bot hizo exactamente lo diseñado:
+
+> "¿es gratis?" (Obj 1) · "quiero saber más del método" (Obj 5) · "¿cuánto cuesta el programa?" (Obj 7) · "lo voy a pensar" (Obj 3) → **4 acumuladas → handoff** → y 30 segundos después *"pero mejor sí, agendemos"* con el bot ya mudo.
+
+**Las tres primeras eran señales de COMPRA.** La regla se llama `resistencia_acumulada` pero estaba contando preguntas. Un lead interesado que pregunta cuatro veces se veía igual que uno que se resiste. Ahora solo las objeciones **2, 3, 4 y 6** suman al tope; la secuencia exacta del QA convierte en vez de escalar, y quedó como corpus de regresión.
+
+### Los otros dos
+- **El bot se ponía a la defensiva sin motivo.** A quien solo olvidó decir su salario se le respondía con el texto escrito para desactivar objeciones. Ahora hay dos variantes de la pregunta del rango.
+- **El LLM leyó "deudas" y dijo que no era financiero**, y el bot le dijo "puede que no seamos el mejor fit" a una lead cuyo dolor son literalmente deudas. Arreglado en los dos lados: prompt explícito **y** detector determinista que gana sobre el LLM — el prompt solo no bastaba, el modelo ya había fallado con un caso obvio.
+
+### Red de seguridad
+Cuando el handoff sí es correcto y el lead acepta después, el log lo marca `⚠️ EL LEAD QUIERE AGENDAR y el bot está en silencio`. Antes quedaba enterrado en un log genérico.
+
+### Higiene detectada
+El lead del QA quedó en la base como `Lead 1269883784`, **sin el prefijo `[PRUEBA]`** — pasa cuando ManyChat no envía nombre. En el dashboard es indistinguible de un lead real. Vale la pena revisarlo antes de abrir la lista blanca.
+
+---
+
+## ✍️ Sesión 4-sep-2026 (2º QA) — Raíces muertas y apertura personalizada
+
+**Desplegado `832e672b`, compuerta en verde con 317 tests.**
+
+### El bug era mío y peor de lo reportado
+El QA reportó que `"d. quiero ahorrar"` no se detectaba como dolor financiero. Al probarlo: **`ahorro`, `ahorrar`, `invertir`, `inversion`, `financiero` y `economicos` fallaban todos**. Escribí las raíces con `\b` **al final** (`\bahorr\b`) y `\b` no cierra entre dos letras — **esas cuatro raíces no casaban nada desde el día uno**. Es la misma trampa del `\b` ya documentada para las vocales acentuadas, en otra forma.
+
+También apareció un falso positivo al probarlo: `"quiero bajar de peso"` casaba con `peso`. El dinero va en plural o como millones.
+
+### Apertura personalizada: se reforzó la compuerta ANTES de aflojarla
+El fundador pidió que el LLM redacte uniendo el contexto del lead con el objetivo del playbook, porque las respuestas 100% estáticas estaban matando la conversión. Se implementó la forma de su propio ejemplo: **apertura generada + cuerpo aprobado literal.**
+
+**El hueco que había que cerrar primero:** `esCopyAprobado` ya aceptaba ese formato mirando solo lo que va DESPUÉS de la línea en blanco — o sea, el prefijo generado, que es lo único que el lead lee sin aprobar, **pasaba sin verificarse**. Ahora el cuerpo se valida contra la biblioteca y el prefijo contra las reglas del texto generado.
+
+**Dos reglas nuevas y son las que importan:** el resto del set comprueba que el texto sea *seguro*; ninguna puede comprobar que sea *cierto*. Un modelo puede escribir "te garantizamos ahorrar el 30% en 8 semanas" y pasar todas las demás. `G9_PROMESA` y `G10_CIFRA_INVENTADA` prohíben el léxico con el que se inventan hechos del programa. **Lo que el programa promete de verdad vive en las plantillas** — por eso el cuerpo no se genera.
+
+**Nota:** esto revierte la decisión del 3-sep ("parece mucha IA"). La diferencia es que entonces el texto generado no lo verificaba nadie.
+
+El turno del link **nunca** lleva apertura generada: es el más frágil del embudo y el único que ya se rompió en producción.
+
+---
+
+## 🧮 Sesión 4-sep-2026 (3er QA) — Suma de ingresos, hostilidad falsa y auto-recuperación
+
+**Desplegado `8c017f9f`, compuerta en verde con 335 tests.** Una sola conversación destapó tres cosas.
+
+### El Chain of Thought solo NO habría arreglado la suma
+La lead dio tres fuentes (4M + 3M + 4M = 11M) y el sistema se quedó con **4M** y la descalificó. La causa no era que el LLM no razonara: `parseIngresoCOP` agarra la **primera** cifra y **los deterministas ganan sobre el LLM** — aunque el modelo sumara bien, se sobrescribía. Se arreglaron las dos capas: el parser **se abstiene** ante varias cifras (misma regla que salvó al detector de endeudamiento: *abstenerse es mejor que adivinar*) y se añadió el CoT **primero en el JSON**, porque el modelo genera en secuencia y al final no sirve de nada.
+
+### La hostilidad era falsa, y el prompt no decía nada
+El handoff fue `contenido_hostil` por *"no gracias, eso es inaceptable las confusiones"*. El detector determinista **no disparó** — fue el LLM, y el prompt **no tenía ni una línea** definiendo `hostil`, mientras `crisis` sí tenía su aviso de falso positivo. **La frustración no es hostilidad. Un lead enojado es un lead.**
+
+### Auto-recuperación de handoff
+Un lead que pide continuar sale del handoff y el bot retoma en el punto que dicen sus **datos** (la etapa quedaba en `HANDOFF`, que no dice nada). **`crisis_emocional`, `ex_cliente` y `agendamiento_manual_pendiente` no se recuperan nunca** — lo primero es la regla de máxima prioridad del diseño.
+
+**Obstáculo técnico que vale anotar:** la RPC **no podía limpiar** `handoff_razon` (asigna `coalesce(nullif(...), handoff_razon)`, así que NULL lo conserva). Reescribir una función de 11K en la base compartida con producción era desproporcionado; el Worker lo limpia con un **PATCH dirigido** — dato, no DDL.
+
+---
+
+## 🔗 Sesión 4-sep-2026 (4º QA) — Cierre reordenado y el simulador que ocultaba bugs
+
+**Desplegado `e2f3799d`, compuerta en verde con 346 tests.** Una conversación con tres fallos encadenados, y el tercero destapó un cuarto que llevaba tiempo escondido.
+
+### El orden nuevo del cierre
+```
+M5 pitch → M6 LINK SOLO → M7 acompañante → M8 pre-llamada
+```
+El orden viejo mandaba acompañante y link **en el mismo turno**, así que un `"emm si"` del lead podía contestar a cualquiera de los dos — y el LLM lo leyó como *"ya agendé"*, saltando hasta el cierre. Ahora cada etapa espera **una** señal. Bonus: el turno del cierre bajó de 4 burbujas a 3, que era el riesgo #1 vigilado desde la primera prueba.
+
+### Los detectores que fallaron
+- **`"espérame, antes me gustaría tener más claro..."` se leyó como aceptación** y recibió el link. `claro` casaba dentro de *"más claro"*, y el freno de negación solo miraba los primeros 12 caracteres. Además M5 evaluaba `acepta` **antes** que la objeción, al revés que M1 y M2.
+- **`detectarAcompanante` solo entendía "con mi esposa"**, no *"va mi esposa"*, que es como contesta la gente.
+
+### Lo que NO se implementó como se pidió
+El fundador pidió que el LLM respondiera *"Aquí tienes el link: [Link]"*. Un link escrito por el LLM viola la regla del link (va solo y de último — bug confirmado en producción) y reabre el vector de suplantación. En su lugar el LLM **señala** `pide_link` y el router reenvía la plantilla aprobada, aislada. **El modelo nunca teclea una URL.**
+
+### El hallazgo de fondo
+**`simulador.js` tenía su PROPIA copia de la clasificación determinista** — el agujero que la auditoría del 4-sep ya había señalado y seguía abierto: el corpus no ejercitaba el camino de producción. Ahora llama a `clasificar()` del Worker con `env = {}`.
+
+**Al hacerlo, el corpus se puso rojo y destapó un bug real:** el Worker **no parseaba el ingreso en `M1_ACLARAR_REMANENTE` ni en `RETORNO_PREGUNTA`**, dos etapas donde se le pide una cifra al lead. La copia del simulador sí las incluía, y por eso el corpus pasaba mientras producción dependía solo del LLM ahí.

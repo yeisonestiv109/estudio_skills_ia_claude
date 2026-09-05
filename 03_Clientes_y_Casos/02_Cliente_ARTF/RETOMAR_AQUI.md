@@ -1,8 +1,17 @@
 # RETOMAR AQUÍ — Bot conversacional ARTF V4.2
 
 > Punto de entrada para continuar el trabajo del bot en una sesión nueva.
-> **Última actualización: 3-sep-2026.**
-> Estado: **desplegado y probado en vivo en Instagram.** Compuerta en verde, 179 tests.
+> **Última actualización: 4-sep-2026.**
+> Estado: desplegado (versión `93e6182b`). Compuerta en verde, **300 tests, 5 de 5**.
+> **4 rondas de QA en vivo aplicadas**, cada hallazgo con corpus de regresión.
+> **Filtro 1 $6M · Filtro 2 remanente $2.5M · matriz de objeciones por fase · catch-all del LLM encendido.**
+> **Listo para el QA final.**
+> **Las 9 objeciones abiertas.** Escalera de repreguntas construida y **APAGADA**
+> hasta que Javier apruebe el copy (`COPY_PENDIENTE_APROBACION`).
+> Los leads de prueba están **reiniciados**: se puede escribir `PRUEBAV42` y arrancar de cero.
+>
+> ⚠️ **Dos cosas que hay que hablar con Javier antes de producción:** el copy de los
+> 2 peldaños de la escalera, y que los umbrales de resistencia (3 y 4) contradicen su PDF V4.2.
 
 ---
 
@@ -40,10 +49,10 @@ pasó de verdad, como venías haciendo.
 
 | # | Tarea | Quién |
 |---|---|---|
-| 1 | **Redesplegar el Worker** (`npx wrangler deploy`) — el código cambió mucho desde el último despliegue | Yeison |
-| 2 | Reiniciar los leads de prueba `813370090` y `1269883784` (quedaron a mitad de flujo) | Claude, una línea |
-| 3 | **Probar de nuevo en Instagram** | Yeison |
-| 4 | Probar la vinculación de reserva **como Setter, no como admin** — es lo que arregla H1 | Yeison |
+| ~~1~~ | ~~Redesplegar el Worker~~ — **hecho** el 3-sep de noche, versión `ebf17b76` | ✅ |
+| ~~2~~ | ~~Reiniciar los leads de prueba `813370090` y `1269883784`~~ — **hecho**, ambos en `nuevo` / `etapa_bot = null` | ✅ |
+| **1** | **Probar de nuevo en Instagram** — el guion está abajo | Yeison |
+| 2 | Probar la vinculación de reserva **como Setter, no como admin** — es lo que arregla H1 | Yeison |
 
 ---
 
@@ -59,7 +68,8 @@ ManyChat no permite pausas menores a **10 segundos**, así que las burbujas van 
 
 | Escribe esto | Debe pasar |
 |---|---|
-| `es un dato delicado para compartir por aqui` (en M1) | Responde la Objeción 6 **sin link** y repregunta el ingreso |
+| `es un dato delicado para compartir por aqui` (en M1) | Responde la Objeción 6 **sin link** y, en la 2ª burbuja, pregunta **solo por el rango** — **no** debe volver a pedir profesión ni cifra exacta |
+| `si` (justo después de esa objeción) | Avanza a M2. Es el enganche nuevo: la objeción deja al bot esperando en `M1_RANGO_PREGUNTADO` |
 | `si` (a la pregunta del rango $7M–$15M) | Avanza a M2. **No** escala a humano |
 | `C y B` (en el dolor) | Guarda `"B,C"` en la base |
 | `no me aparece nada disponible` (tras el link) | Pide la franja horaria y escala con `agendamiento_manual_pendiente` |
