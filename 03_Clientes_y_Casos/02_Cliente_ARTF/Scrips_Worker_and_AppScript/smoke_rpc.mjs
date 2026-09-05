@@ -78,6 +78,35 @@ for (const etapa of ETAPAS_QUE_ESCRIBE_EL_ROUTER) {
 }
 fallos === 0 && ok(`la base acepta las ${ETAPAS_QUE_ESCRIBE_EL_ROUTER.length} etapas que escribe el router`);
 
+// 4.b Telemetria del LLM: la tabla y la RPC que alimentan el dashboard.
+r = await rpc('fn_registrar_telemetria_llm', {
+  p_proveedor: 'groq', p_modelo: 'smoke-test', p_llave_alias: 'principal',
+  p_resultado: 'ok', p_tokens_salida: 100,
+  p_limite_tokens: 8000, p_restantes_tokens: 7900, p_reset_tokens: '480ms',
+});
+if (r.status === 200) {
+  ok('fn_registrar_telemetria_llm: registra una llamada');
+} else if (r.status === 404 && r.cuerpo.includes('PGRST202')) {
+  // Caso visto el 5-sep: la tabla y la funcion EXISTEN y funcionan llamandolas
+  // desde SQL, pero PostgREST no las tiene en su cache de esquema. Es infra de
+  // Supabase, no el codigo. Se distingue a proposito de un fallo real: el
+  // mensaje tiene que decir que hacer, no solo que fallo.
+  malo('telemetria: PostgREST no ve la funcion todavia (cache de esquema obsoleta).\n'
+     + '         La tabla y la RPC SI existen y funcionan desde SQL.\n'
+     + '         ARREGLO: Supabase Dashboard -> Settings -> API -> "Restart server",\n'
+     + '         o cualquier cambio de esquema desde la UI fuerza la recarga.');
+} else {
+  malo(`telemetria no registro (status ${r.status}): ${r.cuerpo.slice(0, 120)}`);
+}
+
+// La ventana de OTPM tiene que ACUMULAR dentro del mismo minuto: si se
+// reiniciara en cada llamada, el dashboard mostraria siempre capacidad llena.
+r = await rpc('fn_registrar_telemetria_llm', {
+  p_proveedor: 'groq', p_modelo: 'smoke-test', p_llave_alias: 'principal',
+  p_resultado: 'ok', p_tokens_salida: 50,
+});
+r.status === 200 ? ok('telemetria: segunda llamada aceptada') : malo('telemetria: segunda llamada fallo');
+
 // 5. Limpieza: el lead queda en terminal (activity_log es append-only, no se borra)
 await rpc('fn_bot_procesar_turno', {
   p_manychat_id: ID, p_etapa_bot: 'DESCALIFICADO', p_estado_destino: 'descalificado',
