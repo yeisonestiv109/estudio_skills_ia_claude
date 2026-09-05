@@ -4691,3 +4691,24 @@ El fundador pidió que el LLM respondiera *"Aquí tienes el link: [Link]"*. Un l
 **`simulador.js` tenía su PROPIA copia de la clasificación determinista** — el agujero que la auditoría del 4-sep ya había señalado y seguía abierto: el corpus no ejercitaba el camino de producción. Ahora llama a `clasificar()` del Worker con `env = {}`.
 
 **Al hacerlo, el corpus se puso rojo y destapó un bug real:** el Worker **no parseaba el ingreso en `M1_ACLARAR_REMANENTE` ni en `RETORNO_PREGUNTA`**, dos etapas donde se le pide una cifra al lead. La copia del simulador sí las incluía, y por eso el corpus pasaba mientras producción dependía solo del LLM ahí.
+
+---
+
+## 🔔 Sesión 5-sep-2026 — Alerta a Google Chat, modo secretaria y estado real para producción
+
+**Desplegado `a9c70c1b`, compuerta en verde con 371 tests.**
+
+### Por qué no llegaba la alerta de handoff
+`wrangler tail` dio el diagnóstico: **el notificador solo logueaba cuando fallaba**, así que el silencio no distinguía "se envió" de "no está desplegado" — era indiagnosticable por diseño. Y **dos caminos de handoff no notificaban nunca**: el `catch` de la escritura en Supabase y el `catch` general del `fetch`, o sea justo los del bot colgado. Verificado en vivo tras el arreglo: `[gchat] alerta enviada OK`.
+
+### ⚠️ Riesgo de disciplina de despliegue (nuevo)
+El build que estaba en Cloudflare **no era el del repo**: tenía logs `_TMP_DIAG` que no existen en el código versionado. Alguien desplegó desde una copia distinta. Con dos personas o dos herramientas tocando el mismo Worker, esto reaparece. **Propuesta: que `./verificar.sh` compruebe que el `git status` está limpio antes de permitir un deploy.**
+
+### El mensaje de la alerta, reescrito para el Setter
+Razón traducida (+ código técnico para cruzar con el log), los 3 filtros con el remanente calculado, dolor en texto, último mensaje del lead. Dos marcas que evitan errores caros: **el ingreso ASUMIDO se marca** (si el lead solo confirmó el rango, el Setter no puede citarle esa cifra) y **las crisis llevan cabecera distinta con "NO le vendas"**.
+
+### Modo secretaria: la propuesta original no habría capturado nada
+Congelar la etapa y reusar `ESQUEMA_POR_ETAPA` significa que un lead nuevo se queda en `etapa=null` para siempre, y ahí `clasificar` corta antes de llamar al LLM. Se implementó con un **esquema universal** independiente de la etapa.
+
+### Bug abierto
+Los tags de handoff de ManyChat **no existen** (`Tag does not exist`), así que esa señal al Setter está rota.

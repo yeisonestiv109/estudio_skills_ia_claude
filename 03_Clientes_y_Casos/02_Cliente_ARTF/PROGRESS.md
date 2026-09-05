@@ -5,8 +5,9 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **360 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
-**Estado del bot: DESPLEGADO** (versión `ceff5147`, **con los fixes de las It. 16, 17 y 18, sin verificar E2E por trafico real concurrente en el lead de prueba**) **— 4 rondas de QA en vivo aplicadas.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (4-sep-2026) · **371 tests** · **5 de 5 compuertas corridas de verdad**
+**Estado del bot: DESPLEGADO** (versión `a9c70c1b`) **— 4 rondas de QA en vivo aplicadas.**
+**Alerta de handoff a Google Chat: FUNCIONANDO** (verificada en vivo). · **Modo secretaria (`BOT_ACTIVO=false`) implementado.**
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -460,6 +461,46 @@ También se arregló `detectarAcompanante`: la gente contesta *"va mi esposa"*, 
 *"con mi esposa"*, y solo se detectaba la forma con preposición.
 
 179 → **346 tests**. Desplegado: `e2f3799d`.
+
+---
+
+### It. 16 — Alerta a Google Chat y modo secretaria (hecho)
+
+**El equipo reportó que la alerta de handoff no llegaba.** El diagnóstico con
+`wrangler tail` encontró tres cosas:
+
+1. **El notificador solo logueaba cuando FALLABA.** Silencio en los logs no
+   distinguía "se envió bien" de "el código no está desplegado". Era
+   indiagnosticable por diseño. Ahora loguea también el éxito y la función
+   devuelve `{enviado, razon}`.
+2. **Dos caminos de handoff nunca notificaban**, y son justo los del bot
+   "colgado": el `catch` de la escritura en Supabase y el `catch` general del
+   `fetch`. La alerta vivía en el paso 6b del handler y ambos retornan antes.
+3. **El build desplegado NO era el del repo**: tenía logs `_TMP_DIAG` que no
+   existen en el código versionado. Ver el riesgo de disciplina de despliegue.
+
+Verificado en vivo tras el arreglo: `[gchat] alerta enviada OK (contenido_hostil)`.
+
+**El mensaje se reescribió para el Setter**, no para el programador: razón
+traducida a lenguaje llano (+ el código técnico para cruzarlo con el log), los 3
+filtros con el remanente ya calculado, el dolor en texto, el último mensaje del
+lead, y dos marcas que evitan errores caros — **el ingreso ASUMIDO se marca como
+tal** (si el lead solo confirmó el rango, el Setter no puede citarle esa cifra) y
+**las crisis emocionales llevan cabecera distinta con "NO le vendas"**.
+
+**Modo secretaria (`BOT_ACTIVO='false'`).** La propuesta original congelaba la
+etapa y reusaba `ESQUEMA_POR_ETAPA`. **Eso no habría capturado nada:** con la
+etapa congelada, un lead nuevo se queda en `null` para siempre, y `clasificar`
+corta antes con `if (!etapa) return c`. Se implementó con `ESQUEMA_SECRETARIA`,
+independiente de la etapa, que extrae lo que aparezca en cualquier mensaje. No
+avanza el embudo, no responde, no etiqueta, no notifica, y **no decide**: guarda
+lo que el lead dijo y marca el ingreso como no confirmado.
+
+**Bug abierto encontrado de paso:** los tags de handoff de ManyChat no existen
+(`tag V42_HANDOFF_CONTENIDO_HOSTIL 400 Tag does not exist`), así que esa señal al
+Setter está rota.
+
+346 → **371 tests**. Desplegado: `a9c70c1b`.
 
 ---
 
