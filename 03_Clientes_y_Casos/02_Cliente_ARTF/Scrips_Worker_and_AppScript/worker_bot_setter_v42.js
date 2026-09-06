@@ -65,6 +65,10 @@ import { notificarSetterGoogleChat } from './notificador_google_chat.js';
 // 12-15s. Se deja margen para responder SIEMPRE algo antes de ese corte.
 const TIMEOUT_LLM_MS = 6000;
 const TIMEOUT_DB_MS = 5000;
+// BUG REAL (6-sep-2026): se usaba en 2 sitios (limpiarHandoff, registrarTelemetria)
+// sin definirla nunca -- ReferenceError en CADA turno que llamaba al LLM, en
+// cuanto el bot salio de modo secretaria. Mismo timeout que el resto de RPCs.
+const TIMEOUT_RPC_MS = TIMEOUT_DB_MS;
 const CACHE_IDEMPOTENCIA_S = 60;
 
 // Modelo ya validado en este proyecto. NO usar openai/gpt-oss-120b: ignora
