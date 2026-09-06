@@ -894,6 +894,67 @@ se ponga rojo.
 
 ---
 
+### It. 22 — M2_NO_SABE escalaba en silencio (bug real reportado en vivo por Gaby)
+
+Gaby reporto una conversacion real con Marly: "no se" (M2 -> M2_NO_SABE,
+correcto) -> "creo que si queda" (sin cifra) -> el bot **no respondio
+nada**. Para el lead, cero mensajes se ve identico a que el bot se
+rompio.
+
+Causa: `evaluarYResponderEndeudamiento` llamaba a `HANDOFF('ambiguo', ...)`
+directo apenas el segundo intento seguia sin traer una cifra, con un
+comentario que decia explicitamente "NO se usa reencauzar() aca a
+proposito" (regla de "nunca el mismo mensaje dos veces"). Pero ese
+comentario era de ANTES de que `reencauzar()` aprendiera a anteponer
+contexto del LLM (mejora del 5/6-sep) -- el caso analogo de
+M2_BORDERLINE ("sin datos para decidir") ya usaba reencauzar() desde
+entonces, y M2_NO_SABE se quedo atras.
+
+**Decision explicita de Gaby** (con pregunta directa sobre el tradeoff):
+en vez de solo hacer que la escalada avisara con un mensaje, M2 se
+alinea con M4/M5 y gana el mismo presupuesto de 3 intentos con la MISMA
+duda antes de escalar de verdad (antes M1/M2 tenian tope de 2, medido y
+fijado a proposito en un test -- ese test se reescribio para reflejar
+la nueva regla, dejando M1 intacto).
+
+Se reescribieron 3 tests que fijaban el comportamiento viejo (silencio
+al segundo intento) y se agregaron sus contrapartes de "3ra vez si
+escala", siguiendo el mismo patron ya usado para M4/M5.
+
+**Bug adicional encontrado probando esto en vivo** (Groq + Supabase
+reales, no mockeados): cada llamada real a Groq dejaba
+`[telemetria] fallo: Unexpected end of JSON input` en los logs. Causa:
+`rpc()` hacia `resp.json()` sobre cualquier respuesta 2xx, pero
+`fn_registrar_telemetria_llm` (`RETURNS void`) responde `204` con
+cuerpo vacio -- parsear eso como JSON revienta. El INSERT en Supabase SI
+se hacia (el error ocurria despues, solo en el cliente), pero el ruido
+en los logs de produccion hacia parecer que la telemetria fallaba en
+cada turno real. Corregido: `rpc()` ya no intenta parsear un cuerpo
+vacio.
+
+**Verificado en vivo** (Groq + Supabase reales): la secuencia completa
+"no se" -> "creo que si queda" -> "pues no se, mas o menos" ya NO cae
+en silencio -- el bot sigue insistiendo con la pregunta (con tope de 3
+antes de escalar), y el ruido de telemetria desaparecio del log.
+
+**Observacion pendiente, no perseguida a fondo esta vez**: en las 2
+pruebas en vivo, `respuesta_empatica` volvio vacia ("") en vez de una
+frase de contexto -- el LLM parece interpretar que el mensaje "ya se
+clasifico" (por poblar `es_duda_nueva`/`recupera_handoff`, que son
+señales-meta, no respuestas a la pregunta de fondo) y por eso omite la
+frase empatica segun la regla "si el mensaje SI encaja en algun campo,
+devuelve '' aca". El bot igual respondio (la plantilla aprobada se
+reenvio), asi que el bug reportado esta resuelto, pero la version mas
+rica ("el LLM plantea la respuesta con contexto") no se vio en estas 2
+muestras. Posible ajuste futuro: aclarar en el prompt que
+`es_duda_nueva`/`recupera_handoff` no cuentan como "el mensaje se
+clasifico" para efectos de la regla de `respuesta_empatica`.
+
+428/428 tests (4 nuevos/reescritos). Compuerta verde con smoke RPC real.
+Desplegado: `da143a31-b76c-432d-abd8-6d764fbff9cd`.
+
+---
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
@@ -919,6 +980,7 @@ se ponga rojo.
 - **"No sé" en M2 es incertidumbre, no la Objeción 6** (5-sep-2026): solo una reticencia explícita ("prefiero no decir") va a la Objeción 6.
 - **`SIN_HORARIOS_ESPERANDO_FRANJA`**: tras "no encuentro horarios" el bot SIEMPRE captura la franja y se despide antes de callar para siempre — nunca deja la pregunta de `P.SIN_HORARIOS` sin respuesta (5-sep-2026).
 - **El LLM puede reformular la copy aprobada de una objeción** (6-sep-2026, decisión explícita de Gaby pese a los 3 riesgos advertidos): solo cuando el turno NO lleva el link de agenda, con `verificarAdaptacionObjecion` (cero cifras nuevas, mismas reglas G1-G10) como compuerta antes de usar el texto generado. Si el LLM falla o la compuerta lo rechaza, se usa la plantilla original tal cual — nunca queda el lead sin respuesta.
+- **M2 (endeudamiento) tiene el mismo presupuesto de 3 intentos que M4/M5** (6-sep-2026, decisión explícita de Gaby): antes escalaba en silencio al segundo "no sé" sin cifra; ahora usa `reencauzar()` como M4/M5, con tope de 3 intentos con la MISMA duda antes de escalar de verdad. M1 se queda con su tope de 2, sin cambios.
 
 ---
 
