@@ -817,47 +817,42 @@ Recien despues llena el resto. Ejemplo real que se clasifico MAL por no hacer es
 
 REGLAS DE EXTRACCION:
 - "ingreso_cop": el ingreso MENSUAL en pesos colombianos, como numero entero. "12 millones" -> 12000000. Si el lead NO da una cifra clara, devuelve null. NUNCA adivines.
-- GLOSARIO CRITICO: "salario integral" o "minimo integral" = ingreso ALTO (~18-22 millones), NO es el salario minimo. Si ves "integral", devuelve null en ingreso_cop (se le pedira la cifra exacta aparte).
 - ⚠️ GLOSARIO COLOMBIANO DEL INGRESO — esto no lo puedes deducir, hay que saberlo:
-  · "salario integral" o "minimo integral" NO es el salario minimo: es un ingreso ALTO (~18-22 millones). Si el lead dice "integral", devuelve null en "ingreso_cop" (se le pedira la cifra exacta aparte) y NUNCA lo leas como ~1.4 millones.
+  · "salario integral" o "minimo integral" NO es el salario minimo: es un ingreso ALTO (~18-22 millones). Si el lead dice "integral", devuelve null en "ingreso_cop" y NUNCA lo leas como ~1.4 millones.
   · "SMLV" / "salario minimo" (sin "integral") si es el minimo colombiano: ~1.400.000 en 2026.
   · "un palo" = 1 millon. "luca" = mil.
-  Este glosario costo un lead real de \$22M que fue descartado por leer "minimo integral" como "minimo".
 - ⚠️ SUMA LAS FUENTES. Si el lead menciona VARIOS ingresos, "ingreso_cop" es la SUMA, no el primero que aparece:
   · "4 millones del trabajo, 3 del negocio y 4 de un local" -> 11000000
   · "gano 5 millones fijos y unos 3 mas por comisiones"     -> 8000000
-  Dos leads reales que CALIFICABAN fueron descartados por quedarse con la primera cifra. Si no estas seguro de que se sumen, devuelve null: es preferible repreguntar a descartar.
-- "ingreso_glosario" — POR QUE no pudiste dar una cifra. Cambia la pregunta que se le hace despues, asi que importa:
-  · "salario_integral" = uso un termino que no puedes cuantificar ("integral", "el minimo integral"). Se le pedira el numero exacto.
+  Si no estas seguro de que se sumen, devuelve null: es preferible repreguntar a descartar.
+- "ingreso_glosario" — POR QUE no pudiste dar una cifra:
+  · "salario_integral" = uso un termino que no puedes cuantificar ("integral", "el minimo integral").
   · "ingreso_variable" = dijo que varia y no dio un numero ("depende del mes", "por comisiones").
-  · "varias_fuentes"   = menciono varios ingresos pero NO lograste sumarlos con confianza. Se le pedira el TOTAL (no tendria sentido ofrecerle un rango: ya dio cifras).
-  · null               = simplemente no menciono ningun ingreso, o si diste una cifra en "ingreso_cop".
-- "cifra_es_remanente": true si la cifra que dio NO es su ingreso total sino lo que le SOBRA despues de gastos o deudas ("me quedan 5 millones", "libres me quedan 3"). Con true el sistema le pregunta antes de descartarlo -- un lead que dice "me quedan \$5M" puede ganar \$15M.
-  ⚠️ En ese caso la cifra IGUAL va en "ingreso_cop" (es el unico numero que dio); lo que dice que no es su ingreso es la bandera, no un null. Si pones null, el sistema no sabe que hay algo que aclarar y le pregunta otra cosa.
+  · "varias_fuentes"   = menciono varios ingresos pero NO lograste sumarlos con confianza.
+  · null               = no menciono ningun ingreso, o si diste una cifra en "ingreso_cop".
+- "cifra_es_remanente": true si la cifra que dio NO es su ingreso total sino lo que le SOBRA despues de gastos o deudas ("me quedan 5 millones", "libres me quedan 3").
+  ⚠️ En ese caso la cifra IGUAL va en "ingreso_cop" (es el unico numero que dio): lo que dice que no es su ingreso es la bandera, no un null.
 - "objecion_num": ${DISPARADORES_OBJECIONES}
 - OJO: "¿cuanto cuesta la CONSULTA/LLAMADA/SESION?" es objecion 1 (la llamada es gratis), NO la 7.
-- ⚠️ INCERTIDUMBRE vs OBJECION 6, no las confundas: "no se", "no estoy segura", "ni idea de cuanto debo" es que el lead NO TIENE el dato -> objecion_num debe ser null (deja que el flujo le pida un estimado). La Objecion 6 es cuando el lead SI sabe el dato pero se NIEGA a compartirlo ("eso es privado", "prefiero no decir eso por aqui", "no doy esa info por mensaje"). Bug real que esto corrige: un "no se" en la pregunta de endeudamiento se leyo como Objecion 6 y el lead recibio la respuesta de "dato sensible" en vez de que se le pidiera un estimado.
+- ⚠️ INCERTIDUMBRE vs OBJECION 6, no las confundas: "no se", "no estoy segura", "ni idea de cuanto debo" es que el lead NO TIENE el dato -> objecion_num debe ser null (deja que el flujo le pida un estimado). La Objecion 6 es cuando el lead SI sabe el dato pero se NIEGA a compartirlo ("eso es privado", "prefiero no decir eso por aqui").
 - "objecion_conocida": false si el lead objeta algo que NO esta en esa lista de 9.
-- "dolor_financiero": true si la frustracion que describe tiene que ver con el dinero, aunque no use la palabra "dinero". Cuenta hablar de deudas, pagos, tarjetas, no poder ahorrar, no saber en que se le va, no llegar a fin de mes o sentir que gana bien y no lo ve. Caso real que se clasifico MAL: "me siento preocupada por la cantidad de deudas que tengo" es dolor financiero (true) -- hablar de deudas ES hablar de dinero.
+- "dolor_financiero": true si la frustracion que describe tiene que ver con el dinero, aunque no use la palabra "dinero". Cuenta hablar de deudas, pagos, tarjetas, no poder ahorrar, no saber en que se le va, no llegar a fin de mes o sentir que gana bien y no lo ve. Ejemplo: "me siento preocupada por la cantidad de deudas que tengo" -> true.
 - "crisis": true SOLO ante señales reales de crisis emocional grave (duelo, crisis de pareja, ansiedad mencionada, autolesion, desesperacion profunda).
-  ⚠️ FALSO POSITIVO FRECUENTE, no lo cometas: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION, no crisis -> crisis=false. Escalar eso quema un lead bueno.
+  ⚠️ FALSO POSITIVO FRECUENTE: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION -> crisis=false.
 - "hostil": true SOLO ante insultos, groserias, amenazas, acusaciones de estafa o peticiones de que no le escriban mas.
-  ⚠️ FALSO POSITIVO QUE YA COSTO UN LEAD REAL: la FRUSTRACION NO ES HOSTILIDAD. "esto es inaceptable", "que confusion", "me estas haciendo perder el tiempo", "no me estas entendiendo" son QUEJAS de alguien molesto que sigue interesado -> hostil=false. Un lead enojado es un lead, y marcarlo hostil lo saca del embudo y silencia al bot. Solo marca true si de verdad hay agresion o rechazo explicito al contacto.
+  ⚠️ LA FRUSTRACION NO ES HOSTILIDAD: "esto es inaceptable", "que confusion", "me estas haciendo perder el tiempo", "no me estas entendiendo" son QUEJAS de alguien molesto que sigue interesado -> hostil=false. Solo true si hay agresion o rechazo explicito al contacto.
 - "ex_cliente": true si dice que ya fue cliente/alumno del programa antes.
 - ⚠️ "acepta" vs "confirmo_agendo" — NO son lo mismo y confundirlos rompe el embudo:
   · "acepta" = QUIERE agendar, todavia NO lo hizo. "si, agendemos", "dale", "me interesa".
-  · "confirmo_agendo" = YA FUE al calendario y RESERVO. "listo, ya agende", "quedo para el jueves 3pm", "ya separe el espacio".
-  Si solo dice que quiere, es "acepta". Si no ha entrado al link, NO es "confirmo_agendo".
-  ⚠️ FALSO POSITIVO REAL: el lead escribio "esperame, antes me gustaria tener mas claro de que trata el protocolo" y se clasifico como acepta=true. Eso es la objecion 8, NO una aceptacion. Si el lead pide informacion o pone un "espera", "antes", "primero" -> NO acepta.
+  · "confirmo_agendo" = YA FUE al calendario y RESERVO. "listo, ya agende", "quedo para el jueves 3pm".
+  ⚠️ "esperame, antes me gustaria tener mas claro de que trata el protocolo" NO es aceptar: es la objecion 8. Si pide informacion o pone un "espera", "antes", "primero" -> NO acepta.
 - "urgencia" — responde a "¿resolver esto es prioridad AHORA, o es para cuando tengas mas tiempo/dinero?":
   · "ahora"       = dice que si, que quiere resolverlo ya. Incluye respuestas cortas y tibias: "si", "me gustaria", "claro", "obvio", "ya mismo", "lo necesito". Un "me gustaria" es un SI, no una duda.
   · "algun_dia"   = lo aplaza: "mas adelante", "cuando tenga tiempo", "cuando junte plata".
-  · "pregunta_por_que" = NO esta contestando: esta PREGUNTANDO por que deberia hacerlo ahora y no despues ("¿por que ahora?", "¿que gano si lo hago ya?"). Tiene que haber una pregunta de verdad.
+  · "pregunta_por_que" = NO esta contestando: esta PREGUNTANDO por que deberia hacerlo ahora y no despues ("¿por que ahora?", "¿que gano si lo hago ya?"). Tiene que haber una pregunta de verdad. Si el lead no esta preguntando nada, NUNCA es "pregunta_por_que".
   · null          = no se entiende que quiso decir.
-  ⚠️ BUG REAL (marlyy318, 6-sep-2026): a "me gustaria" se le puso "pregunta_por_que" y el bot le repitio entera la respuesta de "por que ahora" que le acababa de dar. Si el lead no esta preguntando nada, NUNCA es "pregunta_por_que".
 - "pide_link": true si pregunta donde agendarse, dice que no le llego el link o que no lo encuentra. TU NUNCA ESCRIBES EL LINK: solo marcas este campo y el sistema lo envia.
 - "recupera_handoff": true SOLO si el lead esta pidiendo CONTINUAR con el proceso -- da el dato que se le pidio, dice que quiere seguir, o pide agendar. Ejemplo: "pero igual quiero seguir, me da 40%" -> true. Un simple "hola" o una queja sin intencion de avanzar -> false.
-
 REGLA PARA "pregunta_libre" — es la que evita que el bot conteste al lado:
 - Si el lead PREGUNTA o PLANTEA algo que NINGUN campo de arriba captura, escribe aca esa pregunta en una linea, con tus palabras. Si no, null.
 - Ejemplo REAL que motivo este campo: en la pregunta del endeudamiento, la lead escribio "los gastos mensuales que le paso a mi mama, ¿los incluyo?". Eso NO es un porcentaje, NO es una cifra y NO es ninguna de las 9 objeciones: los campos de arriba quedan todos en null y el bot le contestaba "dame un estimado", sin responderle. Ahi "pregunta_libre" debia ser "si los gastos que le da a su mama cuentan como deuda para el calculo".
