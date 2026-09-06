@@ -481,8 +481,11 @@ describe('Matriz de objeciones por fase del embudo', () => {
     }
   });
 
-  test('la resistencia repetida gana sobre la matriz: un lead que insiste llega a un humano', () => {
-    // Si no fuera asi, una objecion fuera de fase se reencauzaria para siempre.
+  test('un lead que insiste con una objecion fuera de fase se sigue atendiendo', () => {
+    // Este test afirmaba lo contrario hasta el 6-sep-2026 ("un lead que insiste
+    // llega a un humano"), porque reencauzar para siempre significaba repetir
+    // la misma plantilla para siempre. Ya no: cada vuelta se razona con el
+    // playbook. Lo que se protege ahora es que NO se quede mudo ni escale.
     const insiste = {
       estado_codigo: 'contactado', etapa_bot: 'M5_ENVIADO', nombre: 'Ana',
       salario_monto: 12_000_000,
@@ -491,7 +494,8 @@ describe('Matriz de objeciones por fase del embudo', () => {
       handoff_razon: null,
     };
     const p = decidirTurno(insiste, { objecion_num: 6, objecion_conocida: true });
-    assert.ok(p.handoffRazon, 'tiene que escalar aunque la 6 este fuera de fase en M5');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
   });
 });
 

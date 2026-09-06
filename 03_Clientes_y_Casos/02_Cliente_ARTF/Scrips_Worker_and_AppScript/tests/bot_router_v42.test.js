@@ -238,14 +238,25 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.ok(p.mensajes.length > 0, 'no se queda mudo');
   });
 
-  test('handoff recuperable + SIN el dato por 3ra vez seguida: ahi SI re-escala', () => {
+  // POLITICA NUEVA (6-sep-2026): insistir sin dar el dato YA NO re-escala. El
+  // lead confuso se atiende; lo que escala es que el LLM lleve N turnos caido.
+  test('handoff recuperable + SIN el dato por 3ra vez: se le sigue atendiendo', () => {
     const estado = estadoEn('HANDOFF', {
       handoff_razon: 'ambiguo', salario_monto: 11_000_000, ambiguedad_consecutiva: 2,
     });
     const p = decidirTurno(estado, { recupera_handoff: true, es_duda_nueva: false }, 'sigo sin saber');
-    assert.equal(p.etapaNueva, 'HANDOFF', 'a la 3ra con la misma duda si se re-escala');
-    assert.equal(p.mensajes.length, 0, 'CERO mensajes en la escalada final');
+    assert.equal(p.handoffRazon, LIMPIAR_HANDOFF, 'se recupera, no se re-escala');
+    assert.ok(p.mensajes.length > 0, 'y si le habla');
+  });
+
+  test('handoff recuperable + el LLM caido 3 turnos seguidos: AHI si re-escala', () => {
+    const estado = estadoEn('HANDOFF', {
+      handoff_razon: 'ambiguo', salario_monto: 11_000_000, ambiguedad_consecutiva: 2,
+    });
+    const p = decidirTurno(estado, { recupera_handoff: true, llm_fallo: true }, 'sigo sin saber');
+    assert.equal(p.etapaNueva, 'HANDOFF');
     assert.equal(p.handoffRazon, 'ambiguo');
+    assert.match(p.summary, /sin responder/, 'la razon es el LLM, no el lead');
   });
 
   // BUG REAL reportado (5-sep-2026): "no lo se, no estoy segura" (fallback
@@ -488,9 +499,17 @@ describe('Descalificacion con valor', () => {
     assert.ok(p.mensajes.length > 0, 'no se queda mudo');
   });
 
-  test('borderline SIN datos, 3 veces insistiendo en LO MISMO -> ahora si escala', () => {
+  test('borderline SIN datos e insistiendo: se le sigue respondiendo, no escala', () => {
     const estado = estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000, ambiguedad_consecutiva: 2 });
     const p = decidirTurno(estado, { es_duda_nueva: false }, 'sigo sin entender');
+    assert.equal(p.handoffRazon, null, 'el lead confuso ya no escala (6-sep-2026)');
+    assert.ok(p.mensajes.length > 0);
+    assert.notEqual(p.estadoDestino, 'descalificado');
+  });
+
+  test('borderline con el LLM caido 3 turnos: escala por falta de LLM', () => {
+    const estado = estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000, ambiguedad_consecutiva: 2 });
+    const p = decidirTurno(estado, { llm_fallo: true }, 'sigo sin entender');
     assert.equal(p.handoffRazon, 'ambiguo');
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
@@ -566,8 +585,20 @@ describe('Descalificacion con valor', () => {
     assert.equal(p.etapaNueva, 'M1_INGRESO_AMBIGUO');
   });
 
-  test('sigue ambiguo tras pedirla -> handoff, jamas descarte', () => {
+  test('sigue ambiguo tras pedirla -> se le responde, y JAMAS se descarta', () => {
+    // Antes escalaba aca. Desde el 6-sep-2026 se razona la respuesta: quien no
+    // da la cifra casi siempre esta preguntando algo ("¿antes o despues de
+    // impuestos?"). La regla de oro V4.1 (nunca descartar sobre un ingreso
+    // ambiguo) sigue intacta, y es lo que este test protege de verdad.
     const p = decidirTurno(estadoEn('M1_INGRESO_AMBIGUO'), { ingreso_cop: null });
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+  });
+
+  test('el ingreso ambiguo SI escala si el LLM lleva 3 turnos caido', () => {
+    const estado = estadoEn('M1_INGRESO_AMBIGUO', { ambiguedad_consecutiva: 2 });
+    const p = decidirTurno(estado, { ingreso_cop: null, llm_fallo: true });
     assert.equal(p.handoffRazon, 'ambiguo');
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
@@ -651,24 +682,36 @@ describe('Objeciones y escalamiento', () => {
     assert.ok(p.mensajes.length > 0);
   });
 
-  test(`la MISMA objecion ${R_MISMA} veces -> resistencia_repetida`, () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // POLITICA NUEVA (6-sep-2026, auditoria B): los topes de objecion se
+  // RETIRARON. Escalaban con el supuesto de que "la plantilla ya no le sirvio,
+  // que entre un humano" -- cierto cuando la unica respuesta posible era esa
+  // MISMA plantilla literal. Hoy el LLM la reformula con el contexto y puede
+  // responder con el playbook completo: insistir ya no es repetirse.
+  // El CONTADOR se mantiene (alimenta el dashboard); lo que se fue es el
+  // handoff. Estos tests fijan justamente eso, para que nadie lo reintroduzca
+  // sin darse cuenta.
+  // ─────────────────────────────────────────────────────────────────────────
+  test(`la MISMA objecion ${R_MISMA} veces YA NO escala: el bot le responde distinto`, () => {
     const estado = estadoEn('M5_ENVIADO', { ultima_objecion_codigo: '3', objeciones_consecutivas: R_MISMA - 1 });
     const p = decidirTurno(estado, { objecion_num: 3, objecion_conocida: true });
-    assert.equal(p.handoffRazon, 'resistencia_repetida');
+    assert.equal(p.handoffRazon, null, 'un lead que insiste no se saca del embudo');
+    assert.ok(p.mensajes.length > 0, 'y si recibe respuesta');
+    assert.match(p.summary, /REPITE la objecion/, 'pero el Setter lo ve en el summary');
   });
 
-  // La 7 ya no acumula (es curiosidad), asi que la señal es que la REPITA: si
-  // vuelve a preguntar el precio despues de nuestra respuesta, no le sirvio.
-  test('volver a preguntar el precio -> pregunta_precio (mas util que el generico)', () => {
+  test('volver a preguntar el precio YA NO escala: es un lead interesado', () => {
     const estado = estadoEn('M5_ENVIADO', { ultima_objecion_codigo: '7', objeciones_consecutivas: 0 });
     const p = decidirTurno(estado, { objecion_num: 7, objecion_conocida: true });
-    assert.equal(p.handoffRazon, 'pregunta_precio');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0);
   });
 
-  test('repetir una pregunta informativa tambien escala: la respuesta no sirvio', () => {
+  test('repetir una pregunta informativa tampoco escala', () => {
     const estado = estadoEn('M5_ENVIADO', { ultima_objecion_codigo: '1', objeciones_consecutivas: 0 });
     const p = decidirTurno(estado, { objecion_num: 1, objecion_conocida: true });
-    assert.equal(p.handoffRazon, 'resistencia_repetida');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0);
   });
 
   test('el precio preguntado la PRIMERA vez lo contesta el bot', () => {
@@ -677,10 +720,12 @@ describe('Objeciones y escalamiento', () => {
     assert.match(p.mensajes.join('\n'), /el programa no tiene un precio único/);
   });
 
-  test(`${R_ACUM} objeciones consecutivas -> resistencia_acumulada`, () => {
+  test(`${R_ACUM} objeciones consecutivas YA NO escalan`, () => {
     const estado = estadoEn('M5_ENVIADO', { ultima_objecion_codigo: '2', objeciones_consecutivas: R_ACUM - 1 });
     const p = decidirTurno(estado, { objecion_num: 4, objecion_conocida: true });
-    assert.equal(p.handoffRazon, 'resistencia_acumulada');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0);
+    assert.equal(p.campos.objeciones_consecutivas, R_ACUM, 'el contador SI sigue contando');
   });
 
   test('objeciones consecutivas por debajo del umbral las contesta el bot', () => {
@@ -690,9 +735,11 @@ describe('Objeciones y escalamiento', () => {
     assert.ok(p.mensajes.length > 0);
   });
 
-  test('objecion fuera de las 9 -> objecion_fuera_playbook', () => {
+  test('objecion fuera de las 9: se razona la respuesta, no se escala', () => {
     const p = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_detectada: true, objecion_num: null, objecion_conocida: false });
-    assert.equal(p.handoffRazon, 'objecion_fuera_playbook');
+    assert.equal(p.handoffRazon, null, 'el bot tiene el playbook completo: puede responderla');
+    assert.ok(p.mensajes.length > 0);
+    assert.ok(p.preguntaLibre, 'se le pide al Worker redactar con el playbook delante');
   });
 
   test('Objecion 9 en M4: la contesta el bot y NUNCA descalifica', () => {
@@ -706,11 +753,16 @@ describe('Objeciones y escalamiento', () => {
     assert.match(p.mensajes[0], /Lo más caro NO es la plata/);
   });
 
-  test('la perilla de alcance sigue funcionando: deshabilitar la 9 la escala', () => {
+  test('la perilla de alcance apaga la PLANTILLA, ya no manda el lead a un humano', () => {
+    // Apagar una objecion significa "no uses ESA plantilla", no "no atiendas a
+    // este lead" (6-sep-2026). Se razona la respuesta con el playbook.
     OBJECIONES_HABILITADAS.delete(9);
     try {
       const p = decidirTurno(estadoEn('M4_ENVIADO'), { urgencia: 'pregunta_por_que' });
-      assert.equal(p.handoffRazon, 'objecion_no_habilitada');
+      assert.equal(p.handoffRazon, null);
+      assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+      assert.ok(!/Lo más caro NO es la plata/.test(p.mensajes.join('\n')),
+        'pero la plantilla apagada NO sale');
     } finally {
       OBJECIONES_HABILITADAS.add(9);
     }
@@ -799,19 +851,25 @@ describe('Objeciones y escalamiento', () => {
     }
   });
 
-  test('una objecion FUERA del playbook sigue yendo a un humano, sin copy', () => {
+  test('una objecion FUERA del playbook ya no va a un humano: se razona', () => {
+    // Cambio del 6-sep-2026: el bot tiene el playbook completo como corpus,
+    // asi que puede responder algo que no es ninguna de las 9 -- o decir con
+    // honestidad que eso se ve en la llamada. Escalarla era desperdiciar al lead.
     const fuera = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_detectada: true, objecion_conocida: false });
-    assert.equal(fuera.handoffRazon, 'objecion_fuera_playbook');
-    assert.equal(fuera.mensajes.length, 0, 'no le manda copy al lead');
+    assert.equal(fuera.handoffRazon, null);
+    assert.ok(fuera.mensajes.length > 0, 'y si recibe respuesta');
   });
 
-  test('cerrar la perilla vuelve a mandar esa objecion a un humano', () => {
+  test('cerrar la perilla apaga la plantilla, pero el lead sigue siendo atendido', () => {
     // La perilla sigue siendo una perilla: se deriva de `habilitada` en la tabla.
+    // Lo que cambio (6-sep-2026) es que apagarla ya no manda el lead a un humano.
     OBJECIONES_HABILITADAS.delete(7);
     try {
       const p = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_num: 7, objecion_conocida: true });
-      assert.equal(p.handoffRazon, 'objecion_no_habilitada');
-      assert.equal(p.mensajes.length, 0, 'no le manda copy al lead');
+      assert.equal(p.handoffRazon, null);
+      assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+      assert.ok(!/el programa no tiene un precio único/.test(p.mensajes.join(' ')),
+        'pero la plantilla apagada NO sale');
     } finally {
       OBJECIONES_HABILITADAS.add(7);
     }
@@ -1036,7 +1094,12 @@ describe('Escalera de repreguntas antes de escalar', () => {
     // (bug real, Marly, 6-sep-2026) y ahora usa reencauzar() como M4/M5.
     assert.equal(decidirTurno(st('M1_ENVIADO'),
       { ingreso_cop: null, ingreso_glosario: 'salario_integral' }).etapaNueva, 'M1_INGRESO_AMBIGUO');
-    assert.equal(decidirTurno(st('M1_INGRESO_AMBIGUO'), { ingreso_cop: null }).handoffRazon, 'ambiguo');
+    // Y desde el 6-sep-2026 el segundo intento tampoco escala: se le responde.
+    // El "peldaño extra" que este test vigila es el de la ESCALERA (una etapa
+    // de reintento nueva), no el hecho de contestarle.
+    const p = decidirTurno(st('M1_INGRESO_AMBIGUO'), { ingreso_cop: null });
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.etapaNueva, 'M1_INGRESO_AMBIGUO', 'no aparece ninguna etapa de reintento nueva');
   });
 
   // BUG REAL reportado en vivo (6-sep-2026, Marly): "no se" (M2_ENVIADO -> pasa
@@ -1055,10 +1118,16 @@ describe('Escalera de repreguntas antes de escalar', () => {
     assert.ok(p2.mensajes.length > 0, 'no se queda mudo');
   });
 
-  test('M2 SI escala a la 3ra vez seguida con la misma duda', () => {
-    const estado2 = st('M2_NO_SABE'); estado2.ambiguedad_consecutiva = 2;
-    const p = decidirTurno(estado2, { endeudamiento_pct: null, es_duda_nueva: false }, 'sigo sin saber bien');
-    assert.equal(p.handoffRazon, 'ambiguo');
+  test('M2 ya no escala por insistir: solo si el LLM lleva 3 turnos caido', () => {
+    const insiste = st('M2_NO_SABE'); insiste.ambiguedad_consecutiva = 2;
+    assert.equal(
+      decidirTurno(insiste, { endeudamiento_pct: null, es_duda_nueva: false }, 'sigo sin saber bien').handoffRazon,
+      null, 'el lead confuso se atiende');
+
+    const sinLLM = st('M2_NO_SABE'); sinLLM.ambiguedad_consecutiva = 2;
+    assert.equal(
+      decidirTurno(sinLLM, { endeudamiento_pct: null, llm_fallo: true }, 'sigo sin saber bien').handoffRazon,
+      'ambiguo', 'el bot sin cerebro si escala');
   });
 
   describe('con la perilla APAGADA (estado actual)', () => {
@@ -1079,12 +1148,16 @@ describe('Escalera de repreguntas antes de escalar', () => {
       assert.ok(p5.mensajes.length > 0, 'no se queda mudo');
     });
 
-    test('M4 y M5 SI escalan a la 3ra vez seguida con la misma duda', () => {
-      const estado4 = st('M4_ENVIADO'); estado4.ambiguedad_consecutiva = 2;
-      assert.equal(decidirTurno(estado4, { urgencia: null, es_duda_nueva: false }, 'sigo sin entender').handoffRazon, 'ambiguo');
+    test('M4 y M5 escalan por LLM caido, no por lead insistente', () => {
+      const insiste4 = st('M4_ENVIADO'); insiste4.ambiguedad_consecutiva = 2;
+      assert.equal(decidirTurno(insiste4, { urgencia: null, es_duda_nueva: false }, 'sigo sin entender').handoffRazon,
+        null, 'insistir no saca del embudo');
 
-      const estado5 = st('M5_ENVIADO'); estado5.ambiguedad_consecutiva = 2;
-      assert.equal(decidirTurno(estado5, { es_duda_nueva: false }, 'sigo sin entender').handoffRazon, 'ambiguo');
+      const sinLLM4 = st('M4_ENVIADO'); sinLLM4.ambiguedad_consecutiva = 2;
+      assert.equal(decidirTurno(sinLLM4, { urgencia: null, llm_fallo: true }, 'sigo sin entender').handoffRazon, 'ambiguo');
+
+      const sinLLM5 = st('M5_ENVIADO'); sinLLM5.ambiguedad_consecutiva = 2;
+      assert.equal(decidirTurno(sinLLM5, { llm_fallo: true }, 'sigo sin entender').handoffRazon, 'ambiguo');
     });
   });
 
@@ -1092,16 +1165,20 @@ describe('Escalera de repreguntas antes de escalar', () => {
     // Se simula el encendido llamando al router con la etapa del peldaño, que
     // es el estado al que llevaria la perilla. Asi se prueba la mitad que la
     // perilla no puede apagar: que el peldaño sea terminal.
-    test('el peldaño de M4 NO ofrece otro peldaño: escala', () => {
+    // El contrato del peldaño terminal se mantiene -- no ofrece OTRO peldaño --
+    // pero desde el 6-sep-2026 eso ya no significa escalar: significa que se le
+    // responde sin darle otra plantilla de reintento.
+    test('el peldaño de M4 NO ofrece otro peldaño, pero si responde', () => {
       const p = decidirTurno(st('M4_URGENCIA_REINTENTO'), { urgencia: null });
-      assert.equal(p.handoffRazon, 'ambiguo', 'del segundo intento se pasa a un humano');
-      assert.notEqual(p.etapaNueva, 'M4_URGENCIA_REINTENTO', 'y NO se queda en bucle');
+      assert.equal(p.handoffRazon, null);
+      assert.ok(p.mensajes.length > 0, 'nunca mudo');
+      assert.ok(p.preguntaLibre, 'se razona la respuesta con el playbook');
     });
 
-    test('el peldaño de M5 NO ofrece otro peldaño: escala', () => {
+    test('el peldaño de M5 NO ofrece otro peldaño, pero si responde', () => {
       const p = decidirTurno(st('M5_PITCH_REINTENTO'), {});
-      assert.equal(p.handoffRazon, 'ambiguo');
-      assert.notEqual(p.etapaNueva, 'M5_PITCH_REINTENTO', 'y NO se queda en bucle');
+      assert.equal(p.handoffRazon, null);
+      assert.ok(p.mensajes.length > 0);
     });
 
     test('si en el peldaño SI se entiende, el guion sigue normal', () => {
@@ -1240,9 +1317,13 @@ describe('M3: "todas" (fundador, 4-sep-2026)', () => {
     assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
   });
 
-  test('en M3_RECONDUCIR, si el LLM SI confirma que no es financiero, escala de verdad', () => {
+  test('en M3_RECONDUCIR, un dolor NO financiero se responde con el playbook', () => {
+    // Antes: "sin script del SOP para este cierre -> humano". El playbook si
+    // tiene con que responderlo; lo que faltaba era darselo al LLM (6-sep-2026).
     const p = decidirTurno(st('M3_RECONDUCIR'), { dolor_financiero: false }, 'no, es un tema de salud');
-    assert.equal(p.handoffRazon, 'ambiguo');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0);
+    assert.ok(p.preguntaLibre, 'se le pide cerrar con honestidad, no descalificar de golpe');
   });
 
   test('"todo" o "toda" en otra frase no dispara el atajo', () => {
@@ -1564,13 +1645,13 @@ describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', (
     assert.ok(p.mensajes.length > 0, 'no se queda mudo');
   });
 
-  test('insistir con "no se" una 3ra vez seguida SI escala', () => {
+  test('insistir con "no se" ya no escala: se le sigue respondiendo', () => {
     const estado = estadoEn('M2_NO_SABE', { ambiguedad_consecutiva: 2 });
     const p = decidirTurno(estado,
       { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true, es_duda_nueva: false },
       'no se, de verdad no tengo idea');
-    assert.equal(p.handoffRazon, 'ambiguo');
-    assert.equal(p.mensajes.length, 0);
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0);
   });
 
   test('una reticencia real (sin "no se") SIGUE yendo a la Objecion 6 -- no se rompe el caso bueno', () => {
@@ -1656,10 +1737,15 @@ describe('Calendario de producción (5-sep-2026)', () => {
 // REENCAUZAR CON CONTEXTO (5-sep-2026, decision de Gaby): "dale mas libertad
 // al LLM, que no responda en automatico". Reemplaza 3 de los 6 sitios donde
 // el bot escalaba en silencio ante un mensaje que no clasifico en nada, por
-// una respuesta con contexto + repregunta -- con tope de 3 intentos SEGUIDOS
-// insistiendo en LA MISMA duda (una duda nueva no acumula).
+// una respuesta con contexto + repregunta.
+//
+// EL TOPE CAMBIO DE SIGNIFICADO el 6-sep-2026 (auditoria B, decision de Gaby):
+// ya no cuenta "el lead insiste con la misma duda" -- eso no escala nunca,
+// porque frente a cada mensaje tiene que haber razonamiento. Cuenta turnos
+// SEGUIDOS en los que el LLM no pudo responder (`llm_fallo`). No escala el
+// lead confuso: escala el bot sin cerebro.
 // ===========================================================================
-describe('Reencauzar con contexto: tope de 3 insistiendo en lo mismo', () => {
+describe('Reencauzar con contexto: el tope es del LLM, no del lead', () => {
   const st = (etapa, extra = {}) => ({
     estado_codigo: 'calificado', etapa_bot: etapa, nombre: 'Marly',
     salario_monto: 10_000_000, ambiguedad_consecutiva: 0, handoff_razon: null,
@@ -1675,37 +1761,42 @@ describe('Reencauzar con contexto: tope de 3 insistiendo en lo mismo', () => {
     assert.equal(p.handoffRazon, null);
     assert.equal(p.etapaNueva, 'M4_ENVIADO');
     assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
-    assert.equal(p.campos.ambiguedad_consecutiva, 1);
+    assert.ok(p.preguntaLibre, 'y se le pide al Worker razonar la respuesta con el playbook');
   });
 
-  test('3 veces insistiendo en LA MISMA duda -> escala de verdad', () => {
+  test('insistir con LA MISMA duda 5 veces NO escala: se le responde siempre', () => {
     let estado = st('M4_ENVIADO');
-    // Intento 1: duda nueva (no hay turno anterior que comparar).
-    let p = reencauzar(estado, { es_duda_nueva: true }, 'Marly', 'ctx');
+    for (let i = 1; i <= 5; i++) {
+      const p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
+      assert.equal(p.handoffRazon, null, `intento ${i}: un lead confuso nunca escala`);
+      assert.ok(p.mensajes.length > 0, `intento ${i}: nunca mudo`);
+      estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
+    }
+  });
+
+  test('3 turnos SEGUIDOS con el LLM caido -> AHI si escala', () => {
+    let estado = st('M4_ENVIADO');
+    let p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
     assert.equal(p.handoffRazon, null);
     assert.equal(p.campos.ambiguedad_consecutiva, 1);
 
-    // Intento 2: el LLM confirma que es LA MISMA duda de antes.
     estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null, 'segundo intento: todavia no escala');
+    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null, 'segundo fallo: todavia aguanta');
     assert.equal(p.campos.ambiguedad_consecutiva, 2);
 
-    // Intento 3: sigue siendo la misma duda -> AHORA si escala.
     estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, 'ambiguo', 'tercera vez con la misma duda: escala');
+    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, 'ambiguo', 'tercer fallo seguido: entra un humano');
     assert.equal(p.campos.ambiguedad_consecutiva, 0, 'se resetea al escalar');
+    assert.match(p.summary, /sin responder/);
   });
 
-  // Exactamente lo que pidio Gaby: "a lo largo de la conversacion pueden
-  // generarse varias preguntas y/o incertidumbres" -- una duda NUEVA cada vez
-  // no debe acumular hacia la escalada.
-  test('3 dudas DISTINTAS seguidas NO acumulan -- cada una arranca de cero', () => {
-    let estado = st('M4_ENVIADO', { ambiguedad_consecutiva: 2 }); // ya iba 2 veces con OTRA duda
-    const p = reencauzar(estado, { es_duda_nueva: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null, 'duda nueva: no hereda el conteo de la duda anterior');
-    assert.equal(p.campos.ambiguedad_consecutiva, 1, 'arranca en 1, no en 3');
+  test('un turno con LLM vivo resetea el conteo de fallos', () => {
+    const estado = st('M4_ENVIADO', { ambiguedad_consecutiva: 2 });
+    const p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null, 'el LLM respondio: no hereda los fallos anteriores');
+    assert.equal(p.campos.ambiguedad_consecutiva, 0);
   });
 
   test('sin pregunta pendiente en la etapa, no hay a donde reencauzar: escala directo', () => {

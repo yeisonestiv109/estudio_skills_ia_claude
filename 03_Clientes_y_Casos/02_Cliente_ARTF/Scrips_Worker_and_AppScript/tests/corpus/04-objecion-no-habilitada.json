@@ -1,5 +1,5 @@
 {
-  "nombre": "04 · Objeción de precio (ahora la contesta el bot) + objeción fuera del playbook",
+  "nombre": "04 · Objecion de precio y objecion fuera del playbook: las dos las atiende el bot",
   "fuente": "Setter-IA-Claude-Code-Project/examples/04-objecion-precio-superada.md (alcance ajustado)",
   "nota": "El 4-sep-2026 el fundador abrió las 9 objeciones, así que la 7 (precio del programa) YA la contesta el bot con su plantilla aprobada, post-pitch y con cierre de agenda. Lo que sigue yendo a un humano es lo que NO es ninguna de las 9: `objecion_fuera_playbook`. Esta conversación fija ambas cosas -- que la 7 se responde sin escalar, y que una objeción desconocida sí escala y NO le manda copy al lead.",
   "lead": {
@@ -66,9 +66,12 @@
         "objecion_conocida": false
       },
       "espera": {
-        "etapa": "HANDOFF",
-        "handoff": "objecion_fuera_playbook",
-        "burbujas": 0
+        "etapa": "M5_ENVIADO",
+        "handoff": null,
+        "burbujas": 1,
+        "no_contiene": [
+          "sede"
+        ]
       }
     }
   ]

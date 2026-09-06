@@ -756,13 +756,17 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
         // Regla de oro V4.1: NUNCA descalificar sobre un ingreso ambiguo.
         if (etapa === 'M1_INGRESO_AMBIGUO') {
-          // Ya se pidio la cifra una vez y sigue sin darla -> humano, jamas
-          // descarte. Tampoco reencauzar() aca: repetiria P.M1_PEDIR_CIFRA,
-          // la misma pregunta que ya se hizo (regla dura de no repetir).
-          return HANDOFF('ambiguo', estado, {
-            campos: { profesion: c.profesion ?? null },
-            summary: 'Ingreso sigue ambiguo tras pedir la cifra. Handoff en vez de descartar (regla V4.1).',
-          });
+          // Antes escalaba aca, con este argumento: "tampoco reencauzar,
+          // repetiria P.M1_PEDIR_CIFRA, la misma pregunta que ya se hizo".
+          // Era valido cuando reencauzar SOLO sabia reenviar la plantilla.
+          // Desde la auditoria B (6-sep-2026) antepone una respuesta razonada
+          // con el playbook, asi que ya no es repetirse: el lead que no da la
+          // cifra casi siempre esta preguntando algo ("¿antes o despues de
+          // impuestos?", "¿cuento lo de mi negocio?") y eso tiene respuesta.
+          // La regla de oro V4.1 sigue intacta: no se descarta sobre un
+          // ingreso ambiguo, jamas.
+          return reencauzar(estado, c, nombre,
+            'Sigue sin dar una cifra de ingreso clara tras pedirsela.');
         }
 
         // Cual de las dos preguntas toca, segun el SOP:
@@ -978,9 +982,16 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       // Si simplemente no se entendio el mensaje, se reencauza como en el
       // resto del bot -- misma regla del 5-sep, ahora tambien aca.
       if (c.dolor_financiero === false) {
-        return HANDOFF('ambiguo', estado, {
-          summary: 'Dolor no financiero confirmado. Sin script del SOP para este cierre -> humano.',
-        });
+        // Antes: "sin script del SOP para este cierre -> humano". El playbook
+        // SI tiene con que responder esto (que es el programa, para quien es,
+        // que se ve en la llamada); lo que faltaba era darselo al LLM. Se le
+        // pide cerrar con honestidad en vez de escalar: si de verdad no hay
+        // fit, decirlo bien dicho es mejor servicio que dejarlo esperando a
+        // que aparezca un humano.
+        return reencauzar(estado, c, nombre,
+          'Dolor no financiero confirmado: se responde con el playbook en vez de escalar.',
+          'El lead confirma que su frustracion principal NO tiene que ver con el dinero. Reconocelo con respeto y explicale en una o dos frases para quien es esto, apoyandote en el playbook, y cierra preguntandole si aun asi siente que su dinero le limita decisiones. No lo descalifiques ni le prometas nada que el playbook no diga.',
+          true);
       }
       return reencauzar(estado, c, nombre, 'No se entendio si la frustracion esta conectada con el dinero.');
     }
@@ -1050,14 +1061,14 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: 'No se pudo leer la urgencia. Se reformula una vez antes de escalar.',
         };
       }
-      // Ya paso por el peldaño de la escalera y sigue sin entenderse: ESE es
-      // el peldaño terminal (su propio contrato es "no ofrece otro peldaño",
-      // para no darle 3 intentos MAS encima de los que ya dio la escalera).
-      // Nada de reencauzar aca -- escala directo.
+      // El peldaño terminal dejo de escalar (6-sep-2026): su contrato era "no
+      // ofrece otro peldaño", y se mantiene -- no se le da otra plantilla de
+      // reintento. Lo que si se le da es una respuesta razonada al mensaje que
+      // no se entendio, que no es un peldaño mas del guion.
       if (etapa === 'M4_URGENCIA_REINTENTO') {
-        return HANDOFF('ambiguo', estado, {
-          summary: 'No se pudo leer la urgencia ni tras la reformulacion. Handoff.',
-        });
+        return reencauzar(estado, c, nombre,
+          'No se pudo leer la urgencia ni tras la reformulacion.',
+          'Ya se le pregunto dos veces si resolver esto es prioridad ahora y su respuesta sigue sin entenderse. Responde a lo que acaba de decir con el playbook y ayudale a aterrizar si es para ahora o para mas adelante. Sin presionarlo.');
       }
       // Reencauzar (5-sep-2026): antes escalaba en silencio ante CUALQUIER
       // respuesta no clasificable -- exactamente el caso real reportado
@@ -1117,11 +1128,11 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         };
       }
       // Peldaño terminal: mismo criterio que M4_URGENCIA_REINTENTO, ver ese
-      // comentario. Nada de reencauzar aca -- escala directo.
+      // comentario. Ya no escala: no ofrece otro peldaño, pero si responde.
       if (etapa === 'M5_PITCH_REINTENTO') {
-        return HANDOFF('ambiguo', estado, {
-          summary: 'Respuesta al pitch no clasificable ni tras la reformulacion. Handoff.',
-        });
+        return reencauzar(estado, c, nombre,
+          'Respuesta al pitch no clasificable ni tras la reformulacion.',
+          'Ya se le hizo el pitch de la llamada y se le repregunto directo, y su respuesta sigue sin entenderse. Responde a lo que acaba de decir con el playbook. Si lo que tiene es una duda sobre la llamada, resuelvela.');
       }
       // Reencauzar (5-sep-2026): mismo criterio que en M4 -- ver ese comentario.
       return reencauzar(estado, c, nombre, 'Respuesta al pitch no clasificable.');
@@ -1366,10 +1377,29 @@ export function etapaParaRetomar(estado) {
  * Si la etapa no tiene pregunta pendiente que reenviar, no hay a donde
  * reencauzar: eso si va a un humano.
  */
-export function reencauzar(estado, c, nombre, contexto = '') {
+export function reencauzar(estado, c, nombre, contexto = '', situacionParaLLM = null, reemplazaPlantilla = false) {
   const etapaActual = estado?.etapa_bot || null;
   const pendientes = preguntaPendiente(etapaActual, nombre);
 
+  // EL TOPE, con su significado nuevo (6-sep-2026, auditoria B): ya no cuenta
+  // "el lead insiste", cuenta "el LLM no responde". Un lead confuso NUNCA
+  // escala -- se le razona la respuesta las veces que haga falta. Lo que si
+  // escala es quedarse sin LLM: la It. 23 probo en vivo que con Groq caido el
+  // bot repite el mismo mensaje indefinidamente, sordo a todo. Ver
+  // UMBRALES.LLM_SIN_RESPUESTA_SEGUIDAS.
+  const fallosLLM = c?.llm_fallo ? (estado?.ambiguedad_consecutiva || 0) + 1 : 0;
+  if (c?.llm_fallo && fallosLLM >= UMBRALES.LLM_SIN_RESPUESTA_SEGUIDAS) {
+    return HANDOFF('ambiguo', estado, {
+      campos: { ambiguedad_consecutiva: 0 },
+      summary: `${contexto} El LLM lleva ${fallosLLM} turnos seguidos sin responder (Groq caido o sin cupo): no hay con que razonar, entra un humano.`,
+    });
+  }
+
+  // Sin pregunta pendiente no hay carril al que volver NI mensaje determinista
+  // que enviar. Se deja escalar a proposito: devolver `mensajes: []` esperando
+  // que el LLM rellene el turno es exactamente como se producen los silencios
+  // (It. 20 y It. 23). Son etapas post-embudo (ej. CIERRE_PRECALL), donde que
+  // el Setter vea el mensaje es lo correcto.
   if (!pendientes.length) {
     return HANDOFF('ambiguo', estado, {
       campos: { ambiguedad_consecutiva: 0 },
@@ -1377,66 +1407,65 @@ export function reencauzar(estado, c, nombre, contexto = '') {
     });
   }
 
-  // TOPE DE INSISTENCIA (5-sep-2026, decision de Gaby): "dale mas libertad al
-  // LLM, que no responda en automatico" -- pero sin dejar a un lead confundido
-  // dando vueltas para siempre sin que un humano se entere. 3 intentos SEGUIDOS
-  // insistiendo en LA MISMA duda, luego escala de verdad. Una duda NUEVA
-  // (`es_duda_nueva`) no acumula -- en una conversacion real surgen varias
-  // preguntas distintas, y cada una merece su propio intento desde cero.
-  // `es_duda_nueva` lo decide el LLM comparando este mensaje con el turno
-  // INMEDIATAMENTE anterior del lead (ver CONTEXTO en worker_bot_setter_v42.js);
-  // si hubo turnos exitosos en el medio, la comparacion ya no aplica y el LLM
-  // marca nueva -- el contador se corrige solo, sin tener que resetearlo a
-  // mano en cada case que SI clasifica bien.
-  // BUG REAL encontrado en vivo (6-sep-2026, probando con Groq bajo rate
-  // limit sostenido): si el LLM FALLA (429, timeout, red), `es_duda_nueva`
-  // queda undefined -- igual que cuando el LLM nunca corrio -- y el default
-  // de abajo ("undefined -> nueva") reseteaba el contador a 1 EN CADA turno,
-  // sin importar cuantas veces fallara seguido. Resultado: con el LLM caido,
-  // el lead quedaba en un bucle IMPOSIBLE de romper, repitiendo la misma
-  // pregunta para siempre, sordo a cualquier cosa que dijera (incluido "ya
-  // agende" o pedir un humano) porque nunca se llega a las 3 veces que
-  // hacen falta para escalar. `llm_fallo` (marcado en `clasificar()` cuando
-  // la llamada a Groq revienta, no cuando simplemente no corrio) fuerza a
-  // contar el turno como "misma duda": el peor caso pasa a ser escalar unos
-  // turnos antes de lo ideal, nunca quedarse mudo para siempre.
-  const esDudaNueva = !c?.llm_fallo && c?.es_duda_nueva !== false; // undefined/true -> nueva
-  const previos = estado?.ambiguedad_consecutiva || 0;
-  const consecutivas = esDudaNueva ? 1 : previos + 1;
-
-  if (!esDudaNueva && consecutivas >= UMBRALES.AMBIGUEDAD_MISMA_DUDA) {
-    return HANDOFF('ambiguo', estado, {
-      campos: { ambiguedad_consecutiva: 0 },
-      summary: `${contexto} Insiste con la misma duda sin resolverse (${consecutivas} veces seguidas). Escala.`,
-    });
-  }
-
-  const generada = CATCHALL_LLM_HABILITADO && typeof c?.respuesta_empatica === 'string'
+  // `respuesta_empatica` (catch-all) vs. respuesta ANCLADA al playbook: cuando
+  // el router trae una instruccion explicita (`situacionParaLLM`) gana la
+  // anclada, y no es preferencia estetica. Caso real visto en la verificacion
+  // del 6-sep-2026, con el dolor no financiero: el catch-all cerro con "¿Te
+  // gustaria que hablemos de...?" y JUSTO DEBAJO salio la plantilla, que
+  // pregunta otra cosa. Dos preguntas seguidas, con tonos distintos. El
+  // catch-all no sabe que hay una burbuja detras ni tiene el playbook; la
+  // llamada anclada sabe las dos cosas.
+  const generada = !situacionParaLLM && CATCHALL_LLM_HABILITADO && typeof c?.respuesta_empatica === 'string'
     ? c.respuesta_empatica.trim()
     : '';
+
+  // Lo que hay que resolverle al lead, para que el Worker lo redacte con el
+  // playbook delante. Si el LLM enuncio una pregunta concreta se usa esa; si
+  // no, se le pide razonar sobre el mensaje tal cual llego. Nunca se queda sin
+  // razonamiento: eso es lo que pidio Gaby ("que haya un razonamiento frente a
+  // todo mensaje"). `respuesta_empatica` sigue como respaldo, porque viene de
+  // la MISMA llamada que ya se hizo y no cuesta un turno mas de Groq.
+  // Prioridad: lo que el lead PREGUNTO gana sobre la instruccion del router.
+  // Si el lead hizo una pregunta concreta, responderle eso es lo urgente.
+  const aResolver = c?.pregunta_libre
+    || situacionParaLLM
+    || 'El lead escribio algo que el guion no tiene mapeado y no se pudo clasificar en ningun campo. Responde a lo que dijo apoyandote en el playbook, sin inventar, y sin repetir la pregunta que va justo despues.';
 
   return {
     mensajes: generada ? [generada, ...pendientes] : pendientes,
     // No avanza el guion: reencauzar no es progresar.
     etapaNueva: etapaActual, estadoDestino: null,
     handoffRazon: null, motivoPerdida: null,
-    campos: { ambiguedad_consecutiva: consecutivas },
+    campos: { ambiguedad_consecutiva: fallosLLM },
     permitirEmpatia: false,
     // El Worker lo usa para eximir esta burbuja de la lista blanca y para
     // dejarlo anotado en el activity_log como texto generado.
     textoGenerado: generada || null,
+    // Solo se pide redaccion nueva si el catch-all no trajo ya una respuesta:
+    // dos textos generados encima de la pregunta pendiente satura el DM.
+    preguntaLibre: generada ? null : aResolver,
+    // Cuando la plantilla determinista CONTRADICE lo que se le pide al LLM
+    // (ej. el cierre del dolor no financiero, que insinua "no eres buen fit"),
+    // la respuesta anclada la reemplaza en vez de anteponerse. La plantilla
+    // sigue siendo el fallback si el LLM no responde.
+    preguntaLibreReemplaza: reemplazaPlantilla && !generada,
     summary: generada
-      ? `${contexto} Reencauce con respuesta generada + la pregunta pendiente (intento ${consecutivas}/${UMBRALES.AMBIGUEDAD_MISMA_DUDA}).`
-      : `${contexto} Reencauce determinista: se reenvia la pregunta pendiente (intento ${consecutivas}/${UMBRALES.AMBIGUEDAD_MISMA_DUDA}).`,
+      ? `${contexto} Reencauce con respuesta generada + la pregunta pendiente.`
+      : `${contexto} Reencauce: se razona la respuesta con el playbook y se reenvia la pregunta pendiente.`,
   };
 }
 
 export function manejarObjecion(estado, c, nombre, contexto = '') {
-  // "Si la objecion NO esta en la lista de 9 -> handoff objecion_fuera_playbook"
+  // POLITICA DE ESCALAMIENTO (6-sep-2026, decision de Gaby tras la auditoria B):
+  // "la unica objecion que debe escalarse a un setter es cuando el lead llega a
+  // la fase final y no encuentra espacios en el calendar; en las anteriores
+  // etapas si se puede manejar con el playbook". Antes, una objecion que no
+  // fuera una de las 9 iba directo a un humano -- pero el bot tiene el playbook
+  // completo y puede responderla, o decir con honestidad que eso se ve en la
+  // llamada. Se reencauza en vez de escalar.
   if (!c.objecion_num || !OBJECIONES[c.objecion_num]) {
-    return HANDOFF('objecion_fuera_playbook', estado, {
-      summary: `${contexto} Objecion fuera del playbook.`,
-    });
+    return reencauzar(estado, c, nombre,
+      `${contexto} Objecion que no es ninguna de las 9 del playbook: se razona la respuesta.`);
   }
 
   const num = String(c.objecion_num);
@@ -1452,37 +1481,29 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     ? (estado?.objeciones_consecutivas || 0) + 1
     : (estado?.objeciones_consecutivas || 0);
 
-  // Precio insistido tiene razon propia: es mas util para el Setter que el
-  // generico. Como la 7 ya no acumula, la señal es que la REPITA -- si volvio a
-  // preguntar el precio despues de que se lo explicamos, la respuesta no le sirvio.
-  if (num === '7' && repiteLaMisma) {
-    return HANDOFF('pregunta_precio', estado, {
-      campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
-      summary: `${contexto} Vuelve a preguntar el precio del programa despues de la respuesta.`,
-    });
-  }
-
-  // Repetir la MISMA objecion.
-  //  - Si es resistencia: aplica el tope del fundador (aguanta N rondas).
-  //  - Si es curiosidad: repetirla significa que nuestra respuesta no le sirvio,
-  //    y ahi no hay tope que aguantar -- insistir con la misma plantilla que ya
-  //    no funciono seria repetirse. Va a un humano.
-  if (repiteLaMisma && (!esResistencia || consecutivas >= UMBRALES.RESISTENCIA_MISMA_OBJECION)) {
-    return HANDOFF('resistencia_repetida', estado, {
-      campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
-      summary: esResistencia
-        ? `${contexto} Repite la objecion ${num} (${consecutivas} veces).`
-        : `${contexto} Vuelve a preguntar lo mismo (objecion ${num}): la respuesta del playbook no le sirvio.`,
-    });
-  }
-
-  // Tope de resistencia acumulada. Ahora cuenta SOLO resistencia.
-  if (consecutivas >= UMBRALES.RESISTENCIA_ACUMULADA) {
-    return HANDOFF('resistencia_acumulada', estado, {
-      campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
-      summary: `${contexto} ${consecutivas} objeciones de resistencia consecutivas.`,
-    });
-  }
+  // ─────────────────────────────────────────────────────────────────────────
+  // LOS TRES TOPES DE ESCALAMIENTO POR OBJECION SE RETIRARON (6-sep-2026).
+  //
+  // Eran: repetir la objecion 7 (`pregunta_precio`), repetir cualquier objecion
+  // (`resistencia_repetida`) y acumular 4 de resistencia (`resistencia_acumulada`).
+  // Los tres compartian el mismo supuesto: "la plantilla ya no le sirvio, que
+  // entre un humano". Ese supuesto era cierto cuando la unica respuesta posible
+  // era la MISMA plantilla literal -- repetirla no aportaba nada.
+  //
+  // Dejo de serlo con la auditoria B: ahora el LLM puede reformular la objecion
+  // con el contexto de la conversacion (ADAPTAR_OBJECIONES_CON_LLM) y responder
+  // con el playbook completo delante (RESPONDER_PREGUNTAS_CON_LLM). Insistir ya
+  // no es repetirse: es responder distinto. Y un lead que pregunta el precio dos
+  // veces es un lead interesado, no uno que haya que sacar del embudo.
+  //
+  // El CONTADOR se mantiene: alimenta el dashboard y deja la señal para el
+  // Setter en el summary. Lo que se retiro es el HANDOFF, no la medicion.
+  //
+  // Lo que sigue escalando: seguridad (crisis/hostil/ex-cliente), no encontrar
+  // horarios en el calendario, y que el LLM lleve N turnos caido.
+  const insiste = repiteLaMisma
+    ? ` El lead REPITE la objecion ${num} (${consecutivas} seguidas): la respuesta anterior no le sirvio, hay que responderle distinto.`
+    : '';
 
   // MATRIZ DE FASES (fundador, 4-sep-2026). Una objecion fuera de la fase donde
   // el Setter humano la ve de verdad casi siempre significa que el clasificador
@@ -1490,25 +1511,25 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
   // no se le ha propuesto ninguna llamada, no es la Objecion 2. Contestarle con
   // la plantilla seria responder a algo que nadie dijo. Se reencauza.
   //
-  // ⚠️ VA DESPUES DE LAS REGLAS DE ESCALAMIENTO, y no es un detalle de orden:
-  // puesta antes, un lead que insiste con una objecion fuera de fase se
-  // reencauzaba indefinidamente y NUNCA llegaba a un humano. Lo encontro el test
-  // "la resistencia repetida gana sobre la matriz".
+  // El orden respecto a los topes dejo de importar el 6-sep-2026: los topes de
+  // objecion se retiraron (ver arriba), asi que ya no hay nada que pueda
+  // "ganarle" a la matriz. El comentario historico decia que ponerla antes
+  // dejaba a un lead reencauzando para siempre sin llegar a un humano -- hoy
+  // eso es justamente el comportamiento buscado, con la red del LLM caido.
   const etapaDelLead = estado?.etapa_bot || null;
   if (!objecionPermitidaEn(c.objecion_num, etapaDelLead)) {
     return reencauzar(estado, c, nombre,
       `${contexto} Objecion ${num} fuera de su fase (el lead esta en ${faseDeEtapa(etapaDelLead) || 'sin etapa'}).`);
   }
 
-  // Perilla de alcance de la v1: el bot solo contesta las objeciones
-  // habilitadas; el resto las ve un humano. Va DESPUES de las reglas de
-  // escalamiento a proposito, para que el Setter reciba siempre la razon mas
-  // informativa (resistencia repetida/acumulada gana sobre "no habilitada").
+  // Perilla de alcance: si una objecion se apaga, su plantilla no sale. Antes
+  // eso mandaba el turno a un humano; desde el 6-sep-2026 se reencauza, que es
+  // la misma politica que el resto. Apagar una objecion ahora significa "no
+  // uses ESA plantilla", no "no atiendas a este lead". Hoy las 9 estan
+  // habilitadas, asi que esta rama practicamente no se pisa.
   if (!OBJECIONES_HABILITADAS.has(Number(c.objecion_num))) {
-    return HANDOFF('objecion_no_habilitada', estado, {
-      campos: { ultima_objecion_codigo: num, objeciones_consecutivas: consecutivas },
-      summary: `${contexto} Objecion ${num} reconocida pero no habilitada en esta version: la atiende un humano.`,
-    });
+    return reencauzar(estado, c, nombre,
+      `${contexto} Objecion ${num} reconocida pero con la plantilla apagada: se razona la respuesta con el playbook.`);
   }
 
   // ANTES DEL PITCH la objecion no puede terminar en un cierre de agenda: el
@@ -1584,11 +1605,11 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     // nunca con link en el turno. El router solo EXPONE el texto aprobado
     // original -- decidir si se adapta y como es responsabilidad del Worker.
     objecionPlantillaOriginal: llevaLink ? null : render(plantilla, nombre),
-    summary: esObjecion6EnM1
+    summary: (esObjecion6EnM1
       ? `${contexto} Objecion 6 en ${etapaActual}: se le quita la presion de la profesion y la cifra exacta, y se le pregunta solo por el rango $7M-$15M.`
       : esPrePitch
         ? `${contexto} Objecion ${num} respondida SIN cierre de agenda (el lead aun se esta calificando) y se reenvia la pregunta pendiente.`
-        : `${contexto} Se responde con la Objecion ${num}.`,
+        : `${contexto} Se responde con la Objecion ${num}.`) + insiste,
   };
 }
 

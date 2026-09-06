@@ -306,7 +306,9 @@ async function manejar(request, env, ctx) {
   // el verificador o si la perilla esta apagada, el lead recibe exactamente lo
   // mismo que recibia antes. Nunca se queda sin respuesta.
   let respondida = false;
+  let intentoRespuesta = false;
   if (RESPONDER_PREGUNTAS_CON_LLM && plan.preguntaLibre && mensajes.length > 0) {
+    intentoRespuesta = true;
     const pendiente = plan.preguntaLibreReemplaza ? '' : mensajes[0];
     const respuesta = await responderPreguntaConLLM(env, plan.preguntaLibre, lastText, pendiente);
     if (respuesta) {
@@ -352,7 +354,15 @@ async function manejar(request, env, ctx) {
     p_asiste_acompanado: plan.campos.asiste_acompanado ?? null,
     p_ultima_objecion_codigo: plan.campos.ultima_objecion_codigo ?? null,
     p_objeciones_consecutivas: plan.campos.objeciones_consecutivas ?? null,
-    p_ambiguedad_consecutiva: plan.campos.ambiguedad_consecutiva ?? null,
+    // El contador cuenta TURNOS SEGUIDOS SIN LLM (ver
+    // UMBRALES.LLM_SIN_RESPUESTA_SEGUIDAS). El router ya cuenta el caso de la
+    // clasificacion caida (`llm_fallo`); aca se cierra el otro lado: que la
+    // clasificacion funcione pero la llamada de REDACCION falle. Sin esto, un
+    // Groq a medias dejaba al lead recibiendo la misma pregunta pendiente sin
+    // que el tope avanzara nunca -- el mismo bucle de la It. 23 por otra vía.
+    p_ambiguedad_consecutiva: intentoRespuesta
+      ? (respondida ? 0 : (estado?.ambiguedad_consecutiva || 0) + 1)
+      : (plan.campos.ambiguedad_consecutiva ?? null),
     p_califica: plan.campos.califica ?? null,
     p_handoff_razon: plan.handoffRazon === LIMPIAR_HANDOFF ? null : plan.handoffRazon,
     p_motivo_perdida_nombre: plan.motivoPerdida,

@@ -263,11 +263,23 @@ export const UMBRALES = {
   RESISTENCIA_MISMA_OBJECION: 3,
   RESISTENCIA_ACUMULADA: 4,
 
-  // Reencauzar (5-sep-2026, decision de Gaby): un mensaje que no clasifica en
-  // ningun campo se responde con contexto y se reenvia la pregunta pendiente,
-  // hasta 3 veces SEGUIDAS insistiendo en la MISMA duda -- una duda nueva no
-  // suma (`es_duda_nueva`, ver worker_bot_setter_v42.js). A la 3ra, escala.
-  AMBIGUEDAD_MISMA_DUDA: 3,
+  // ───────────────────────────────────────────────────────────────────────
+  // LA UNICA ESCALADA QUE NO ES DE SEGURIDAD NI DE CALENDARIO (6-sep-2026).
+  //
+  // CAMBIO DE SIGNIFICADO, no de numero. Antes esto contaba "el lead insiste
+  // con la MISMA duda" y a la 3ra lo pasaba a un humano: castigaba al lead por
+  // ser confuso. Decision de Gaby tras la auditoria B: frente a CADA mensaje
+  // tiene que haber razonamiento, asi que un lead confuso nunca escala -- se
+  // le responde con el playbook las veces que haga falta.
+  //
+  // Lo que SI se cuenta ahora son los turnos SEGUIDOS en los que el LLM no
+  // pudo responder (429, timeout, red). Y no es teorico: la It. 23 lo probo
+  // en vivo -- con Groq caido el bot repitio el mismo mensaje 12 turnos,
+  // sordo a todo, sin escalar jamas. Sin este tope, "no escalar nunca" se
+  // convierte en "dejar al lead hablando con una pared".
+  //
+  // O sea: no escala el lead confuso. Escala el bot sin cerebro.
+  LLM_SIN_RESPUESTA_SEGUIDAS: 3,
 };
 
 const P = {};
