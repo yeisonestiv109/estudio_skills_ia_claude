@@ -955,6 +955,77 @@ Desplegado: `da143a31-b76c-432d-abd8-6d764fbff9cd`.
 
 ---
 
+### It. 23 — simulacion de un lead dificil expuso un bucle imposible de romper si Groq falla
+
+Gaby pidio simular una conversacion completa (M1 hasta agendarse) con un
+lead "complicado" que en cada turno mete una pregunta u objecion nueva,
+para evaluar si el bot se mantiene consistente. Tambien pidio quitar el
+tope de 3 intentos antes de escalar a un humano ("el bot debe saber
+manejar cada caso, sin necesidad de estar mapeado").
+
+Se armo un arnes de prueba (`_tmp_test_conversacion_completa.mjs`,
+descartable) que replica EXACTAMENTE la logica de `manejar()` sin red/DB:
+clasifica con Groq real, rutea con `decidirTurno`, adapta objeciones si
+aplica -- mismo camino que produccion. Se corrio con un guion de 15
+turnos: apertura, ingreso, "no se" + "creo que si queda" (el caso de
+It. 22), una tangente (Objecion 8 "que es el protocolo"), la cifra de
+deuda, el dolor, una urgencia ambigua, la Objecion 9 ("por que ahora"),
+aceptacion de la urgencia, Objecion 1 ("es gratis"), Objecion 3 ("dejame
+pensarlo"), aceptar agendar, confirmar agenda y la pregunta del
+acompañante.
+
+**No se completo la corrida limpia hasta agendarse**: la `GROQ_API_KEY`
+de prueba (una sola llave, sin pool) se quedo sin cupo (tier de 7000
+ITPM) a mitad de la sesion, agotada por TODAS las pruebas en vivo de
+hoy. A partir del turno 5 cada llamada devolvio 429. Pendiente:
+reintentar con la ventana de cupo ya recuperada, o con una llave/pool
+sin usar hoy.
+
+**Pero el fallo sostenido de Groq destapo un bug real y serio**: con
+Groq caido, el bot repitio LITERALMENTE el mismo mensaje ("Sin presión,
+dame un estimado...") en los 12 turnos siguientes, sordo a absolutamente
+todo lo que el lead escribiera despues -- incluidas cosas tan claras
+como "bueno va, agendemos" o "listo ya reserve la llamada". Nunca
+escalo a un humano.
+
+Causa: `es_duda_nueva` (el campo que `reencauzar()` usa para decidir si
+cuenta o no hacia el tope de 3) queda `undefined` tanto si el LLM nunca
+corrio como si corrio y REVENTO -- son indistinguibles para quien lee
+el campo, y el default ("undefined -> duda nueva") reseteaba el
+contador a 1 en CADA fallo, sin importar cuantos fallaran seguidos. El
+tope de 3 pensado para "el lead sigue confundido" nunca se alcanzaba
+porque cada fallo de Groq se leia como si fuera la primera vez.
+
+**Esto es evidencia directa y concreta de por que el tope de escalada
+NO se quito** (ver el pedido de Gaby arriba): sin el, este mismo
+escenario -- Groq caido durante la conversacion de un lead real -- lo
+habria dejado atascado para SIEMPRE, sin que ningun humano se enterara
+jamas. Se le explico esto a Gaby con la prueba en mano en vez de quitar
+la restriccion a ciegas.
+
+**Fix, mas conservador y mas correcto que solo bajar el tope**:
+`clasificarConLLM` ahora marca `llm_fallo: true` cuando Groq no responde
+util (429/5xx/timeout), a diferencia de cuando simplemente no hay
+`GROQ_API_KEY` configurada (eso no es un fallo, es un modo deliberado).
+`reencauzar()` fuerza `esDudaNueva = false` cuando `llm_fallo` esta
+presente, asi que un Groq caido SI cuenta hacia la escalada -- el peor
+caso pasa a ser escalar unos turnos antes de lo ideal, nunca quedarse
+mudo para siempre. Verificado en la MISMA corrida en vivo: el intento 2
+y 3 de Groq caido se contaron bien y la conversacion escalo en el 3er
+fallo seguido.
+
+432/432 tests (4 nuevos, con Groq mockeado simulando el 429 real).
+Compuerta verde. Desplegado: `3f6e73c9-1e1f-4388-b328-3f8554df8780`.
+
+**Pendiente real**: repetir la simulacion completa "lead dificil hasta
+agendarse" con cupo de Groq disponible, para de verdad evaluar la
+consistencia contextual del LLM a traves de todo el embudo (lo que
+Gaby pidio originalmente) -- esta vez el hallazgo fue sobre la
+resiliencia ante fallos de Groq, no sobre la consistencia de las
+respuestas.
+
+---
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
