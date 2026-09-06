@@ -367,6 +367,48 @@ async function manejar(request, env, ctx) {
   }
 
   // -------------------------------------------------------------------------
+  // 4.c GUARDA ANTI-REPETICION — la ultima red antes de enviar (6-sep-2026)
+  // -------------------------------------------------------------------------
+  // BUG REAL que la motiva (marlyy318): la lead contesto "me gustaria" a la
+  // pregunta de urgencia, el clasificador lo leyo como "esta preguntando por
+  // que ahora" y el bot le REENVIO entera, palabra por palabra, la respuesta
+  // que le acababa de dar. La guarda que ya existia solo cubria el reenvio de
+  // la pregunta pendiente; esta repeticion venia por el camino de objeciones.
+  //
+  // Por eso ahora se revisa TODO lo que va a salir, venga del camino que
+  // venga: si el clasificador se equivoca, el lead igual no recibe dos veces
+  // el mismo mensaje. Es mecanico -- comparar strings -- asi que no depende
+  // de que el LLM este vivo ni de que acierte.
+  //
+  // Regla de Gaby para cuando no hay LLM: "no quiero que se reenvie la misma
+  // pregunta sino que se brinde una respuesta y sigamos; si ahora mismo no
+  // puede, que lo escale a un humano". Eso es exactamente el orden de abajo:
+  // reformular -> si no se puede, quitar la burbuja -> si no queda nada que
+  // decir, humano. Repetir NUNCA es una salida.
+  let repetidasQuitadas = 0;
+  if (filasHistorial.length && mensajes.length) {
+    const revisadas = [];
+    for (const m of mensajes) {
+      // El link es la excepcion: reenviarlo es legitimo ("no me llego").
+      if (/https?:\/\//.test(m) || !yaSeDijo(filasHistorial, m)) { revisadas.push(m); continue; }
+      const nuevo = await adaptarObjecionConLLM(env, m, lastText, true);
+      if (nuevo && !yaSeDijo(filasHistorial, nuevo)) revisadas.push(nuevo);
+      else repetidasQuitadas += 1;
+    }
+    mensajes = revisadas;
+  }
+
+  if (repetidasQuitadas && !mensajes.length) {
+    // Todo lo que quedaba por decir ya se habia dicho y el LLM no pudo
+    // reformularlo. Callar seria dejar al lead en visto; repetir es lo que
+    // estamos evitando. Entra un humano.
+    console.warn('[anti-repeticion] el turno quedo vacio tras quitar repetidos: escala.');
+    plan.handoffRazon = 'ambiguo';
+    plan.etapaNueva = 'HANDOFF';
+    plan.summary = `${plan.summary} Todo el turno era repetido y no se pudo reformular (LLM sin cupo o caido): escala en vez de repetir.`;
+  }
+
+  // -------------------------------------------------------------------------
   // 5. Escritura SINCRONA antes de responder. Si esto falla, el lead NO recibe
   //    un mensaje que la base nunca registro.
   // -------------------------------------------------------------------------
@@ -839,6 +881,12 @@ REGLAS DE EXTRACCION:
   · "confirmo_agendo" = YA FUE al calendario y RESERVO. "listo, ya agende", "quedo para el jueves 3pm", "ya separe el espacio".
   Si solo dice que quiere, es "acepta". Si no ha entrado al link, NO es "confirmo_agendo".
   ⚠️ FALSO POSITIVO REAL: el lead escribio "esperame, antes me gustaria tener mas claro de que trata el protocolo" y se clasifico como acepta=true. Eso es la objecion 8, NO una aceptacion. Si el lead pide informacion o pone un "espera", "antes", "primero" -> NO acepta.
+- "urgencia" — responde a "¿resolver esto es prioridad AHORA, o es para cuando tengas mas tiempo/dinero?":
+  · "ahora"       = dice que si, que quiere resolverlo ya. Incluye respuestas cortas y tibias: "si", "me gustaria", "claro", "obvio", "ya mismo", "lo necesito". Un "me gustaria" es un SI, no una duda.
+  · "algun_dia"   = lo aplaza: "mas adelante", "cuando tenga tiempo", "cuando junte plata".
+  · "pregunta_por_que" = NO esta contestando: esta PREGUNTANDO por que deberia hacerlo ahora y no despues ("¿por que ahora?", "¿que gano si lo hago ya?"). Tiene que haber una pregunta de verdad.
+  · null          = no se entiende que quiso decir.
+  ⚠️ BUG REAL (marlyy318, 6-sep-2026): a "me gustaria" se le puso "pregunta_por_que" y el bot le repitio entera la respuesta de "por que ahora" que le acababa de dar. Si el lead no esta preguntando nada, NUNCA es "pregunta_por_que".
 - "pide_link": true si pregunta donde agendarse, dice que no le llego el link o que no lo encuentra. TU NUNCA ESCRIBES EL LINK: solo marcas este campo y el sistema lo envia.
 - "recupera_handoff": true SOLO si el lead esta pidiendo CONTINUAR con el proceso -- da el dato que se le pidio, dice que quiere seguir, o pide agendar. Ejemplo: "pero igual quiero seguir, me da 40%" -> true. Un simple "hola" o una queja sin intencion de avanzar -> false.
 

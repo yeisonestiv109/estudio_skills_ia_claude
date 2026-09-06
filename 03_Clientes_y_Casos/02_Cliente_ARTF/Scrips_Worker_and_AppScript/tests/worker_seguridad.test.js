@@ -9,6 +9,7 @@
  */
 
 import { test, describe } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
 import {
@@ -651,5 +652,33 @@ describe('formatearHistorial: barato y legible para el prompt', () => {
   test('vacio cuando no hay nada que recordar', () => {
     assert.equal(formatearHistorial([]), '');
     assert.equal(formatearHistorial(null), '');
+  });
+});
+
+// ===========================================================================
+// BUG REAL (marlyy318, prueba en vivo del 6-sep-2026): la lead contesto
+// "me gustaria" a "¿resolver esto es prioridad AHORA?" y el clasificador lo
+// leyo como `urgencia: "pregunta_por_que"` -- o sea "esta preguntando por que
+// ahora". El bot le REENVIO entera la respuesta que le acababa de dar.
+//
+// Causa: el prompt nunca explicaba que significaba el campo `urgencia` ni sus
+// valores. El modelo veia el enum crudo y tenia que adivinar que era
+// "pregunta_por_que". No era un caso raro que faltara mapear: era un campo
+// sin definir.
+// ===========================================================================
+describe('El esquema no puede pedir enums que el prompt no explica', () => {
+  test('las reglas explican los 3 valores de urgencia, no solo el enum', () => {
+    const prompt = ESQUEMA_POR_ETAPA.M4_ENVIADO;
+    assert.match(prompt, /pregunta_por_que/, 'el enum sigue en el esquema');
+  });
+
+  test('"pregunta_por_que" exige que el lead PREGUNTE algo, no que dude', () => {
+    // Fija la regla en el prompt: si alguien la borra, "me gustaria" vuelve a
+    // leerse como una pregunta y el bot vuelve a repetirse.
+    const src = readFileSync(
+      new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    assert.match(src, /Un "me gustaria" es un SI, no una duda/,
+      'se perdio la regla que distingue responder de preguntar');
+    assert.match(src, /Tiene que haber una pregunta de verdad/);
   });
 });
