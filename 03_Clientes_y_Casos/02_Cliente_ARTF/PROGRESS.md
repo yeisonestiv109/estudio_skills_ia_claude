@@ -5,9 +5,10 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (4-sep-2026) · **371 tests** · **5 de 5 compuertas corridas de verdad**
-**Estado del bot: DESPLEGADO** (versión `a9c70c1b`) **— 4 rondas de QA en vivo aplicadas.**
-**Alerta de handoff a Google Chat: FUNCIONANDO** (verificada en vivo). · **Modo secretaria (`BOT_ACTIVO=false`) implementado.**
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **412 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
+**Estado del bot: DESPLEGADO** (versión `9c1ad47d`) **— 4 rondas de QA en vivo aplicadas.**
+**⚠️ `BOT_ACTIVO=false` (modo secretaria): el bot NO le responde a nadie ahora mismo** -- lee, clasifica y guarda para el dashboard, pero no habla. Confirmar con Yeisiton si sigue siendo intencional antes de asumir que el bot esta "caido".
+**Alerta de handoff a Google Chat: FUNCIONANDO** (verificada en vivo, Yeisiton).
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
 **Filtro 1: $6M.** · **Filtro 2: remanente ≥ $2.5M** (reemplaza el tope por %).
@@ -682,6 +683,73 @@ recuperacion, hoy se reenviaria la pregunta de M1 igual. Simetrico al arreglo
 de M2, pendiente de aprobacion para implementarlo.
 
 358 → **360 tests**. Desplegado: `ceff5147-e60f-418f-9fd6-1fae3bb51a2f`.
+
+---
+
+### It. 19 — revert del CoT condicional + mas libertad al LLM (hecho, sin verificar E2E)
+
+Sesion con dos pedidos directos de Gaby, ademas de bajar 5 commits de Yeison
+(pool de llaves Groq, telemetria, calendario de ARTF, canario en modo
+secretaria `BOT_ACTIVO=false`, alerta a Google Chat).
+
+**1. Revert del CoT condicional (`mereceRazonamiento`).** Yeison lo habia
+agregado para ahorrar tokens de salida (recortaba `analisis_paso_a_paso` en
+mensajes cortos/sin cifras). Se identifico como regresion de PRECISION
+semantica en objeciones cortas y criticas ("no me genera confianza"). Se
+elimino la funcion y el recorte condicional -- el razonamiento corre en el
+100% de los turnos, sin excepciones.
+
+**De paso, 2 corrupciones reales de sintaxis en el pull de Yeison** que
+dejaban `tests/bot_router_v42.test.js` sin poder cargar: 20 lineas separadoras
+que se comieron el salto de linea antes del siguiente `describe(` (lo
+comentaban entero), y un `});` de cierre que faltaba justo donde el empalmo
+su nuevo describe. Reparadas. Tambien: `smoke_rpc.mjs` solo aceptaba status
+200 para `fn_registrar_telemetria_llm`, que es `RETURNS void` (PostgREST
+responde 204) -- marcaba rojo una llamada que si funcionaba.
+
+**2. Mas libertad al LLM para responder con contexto.** Pedido explicito:
+"que no solo saque datos, sino que plantee respuestas... que no responda en
+automatico". Se investigo el mecanismo existente (`oracion_empatia`, ya activo
+en casi todas las objeciones) y se encontro el hueco real: **6 sitios** donde
+el bot escalaba en **silencio total** si el clasificador no ubicaba el mensaje
+en ningun casillero -- el LLM ni participaba. Solo 1 sitio (`reencauzar()`)
+lo usaba.
+
+Se convirtieron **3 de los 6** (M2_BORDERLINE sin datos, M4_ENVIADO y
+M5_ENVIADO sin clasificar -- este ultimo es el caso real reportado: "cual es
+la diferencia si lo hago ahora o despues?" mal leido como urgencia "ahora",
+luego "como asi?" sin respuesta). Los otros 3 se dejaron intactos a proposito
+(comentado por que en el codigo): ya implementan "nunca repetir la misma
+pregunta" (regla dura del 5-sep) o son determinaciones confirmadas sin script
+del SOP -- no ambiguedad real que el LLM pueda resolver hablando.
+
+**Tope de insistencia, a pedido de Gaby:** "3 intentos, pero solo si sigue
+siendo la misma idea -- pueden surgir varias dudas distintas en la
+conversacion". Nuevo campo `es_duda_nueva` en el esquema del LLM (compara el
+mensaje sin clasificar con el turno anterior del lead) + nueva columna
+`gestion_leads.ambiguedad_consecutiva` (migracion aditiva aplicada). Una duda
+nueva resetea el conteo a 1; la misma duda insistida 3 veces escala de verdad.
+Los peldaños terminales de la escalera (`M4_URGENCIA_REINTENTO`,
+`M5_PITCH_REINTENTO`) escalan directo, sin pasar por este tope -- preservan su
+propio contrato de "no ofrecen otro peldaño".
+
+**BUG CRITICO encontrado de paso:** `recupera_handoff` no estaba en la lista
+de booleanos de `validarClasificacionLLM` -- se descartaba en silencio. **TODA
+la auto-recuperacion de handoff de la It. 17 (ayer) seguia rota en produccion
+real** pese a tener ya el esquema de LLM correcto, porque el valor nunca
+sobrevivia la validacion. Corregido junto con `es_duda_nueva` (mismo bug
+nuevo, atrapado antes de salir a produccion).
+
+**Migracion de base de datos aplicada** (`ambiguedad_consecutiva`): un primer
+intento con `CREATE OR REPLACE FUNCTION` dejo DOS versiones sobrecargadas de
+`fn_bot_procesar_turno` coexistiendo (Postgres no reemplaza si cambia la
+lista de parametros) -- PostgREST no podia decidir cual llamar
+(`PGRST203`). Se detecto con el propio smoke de la compuerta 4 y se corrigio
+borrando la version vieja explicitamente.
+
+404 → **412 tests**. Desplegado: `9c1ad47d-e5c2-46de-b122-f93c663bbcc0`.
+**Sin verificar E2E**: el Worker esta en modo secretaria (`BOT_ACTIVO=false`,
+canario de Yeisiton) y no responde a nadie ahora mismo.
 
 ---
 
