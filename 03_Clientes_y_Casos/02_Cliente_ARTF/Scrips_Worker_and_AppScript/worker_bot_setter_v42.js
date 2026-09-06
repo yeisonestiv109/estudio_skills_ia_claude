@@ -1118,7 +1118,7 @@ Responde SOLO con el mensaje que le llegaria al lead. Nada de JSON, comillas env
  *      funcionan la primera vez ("Última pregunta antes de contarte cómo
  *      funciona"). Medido en la base: 84 turnos repetidos textualmente.
  *
- * Esta funcion decide entre OMITIR / MANTENER / REFORMULAR. Vive aca y no en
+ * Esta funcion decide entre omitir / mantener / reformular, en JSON. Vive aca y no en
  * el clasificador porque es la unica capa que ve las DOS burbujas del turno:
  * cuando se clasifica, el router todavia no decidio que va a responder.
  *
@@ -1150,32 +1150,36 @@ LO QUE YA SE HABLARON (lo mas viejo arriba, "TU" eres tu):
 ${historial}
 CONVERSACION>>>
 ` : ''}
-Decide UNA de tres, y responde EXACTAMENTE en ese formato:
+Decide UNA de tres acciones:
 
-1. OMITIR
+1. "omitir"
    Si lo que ya le estas diciendo arriba YA RESPONDE o YA CUBRE esa pregunta.
    Ejemplo real: le acabas de explicar por que le conviene resolverlo ahora y
    no despues; mandarle encima "¿resolver esto es prioridad AHORA?" es
-   preguntarle lo que acabas de contestar. Ahi va OMITIR.
-   Tambien va OMITIR si el lead ya la contesto en la conversacion de arriba.
+   preguntarle lo que acabas de contestar. Ahi va "omitir".
+   Tambien va "omitir" si el lead ya la contesto en la conversacion de arriba.
+   En "texto" devuelves cadena vacia.
 
-2. MANTENER
+2. "mantener"
    Si la pregunta sigue haciendo falta y todavia no se la has mandado.
+   En "texto" devuelves cadena vacia.
 
-3. REFORMULAR: <la pregunta con otras palabras>
+3. "reformular"
    Si la pregunta sigue haciendo falta PERO en la conversacion de arriba ya se
-   la mandaste casi igual. Vuelve a hacerla enlazando con naturalidad
-   ("Entonces...", "Volviendo a lo de antes..."), quitando las frases que solo
-   servian la primera vez ("Ultima pregunta antes de...", "Antes de contarte...").
+   la mandaste casi igual. En "texto" va la pregunta con otras palabras,
+   enlazando con naturalidad ("Entonces...", "Volviendo a lo de antes..."),
+   quitando las frases que solo servian la primera vez ("Ultima pregunta antes
+   de...", "Antes de contarte...").
    Misma pregunta de fondo y mismas opciones. UNA sola pregunta, max 2 frases.
    Cero cifras o datos que no esten en la pregunta original. Tuteo colombiano,
    nada de voseo, sin links.
 
 ${yaSeEnvioTextual
-    ? 'OJO: esa pregunta YA se la mandaste antes, palabra por palabra. MANTENER NO es una opcion valida en este turno: elige OMITIR (si tu respuesta de arriba ya la cubre) o REFORMULAR. Repetirsela identica es lo peor que puedes hacer.'
-    : 'Ante la duda entre MANTENER y OMITIR, elige MANTENER: es peor dejar al lead sin la pregunta que hacersela de mas.'}
+    ? 'OJO: esa pregunta YA se la mandaste antes, palabra por palabra. "mantener" NO es una accion valida en este turno: elige "omitir" (si tu respuesta de arriba ya la cubre) o "reformular". Repetirsela identica es lo peor que puedes hacer.'
+    : 'Ante la duda entre "mantener" y "omitir", elige "mantener": es peor dejar al lead sin la pregunta que hacersela de mas.'}
 
-Responde SOLO con OMITIR, MANTENER, o "REFORMULAR: ..." -- nada mas.`;
+Devuelve UNICAMENTE este JSON, sin markdown ni texto alrededor:
+{"accion": "omitir" | "mantener" | "reformular", "texto": "la pregunta reformulada, o cadena vacia si la accion no es reformular"}`;
 
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_LLM_MS);
@@ -1183,7 +1187,12 @@ Responde SOLO con OMITIR, MANTENER, o "REFORMULAR: ..." -- nada mas.`;
     const r = await pedirAGroq(env, {
       model: GROQ_MODEL,
       temperature: 0.3,
-      max_tokens: 200,
+      // 250 y no 200: el sobre JSON ({"accion":...,"texto":...} y el escapado)
+      // cuesta ~20 tokens sobre el texto pelado que se devolvia antes. Un JSON
+      // truncado es JSON ilegible, y eso cae en "mantener": seguro, pero se
+      // pierde la reformulacion.
+      max_tokens: 250,
+      response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: system },
         {
@@ -1199,19 +1208,27 @@ ${String(textoLead || '').replace(/<\/?mensaje_lead>/gi, '').slice(0, 400)}
       console.warn('[repregunta] sin respuesta util:', r.estado || '');
       return { accion: 'mantener', texto: '' };
     }
-    const bruto = String(r.datos?.choices?.[0]?.message?.content || '').trim();
+    // JSON Mode: la accion viene en un campo tipado, no en el formato del
+    // texto. Antes se parseaba con /^OMITIR/i y /^REFORMULAR\s*:/i sobre texto
+    // libre -- un "Claro, OMITIR" o unas comillas de mas y la decision se
+    // perdia en silencio.
+    const j = parseJsonLLM(r.datos?.choices?.[0]?.message?.content);
+    const accion = String(j?.accion || '').trim().toLowerCase();
 
-    if (/^OMITIR/i.test(bruto)) return { accion: 'omitir', texto: '' };
-    // Ultima red: si ya se envio textual y el modelo igual dijo MANTENER, se
+    if (accion === 'omitir') return { accion: 'omitir', texto: '' };
+    // Ultima red: si ya se envio textual y el modelo igual dijo mantener, se
     // omite. Reenviar el mismo mensaje no es una salida aceptable.
-    if (yaSeEnvioTextual && /^MANTENER/i.test(bruto)) {
-      console.warn('[repregunta] dijo MANTENER sobre una pregunta ya enviada: se omite.');
+    if (yaSeEnvioTextual && accion === 'mantener') {
+      console.warn('[repregunta] dijo mantener sobre una pregunta ya enviada: se omite.');
       return { accion: 'omitir', texto: '' };
     }
 
-    const m = bruto.match(/^REFORMULAR\s*:\s*([\s\S]+)$/i);
-    if (m) {
-      const texto = m[1].trim().replace(/^["'\`]|["'\`]$/g, '');
+    if (accion === 'reformular') {
+      const texto = String(j?.texto || '').trim().replace(/^["'\`]|["'\`]$/g, '');
+      if (!texto) {
+        console.warn('[repregunta] dijo reformular sin texto: se mantiene.');
+        return { accion: 'mantener', texto: '' };
+      }
       // Misma vara que una adaptacion de objecion: cero cifras nuevas, sin
       // links, reglas de voz. Si no pasa, sale la plantilla literal.
       const fallas = verificarAdaptacionObjecion(preguntaPendiente, texto);
@@ -1222,6 +1239,9 @@ ${String(textoLead || '').replace(/<\/?mensaje_lead>/gi, '').slice(0, 400)}
       return { accion: 'reformular', texto };
     }
 
+    // JSON ilegible, o una accion que no existe: mantener, igual que cualquier
+    // otro fallo de esta funcion.
+    if (!j) console.warn('[repregunta] respuesta no parseable como JSON: se mantiene.');
     return { accion: 'mantener', texto: '' };
   } catch (e) {
     console.warn('[repregunta] fallo:', e?.message);

@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
-  MAX_TOKENS_LLM, adaptarObjecionConLLM, yaSeDijo, formatearHistorial,
+  MAX_TOKENS_LLM, adaptarObjecionConLLM, yaSeDijo, formatearHistorial, decidirRepregunta,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -768,5 +768,95 @@ describe('clasificar ya no adivina con regex cuando el LLM falla', () => {
     const p = decidirTurno(estado, { llm_fallo: true }, 'si, ahora tengo mas claro que no quiero');
     assert.equal(p.handoffRazon, 'error_tecnico');
     assert.equal(p.mensajes.length, 0, 'no le manda NADA, mucho menos el link');
+  });
+});
+
+// ===========================================================================
+// decidirRepregunta EN JSON MODE (6-sep-2026)
+//
+// BUG REAL que estos tests fijan, encontrado al migrar la funcion a JSON:
+// desde 8ae0a1f el archivo tenia un byte 0x08 (backspace) colado dentro de
+// los dos regex de parseo -- `/^OMITIR\x08/i` y `/^MANTENER\x08/i`. Invisible
+// en el editor y en un `git diff`, pero `/^OMITIR\x08/i.test('OMITIR')` es
+// FALSE: la funcion NUNCA pudo devolver 'omitir', y la ultima red contra
+// reenviar la pregunta textual nunca se disparo. Ambas caian en 'mantener',
+// que es justo el sintoma que la funcion existe para evitar (marlyy318: la
+// misma pregunta pegada dos veces).
+//
+// La causa raiz de que un bug asi sobreviva es parsear una DECISION desde el
+// formato de un texto libre. Con JSON Mode la accion es un campo tipado, y
+// estos tests cubren las cuatro salidas.
+// ===========================================================================
+describe('decidirRepregunta: la accion viene en un campo JSON, no en el formato del texto', () => {
+  const PREGUNTA = '¿Resolver esto es prioridad para ti AHORA, o lo ves mas adelante?';
+
+  function mockFetchConContenido(contenido) {
+    return (url, opts) => {
+      cuerpoEnviado = JSON.parse(opts.body);
+      return Promise.resolve({
+        ok: true,
+        headers: new Map(),
+        json: () => Promise.resolve({ choices: [{ message: { content: contenido } }] }),
+      });
+    };
+  }
+
+  let cuerpoEnviado;
+  let originalFetch;
+
+  async function conMock(contenido, fn) {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetchConContenido(contenido);
+    try { return await fn(); } finally { globalThis.fetch = originalFetch; }
+  }
+
+  test('accion "omitir" se respeta (el regex con el 0x08 devolvia "mantener")', async () => {
+    const r = await conMock('{"accion":"omitir","texto":""}', () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'Te explico por que ahora y no despues...', PREGUNTA, '', 'ya entendi'));
+    assert.equal(r.accion, 'omitir');
+    assert.equal(r.texto, '');
+  });
+
+  test('la llamada pide JSON Mode explicitamente', async () => {
+    await conMock('{"accion":"mantener","texto":""}', () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'hola'));
+    assert.deepEqual(cuerpoEnviado.response_format, { type: 'json_object' });
+  });
+
+  test('ultima red: "mantener" sobre una pregunta ya enviada textual se convierte en "omitir"', async () => {
+    const r = await conMock('{"accion":"mantener","texto":""}', () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'hola', true));
+    assert.equal(r.accion, 'omitir');
+  });
+
+  test('"reformular" con texto limpio pasa el verificador y sale reformulada', async () => {
+    const nueva = 'Volviendo a lo de antes: ¿esto es algo que quieres resolver ya, o lo ves mas adelante?';
+    const r = await conMock(JSON.stringify({ accion: 'reformular', texto: nueva }), () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'no me habias preguntado eso?', true));
+    assert.equal(r.accion, 'reformular');
+    assert.equal(r.texto, nueva);
+  });
+
+  test('"reformular" con un link dentro se descarta: sale la pregunta original', async () => {
+    const r = await conMock(JSON.stringify({ accion: 'reformular', texto: 'Mira https://calendly.com/algo y me dices si es prioridad ahora.' }), () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'ok'));
+    assert.equal(r.accion, 'mantener');
+  });
+
+  test('"reformular" sin texto no deja al lead sin pregunta: cae en "mantener"', async () => {
+    const r = await conMock('{"accion":"reformular","texto":""}', () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'ok'));
+    assert.equal(r.accion, 'mantener');
+  });
+
+  test('respuesta que NO es JSON (el formato viejo de texto libre) cae en "mantener"', async () => {
+    const r = await conMock('OMITIR', () =>
+      decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', PREGUNTA, '', 'ok'));
+    assert.equal(r.accion, 'mantener');
+  });
+
+  test('sin GROQ_API_KEY o sin pregunta pendiente ni siquiera llama al LLM', async () => {
+    assert.deepEqual(await decidirRepregunta({}, 'algo', PREGUNTA, '', 'ok'), { accion: 'mantener', texto: '' });
+    assert.deepEqual(await decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', '', '', 'ok'), { accion: 'mantener', texto: '' });
   });
 });
