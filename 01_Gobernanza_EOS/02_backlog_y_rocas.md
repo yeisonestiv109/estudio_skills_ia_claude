@@ -5,6 +5,115 @@
 
 ---
 
+# ⏭️ RETOMAR AQUÍ — bot ARTF V4.2 (cierre del 6-sep-2026)
+
+> Inyección de memoria para la sesión siguiente. Leer esto **antes** que nada.
+> Detalle largo de cada iteración → `03_Clientes_y_Casos/02_Cliente_ARTF/PROGRESS.md`
+> (It. 24–25) y `auditoria_arquitectura_bot_v42.md` → **Anexo B**.
+
+## 🔴 LO PRIMERO: git y producción están DESINCRONIZADOS
+
+| | |
+|---|---|
+| Último commit | `dd98d33` (rama `setup/base-conocimiento`, árbol limpio) |
+| **Desplegado en Cloudflare** | **`962818e1`** — versión ANTERIOR al refactor |
+| Sin desplegar | `f666c84` (elimina el regex) + `dd98d33` (arregla el eval) |
+
+**Se dejó así a propósito**, no por olvido: el refactor quita la capa de regex y
+deja al LLM como única autoridad de comprensión. No se despliega hasta tener la
+nota del eval. **No desplegar sin correr el eval primero.**
+
+## Logros de la sesión
+
+1. **Bugs históricos ya cerrados y en producción** (iteraciones previas):
+   incertidumbre vs. Objeción 6 en el loop de endeudamiento, y
+   `SIN_HORARIOS_ESPERANDO_FRANJA` agregado al CHECK de la BD para que el lead
+   sin cupos no quede en visto.
+
+2. **Auditoría B** (`auditoria_arquitectura_bot_v42.md`): el LLM veía SOLO el
+   último mensaje. Se le dio memoria corta (últimos 6 turnos desde
+   `activity_log`, sin migración) y `CONOCIMIENTO_PLAYBOOK` como anclaje.
+
+3. **Política de escalamiento: de 13 puntos a 5.** Solo escalan seguridad
+   (crisis/hostil/ex-cliente), sin cupos en el calendario, y que el LLM esté
+   caído. Un lead confuso NUNCA escala.
+
+4. **Se eliminó la capa de regex de negocio** (`f666c84`). Tres bugs verificados
+   en vivo, todos por `const fusion = {...c, ...llm, ...det}` (el regex ganaba):
+   - `"4 millones del trabajo, 3 del negocio y 4 de un local"` → LLM 11M, regex 4M → **descalificado**
+   - `"gano 5 millones fijos y unos 3 más por comisiones"` → LLM 8M, regex 5M → **descalificado**
+   - `"sí, ahora tengo más claro que NO quiero seguir"` → regex vio "claro" → **le mandó el link**
+
+5. **`evals.mjs`** (nuevo): corre el clasificador REAL contra las 8
+   conversaciones del corpus. Cada `pista` es la etiqueta esperada. Umbral 95%.
+
+## Decisiones cerradas (no volver a abrir)
+
+- **Consolidar las 4 llamadas en 1: DESCARTADO, con datos.** De 184 turnos
+  reales, **163 (88,6%) solo hacen 1 llamada**. Meter el playbook en todas para
+  ahorrar 3 llamadas que casi nunca ocurren cuesta **+65%** (~2.356 → ~3.900
+  tokens/turno). Las 4 llamadas se ven mal en un diagrama; el diseño ya paga el
+  playbook solo cuando hace falta.
+- **JSON Mode ya está activo** en el clasificador (`response_format:
+  json_object`), con campos separados y tipados. Falta **solo** en
+  `decidirRepregunta`, que devuelve texto libre (`"OMITIR"` / `"REFORMULAR: …"`)
+  y se parsea con regex → migrar a JSON.
+- **Sin LLM no se adivina**: Groq caído → `error_tecnico` → humano.
+- El código duro se queda ÚNICAMENTE con: aritmética de los 3 filtros,
+  transiciones de etapa, la regla del link y las escaladas de seguridad.
+
+## ⚠️ Restricción operativa descubierta
+
+**Groq tiene tope diario: 200.000 tokens/día por llave** (no solo el de 8.000
+por minuto). A ~2.200 tokens por turno ≈ **90 mensajes de lead al día por
+llave**. La llave del 6-sep se agotó con las pruebas. Gaby dejó una llave nueva
+en `artf-pipeline-app/.env.local` (las viejas quedaron comentadas, ella las
+borra) y está sincronizada en `.dev.vars`.
+
+## Plan exacto para la próxima sesión
+
+1. **JSON Mode en `decidirRepregunta`** (`worker_bot_setter_v42.js`): que
+   devuelva `{"accion":"omitir"|"mantener"|"reformular","texto":"…"}` en vez de
+   texto libre. Ante cualquier fallo, sigue cayendo en `mantener`.
+2. **Correr el eval base**: `node evals.mjs` (~21 min, 45 llamadas espaciadas
+   28s). Anotar el número. Sin esta nota, lo de abajo es a ciegas.
+3. **Podar ~30% las `REGLAS DE EXTRACCION`** del prompt del clasificador: son
+   **1.930 de sus 2.955 tokens**, se pagan en el 100% de los turnos, y varios
+   párrafos protegen contra errores del regex que ya no existe. Ahorra ~580
+   tokens/turno y sube el techo diario de ~90 a ~120 mensajes.
+4. **Re-correr el eval y exigir ≥95%.** Si baja, devolver lo podado.
+5. **Recién ahí desplegar** (`npx wrangler deploy`) y probar en vivo con
+   `marlyy318` (`manychat_id` 1269883784).
+
+## Pendientes de fondo (no bloquean lo de arriba)
+
+- `adaptarObjecionConLLM` todavía recibe `llamadaYaMencionada` calculado a mano:
+  con memoria debería deducirlo solo. Es el último parche de ese tipo.
+- Detector automático de síntomas sobre `activity_log` (mensajes repetidos,
+  preguntas sin responder, conversaciones muertas). Gaby rechazó — con razón —
+  etiquetar casos a mano; medir síntomas no necesita etiquetas.
+- Aumentar cupo de Groq: más llaves de **organizaciones distintas** (el límite
+  es por organización) o pasar a tier de pago.
+- 🔴 El link del calendario sigue siendo el personal de Yeison → cambiar a
+  `CALENDAR_ARTF` antes de producción real.
+- `wrangler dev` local no arranca (`Incorrect type for map entry
+  'ESQUEMA_SECRETARIA'`). No bloquea `wrangler deploy`.
+
+## Cómo verificar que no rompiste nada
+
+```bash
+cd 03_Clientes_y_Casos/02_Cliente_ARTF
+bash verificar.sh          # 476 tests + type-check + smoke RPC real
+cd Scrips_Worker_and_AppScript && node evals.mjs   # el clasificador contra el corpus
+```
+
+**Si un test se pone rojo: arreglar el código, no el test.** La excepción es
+cuando una decisión de negocio cambió — ahí se reescribe el test para fijar la
+regla NUEVA (así se hicieron los 19 de esta sesión), nunca se borra.
+
+---
+
+
 # 🟢 LÍNEA 1 — INBOUND AI SDR (Frente Activo)
 
 > **Cliente actual: ARTF — Andrés Resuelve Tus Finanzas**
