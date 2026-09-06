@@ -274,7 +274,10 @@ Ejemplo: $1.500.000 en deudas ÷ $7.000.000 de ingresos × 100 = 21%
 
 ¿Cuánto te da a ti? 😊`;
 
-P.M2_BORDERLINE = `Entiendo. ¿Qué tipo de deudas son? (créditos de consumo, hipoteca, tarjetas). Si la mayoría es deuda buena (vivienda) el escenario cambia.`;
+// Recortado a pedido de Gaby (5-sep-2026): antes cerraba con "Si la mayoría
+// es deuda buena (vivienda) el escenario cambia." -- se le adelantaba al lead
+// la logica del filtro antes de que conteste, restandole peso a la pregunta.
+P.M2_BORDERLINE = `Entiendo. ¿Qué tipo de deudas son? (créditos de consumo, hipoteca, tarjetas)`;
 
 P.M2_NO_SABE = `Sin presión, dame un estimado. ¿Te queda plata después de pagar deudas o todo se va en eso?`;
 
