@@ -1166,7 +1166,16 @@ async function rpc(env, fn, body, timeoutMs) {
       signal: ctrl.signal,
     });
     if (!resp.ok) throw new Error(`${fn} ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
-    return await resp.json();
+    // Las funciones `RETURNS void` (ej. fn_registrar_telemetria_llm) responden
+    // 204 con cuerpo vacio -- `resp.json()` sobre eso tira "Unexpected end of
+    // JSON input". BUG REAL encontrado en vivo (6-sep-2026): el error quedaba
+    // atrapado por el `.catch` del llamador (no rompia el turno), pero
+    // ensuciaba los logs de CADA turno real haciendo parecer que la
+    // telemetria fallaba, cuando el INSERT si se habia hecho -- fallaba solo
+    // el parseo posterior, en el cliente.
+    if (resp.status === 204) return null;
+    const texto = await resp.text();
+    return texto ? JSON.parse(texto) : null;
   } finally { clearTimeout(t); }
 }
 

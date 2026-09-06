@@ -408,12 +408,18 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
   }
   if (veredicto === 'no_sabe') {
     if (etapaEntrada === 'M2_NO_SABE') {
-      // NO se usa reencauzar() aca a proposito: reencauzar reenviaria
-      // P.M2_NO_SABE (la pregunta pendiente de esta etapa), que es la MISMA
-      // que ya se mando -- regla dura de "nunca el mismo mensaje dos veces".
-      return HANDOFF('ambiguo', estado, {
-        summary: 'No logra estimar su endeudamiento tras insistir. Handoff.',
-      });
+      // BUG REAL reportado en vivo (6-sep-2026, Marly): esto escalaba en
+      // SILENCIO -- cero mensajes -- apenas la segunda respuesta seguia sin
+      // traer un numero ("creo que si queda" no es una cifra). Para el lead
+      // eso se ve identico a que el bot dejo de responder.
+      //
+      // Se cambia a reencauzar(), el mismo mecanismo que ya usa el caso
+      // analogo de M2_BORDERLINE (linea de arriba, "sin datos para decidir"):
+      // el LLM antepone una frase de contexto y se reenvia la pregunta
+      // pendiente, con tope de 3 intentos (UMBRALES.AMBIGUEDAD_MISMA_DUDA)
+      // antes de escalar de verdad. Sigue siendo la MISMA pregunta de fondo,
+      // pero ya no llega en silencio.
+      return reencauzar(estado, c, nombre, 'No logra estimar su endeudamiento tras insistir.');
     }
     return {
       mensajes: [render(P.M2_NO_SABE, nombre)],

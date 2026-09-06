@@ -222,16 +222,28 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.equal(p.permitirEmpatia, true, 'viene de un roce: la apertura personalizada importa');
   });
 
-  test('handoff recuperable + el lead pide seguir SIN el dato: re-escala en silencio, nunca repite la pregunta', () => {
-    // Mismo roce, pero esta vez el mensaje de vuelta no trae ninguna cifra
-    // util. La regla dura: JAMAS se manda dos veces el mismo mensaje -- ni
-    // siquiera "Sin presion, dame un estimado..." una segunda vez.
+  // Reescrito el 6-sep-2026 (bug real, Marly): antes esto re-escalaba en
+  // silencio -- CERO mensajes -- porque M2_NO_SABE escalaba de una al
+  // segundo "no se". Ahora M2 usa reencauzar() como M4/M5 (decision
+  // explicita de Gaby): al recuperarse del handoff sigue sin dato, pero se
+  // le da un intento mas con contexto en vez de re-escalar mudo.
+  test('handoff recuperable + el lead pide seguir SIN el dato: reencauza, no re-escala mudo', () => {
     const estado = estadoEn('HANDOFF', {
       handoff_razon: 'ambiguo', salario_monto: 11_000_000,
     });
     const p = decidirTurno(estado, { recupera_handoff: true }, 'pues sigo sin saber bien');
-    assert.equal(p.etapaNueva, 'HANDOFF', 'sigue sin resolver: se re-escala, no se reintenta una tercera vez');
-    assert.equal(p.mensajes.length, 0, 'CERO mensajes -- nunca repite la pregunta de M2_NO_SABE');
+    assert.equal(p.handoffRazon, LIMPIAR_HANDOFF, 'se recupera: todavia no es la 3ra vez con la misma duda');
+    assert.equal(p.etapaNueva, 'M2_NO_SABE', 'se queda insistiendo, no re-escala de una');
+    assert.ok(p.mensajes.length > 0, 'no se queda mudo');
+  });
+
+  test('handoff recuperable + SIN el dato por 3ra vez seguida: ahi SI re-escala', () => {
+    const estado = estadoEn('HANDOFF', {
+      handoff_razon: 'ambiguo', salario_monto: 11_000_000, ambiguedad_consecutiva: 2,
+    });
+    const p = decidirTurno(estado, { recupera_handoff: true, es_duda_nueva: false }, 'sigo sin saber');
+    assert.equal(p.etapaNueva, 'HANDOFF', 'a la 3ra con la misma duda si se re-escala');
+    assert.equal(p.mensajes.length, 0, 'CERO mensajes en la escalada final');
     assert.equal(p.handoffRazon, 'ambiguo');
   });
 
@@ -1016,15 +1028,36 @@ describe('Escalera de repreguntas antes de escalar', () => {
     ultima_objecion_codigo: null, handoff_razon: null,
   });
 
-  test('los filtros que YA preguntaban dos veces no ganaron un peldaño', () => {
-    // Esto fija la medicion: si alguien agrega un reintento a M1 o M2 sin
-    // darse cuenta de que ya tenian dos, este test lo atrapa.
+  test('M1 sigue escalando al segundo intento -- no gano un peldaño extra', () => {
+    // Esto fija la medicion: si alguien agrega un reintento a M1 sin darse
+    // cuenta de que ya tenia dos, este test lo atrapa. M2 se movio a su
+    // propio test abajo: dejo de escalar en silencio al segundo intento
+    // (bug real, Marly, 6-sep-2026) y ahora usa reencauzar() como M4/M5.
     assert.equal(decidirTurno(st('M1_ENVIADO'),
       { ingreso_cop: null, ingreso_glosario: 'salario_integral' }).etapaNueva, 'M1_INGRESO_AMBIGUO');
     assert.equal(decidirTurno(st('M1_INGRESO_AMBIGUO'), { ingreso_cop: null }).handoffRazon, 'ambiguo');
+  });
 
-    assert.equal(decidirTurno(st('M2_ENVIADO'), { endeudamiento_pct: null }).etapaNueva, 'M2_NO_SABE');
-    assert.equal(decidirTurno(st('M2_NO_SABE'), { endeudamiento_pct: null }).handoffRazon, 'ambiguo');
+  // BUG REAL reportado en vivo (6-sep-2026, Marly): "no se" (M2_ENVIADO -> pasa
+  // a M2_NO_SABE, correcto) -> "creo que si queda" (sin cifra) escalaba en
+  // SILENCIO -- cero mensajes. Para el lead eso se ve identico a que el bot
+  // dejo de responder. Decision explicita de Gaby: M2 se alinea con M4/M5 y
+  // usa reencauzar() (contexto del LLM + tope de 3 intentos con la MISMA duda)
+  // en vez de escalar al segundo intento.
+  test('M2 ya no escala en silencio al segundo intento: reencauza como M4/M5', () => {
+    const p = decidirTurno(st('M2_ENVIADO'), { endeudamiento_pct: null });
+    assert.equal(p.etapaNueva, 'M2_NO_SABE');
+
+    const p2 = decidirTurno(st('M2_NO_SABE'), { endeudamiento_pct: null }, 'creo que si queda');
+    assert.equal(p2.handoffRazon, null, 'ya no escala al segundo intento');
+    assert.equal(p2.etapaNueva, 'M2_NO_SABE');
+    assert.ok(p2.mensajes.length > 0, 'no se queda mudo');
+  });
+
+  test('M2 SI escala a la 3ra vez seguida con la misma duda', () => {
+    const estado2 = st('M2_NO_SABE'); estado2.ambiguedad_consecutiva = 2;
+    const p = decidirTurno(estado2, { endeudamiento_pct: null, es_duda_nueva: false }, 'sigo sin saber bien');
+    assert.equal(p.handoffRazon, 'ambiguo');
   });
 
   describe('con la perilla APAGADA (estado actual)', () => {
@@ -1519,10 +1552,24 @@ describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', (
     assert.match(p.mensajes.join('\n'), /dame un estimado/i);
   });
 
-  test('el mismo caso en M2_NO_SABE (insiste con "no se") SI escala, no repite otra vez', () => {
+  // Reescrito el 6-sep-2026 (bug real, Marly): esto escalaba en silencio al
+  // segundo "no se" -- CERO mensajes. Ahora reencauza como M4/M5 (decision
+  // explicita de Gaby) y solo escala de verdad a la 3ra vez con la misma duda.
+  test('el mismo caso en M2_NO_SABE (insiste con "no se") reencauza, no escala mudo', () => {
     const p = decidirTurno(estadoEn('M2_NO_SABE'),
       { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true }, 'no se, de verdad no tengo idea');
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.etapaNueva, 'M2_NO_SABE');
+    assert.ok(p.mensajes.length > 0, 'no se queda mudo');
+  });
+
+  test('insistir con "no se" una 3ra vez seguida SI escala', () => {
+    const estado = estadoEn('M2_NO_SABE', { ambiguedad_consecutiva: 2 });
+    const p = decidirTurno(estado,
+      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true, es_duda_nueva: false },
+      'no se, de verdad no tengo idea');
     assert.equal(p.handoffRazon, 'ambiguo');
+    assert.equal(p.mensajes.length, 0);
   });
 
   test('una reticencia real (sin "no se") SIGUE yendo a la Objecion 6 -- no se rompe el caso bueno', () => {
