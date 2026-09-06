@@ -1026,6 +1026,82 @@ respuestas.
 
 ---
 
+---
+
+### It. 24 — Auditoría B: el bot contestaba al lado porque el router descartaba lo que el LLM sí entendía
+
+Gaby auditó la conversación real de `marlyy318` (Instagram, bot ya activo) y
+señaló la arquitectura: *"está diseñada para mapear todos los posibles casos,
+pero cada lead puede llegar con mensajes diferentes en cualquier parte de la
+conversación"*. Se auditó con la conversación en la mano
+(`activity_log` de producción) y reproduciendo los turnos con el clasificador
+real. Detalle completo en `auditoria_arquitectura_bot_v42.md` → **Anexo B**.
+
+**Dos fallos reales, ninguno era el bug de una rama suelta:**
+
+1. **M2** — la lead preguntó *"los gastos mensuales que le paso a mi mamá,
+   ¿los incluyo?"* y recibió *"Sin presión, dame un estimado"*. Al reproducir
+   el turno: **el LLM SÍ había entendido la pregunta y SÍ había redactado una
+   respuesta**; el router la tiraba a la basura (`permitirEmpatia:false`, y
+   `respuesta_empatica` solo se consume dentro de `reencauzar()`).
+
+2. **M3** — el playbook ofrece *"D) Otra (¿cuál?)"* pero no había ninguna rama
+   que preguntara el *"¿cuál?"*. Contestar "d" caía en `M3_RECONDUCIR`, que le
+   insinúa al lead que no es buen fit por no haber dicho algo que nadie le
+   pidió dos veces.
+
+**Causa raíz:** el clasificador tiene vocabulario CERRADO por etapa. Lo que no
+encaja en un campo colapsa a "no clasificó", y el router solo tiene 3 salidas
+(reenviar la pregunta, plantilla fija, escalar). *"El lead preguntó algo que
+merece respuesta"* no existía como concepto. Medido: **42 de 50** salidas del
+router llevan `permitirEmpatia:false`.
+
+**Y el hallazgo que explica los inventos del modelo:** al redactar libre, lo
+ÚNICO que se le daba como playbook era `DISPARADORES_OBJECIONES` — 9 etiquetas
+de disparador, cero contenido. Se le pedía *"apóyate únicamente en el
+playbook"* entregándole el índice, no el libro. Por eso respondió *"sumamos
+todos los gastos fijos, sin importar a quién van"*, que **contradice** a `P.M2`
+(*"El arriendo, servicios y mercado NO CUENTAN"*).
+
+**Qué se agregó:**
+- `CONOCIMIENTO_PLAYBOOK`: el copy aprobado (M2, M3, M5 + las 9 objeciones)
+  como corpus de anclaje. **Se arma desde las plantillas**, con un test que
+  falla si aparece texto que no salga de la biblioteca. El link se **arranca**
+  del corpus — eso lo atrapó un test, no una revisión.
+- `pregunta_libre`: campo nuevo del clasificador (el LLM *enuncia* la duda, no
+  la responde ahí).
+- `responderPreguntaConLLM()`: segunda llamada con el playbook delante. Aparte
+  de la clasificación porque el corpus pesa ~1460 tokens y el límite que muerde
+  hoy es el ITPM de Groq.
+- `verificarRespuestaLibre()`: G1-G10 + tope de 600 + cero cifras fuera del
+  playbook.
+- El router **expone** `preguntaLibre` / `preguntaLibreReemplaza`. No redacta.
+
+**Qué NO cambió** (y es lo que lo separa del `respuesta_generada` rechazado el
+4-sep): las transiciones de etapa siguen siendo código, los umbrales siguen
+siendo aritmética, el link lo sigue enviando el router, y el copy del guion
+mapeado sigue siendo literal bajo la lista blanca. Si Groq falla o el
+verificador rechaza el texto, el lead recibe **exactamente** lo que recibía.
+
+**Verificado en vivo contra los dos turnos reales:**
+- M2 → *"No, esos gastos no cuentan. Para el cálculo solo sumas créditos,
+  tarjetas, préstamos o deudas con alguien."* + la pregunta pendiente. Es lo
+  **contrario** de lo que decía sin anclaje.
+- M3 → *"¡Dale! Cuéntame, ¿cuál es esa otra frustración...?"* en vez de la
+  casi-descalificación.
+- Control: el lead da la cifra → flujo idéntico, sin llamada extra.
+
+452/452 tests (20 nuevos). Compuerta verde con smoke RPC real.
+Desplegado: `a4265059-80ac-4f31-883d-25384917720d`.
+
+**Pendiente, pedido explícito de Gaby y NO hecho todavía:** reducir los 13
+puntos de escalada a solo los de seguridad (crisis/hostil/ex-cliente) y
+`agendamiento_manual_pendiente` (sin cupos en el calendario). El inventario
+punto por punto está en el Anexo B §B.5. **Ojo con el tope de `reencauzar()`:
+no puede quedar en cero** — la It. 23 probó que con Groq caído el bot repite el
+mismo mensaje indefinidamente. Ese tope debe pasar de *"el lead insiste,
+fuera"* a *"el LLM lleva N turnos sin responder, que entre un humano"*.
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
@@ -1050,6 +1126,7 @@ respuestas.
 - Vincular una reserva **reclama** el lead para el Setter.
 - **"No sé" en M2 es incertidumbre, no la Objeción 6** (5-sep-2026): solo una reticencia explícita ("prefiero no decir") va a la Objeción 6.
 - **`SIN_HORARIOS_ESPERANDO_FRANJA`**: tras "no encuentro horarios" el bot SIEMPRE captura la franja y se despide antes de callar para siempre — nunca deja la pregunta de `P.SIN_HORARIOS` sin respuesta (5-sep-2026).
+- **El LLM responde lo que el guion no mapea, anclado al playbook** (6-sep-2026, auditoría de la conversación real de marlyy318): cuando el lead pregunta algo que ningún campo del clasificador captura, el LLM redacta la respuesta con `CONOCIMIENTO_PLAYBOOK` delante (copy aprobado, armado desde las plantillas) y pasando por `verificarRespuestaLibre`. **El router expone la duda; no redacta.** Las etapas, los umbrales y el link siguen siendo código. Si el LLM falla, sale el turno determinista de siempre.
 - **El LLM puede reformular la copy aprobada de una objeción** (6-sep-2026, decisión explícita de Gaby pese a los 3 riesgos advertidos): solo cuando el turno NO lleva el link de agenda, con `verificarAdaptacionObjecion` (cero cifras nuevas, mismas reglas G1-G10) como compuerta antes de usar el texto generado. Si el LLM falla o la compuerta lo rechaza, se usa la plantilla original tal cual — nunca queda el lead sin respuesta.
 - **M2 (endeudamiento) tiene el mismo presupuesto de 3 intentos que M4/M5** (6-sep-2026, decisión explícita de Gaby): antes escalaba en silencio al segundo "no sé" sin cifra; ahora usa `reencauzar()` como M4/M5, con tope de 3 intentos con la MISMA duda antes de escalar de verdad. M1 se queda con su tope de 2, sin cambios.
 

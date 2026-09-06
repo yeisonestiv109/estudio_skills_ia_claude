@@ -397,3 +397,186 @@ Las etapas nuevas obligaron a cerrarla del todo:
 3. **AI SDK + Zod** (§2.5): sigue siendo la mejora correcta y sigue siendo ~80 líneas. Verificar antes que Groq soporte structured outputs con el modelo actual, y medir el bundle.
 4. **Memoria corta** (§2.6) dentro de `fn_bot_get_estado`.
 5. **Señal de confianza** del clasificador para separar "repregunto" de "escalo".
+
+---
+---
+
+# Anexo B — Segunda auditoría: por qué el bot contesta al lado
+
+> **6-sep-2026.** Escrita después de auditar la conversación **real** de
+> `marlyy318` (Instagram, 15 turnos, bot ya activo en producción).
+> Pedida por Gaby: *"la arquitectura está diseñada para mapear todos los
+> posibles casos pero es algo muy complicado porque cada lead puede llegar
+> con mensajes diferentes en cualquier parte del estado de la conversación"*.
+
+## B.0 Veredicto en una línea
+
+**Gaby tiene razón, y el diagnóstico del 4-sep no la contradice: apuntaba a
+otra cosa.** Aquel anexo rechazó que el LLM redactara *todo* y decidiera
+*etapas*. Esto es distinto: el LLM no puede redactar **nada** cuando el lead
+dice algo que el guion no previó, y ahí es donde el bot se rompe.
+
+## B.1 La evidencia, no la teoría
+
+Dos turnos de la conversación real, reproducidos con el clasificador de
+producción:
+
+### Turno 4 — la lead pregunta cómo calcular su deuda
+
+```
+LEAD: "los gastos mensuales que le paso a mi mamá los incluyo?"
+BOT:  "Sin presión, dame un estimado. ¿Te queda plata después de pagar
+       deudas o todo se va en eso?"
+```
+
+No es un "no sé". Es una pregunta legítima, específica, y **el playbook la
+responde**: `P.M2` dice *"suma todo lo que pagas al mes en créditos, tarjetas,
+préstamos o deudas con alguien. El arriendo, servicios y mercado NO CUENTAN"*.
+
+Al reproducir el turno aparece lo importante: **el LLM sí entendió la
+pregunta y sí redactó una respuesta**. El router la tiró a la basura.
+
+```
+respuesta_empatica: "Sí, inclúyelos. Para que el cálculo sea real, sumamos
+                     todos los gastos fijos que salen de tu bolsillo cada mes,
+                     sin importar a quién van."
+   -> permitirEmpatia: false
+   -> mensajes: [P.M2_NO_SABE]      // literal, la respuesta descartada
+```
+
+Dos fallos superpuestos, y conviene no confundirlos:
+
+1. **El router descarta la lectura del LLM.** `respuesta_empatica` solo se
+   consume dentro de `reencauzar()`; esta rama no lo llama.
+2. **La respuesta además era incorrecta**, y contradecía al playbook
+   ("sumamos todos los gastos fijos" vs. "NO CUENTAN"). Ver §B.3: no fue
+   una alucinación gratuita.
+
+### Turno 6 — la lead elige "D) Otra (¿cuál?)"
+
+```
+LEAD: "d"
+BOT:  "Entiendo. Lo que pasa es que nos especializamos en ayudar a
+       profesionales a construir patrimonio. Si tu tema principal es otro,
+       puede que no seamos el mejor fit. ¿O tu frustración está conectada...?"
+```
+
+El playbook **pregunta el "¿cuál?" él mismo**, en `P.M3`. No había ninguna
+rama que lo preguntara: elegir D sin detalle caía directo en `M3_RECONDUCIR`,
+que insinúa que el lead no es buen fit por no haber dicho algo que nadie le
+pidió dos veces. Un lead que elige D no está fuera del avatar: **todavía no ha
+contado su caso**.
+
+## B.2 La causa raíz: un vocabulario cerrado alimentando un `switch`
+
+`clasificar()` extrae **campos de una lista fija por etapa**
+(`ESQUEMA_POR_ETAPA`). `decidirTurno()` es un `switch` que lee esos campos en
+un orden fijo y elige una plantilla.
+
+Consecuencia: si el mensaje del lead no reduce a un campo de esa etapa, el
+sistema no tiene forma de representarlo. Colapsa a "no clasificó", y de ahí
+solo hay tres salidas:
+
+| Salida | Qué ve el lead |
+|---|---|
+| Reenviar la pregunta pendiente | se le repite lo mismo |
+| Plantilla fija de la rama | se le contesta otra cosa |
+| Escalar | el bot se calla |
+
+**"El lead preguntó algo que merece respuesta" no existía como concepto.**
+No es el bug de una rama: es que falta un tercer tipo de turno.
+
+Medida del cierre, contando salidas del router:
+
+| | |
+|---|---|
+| Salidas con `permitirEmpatia: false` | **42** |
+| Salidas con `permitirEmpatia: true` | 8 (y solo habilitan un *prefijo* de ≤200 caracteres) |
+
+Los tres únicos lugares por donde el LLM podía escribir: `oracion_empatia`
+(prefijo), `respuesta_empatica` (solo dentro de `reencauzar`) y
+`adaptarObjecionConLLM` (solo reformula una plantilla existente).
+
+## B.3 El hallazgo que explica los inventos del modelo
+
+El prompt le decía al LLM: *"APÓYATE ÚNICAMENTE en la información de las
+objeciones del playbook listada arriba"*.
+
+Lo que había "arriba" era `DISPARADORES_OBJECIONES`:
+
+```
+1=¿es gratis?/¿me van a vender algo? 2=no tengo tiempo 3=dejame pensarlo …
+```
+
+Nueve **etiquetas de disparador**. Cero contenido. **Se le pedía apoyarse en un
+playbook entregándole el índice, no el libro.** Que respondiera "sumamos todos
+los gastos fijos" no fue capricho del modelo: era la única salida que tenía.
+
+Esto reencuadra el debate. *"Dale más libertad al LLM"* no significaba
+*"déjalo inventar"*. Significaba **anclarlo en el playbook y dejarlo hablar**,
+que es justo lo contrario. Sin anclaje, más libertad sí habría sido peor.
+
+## B.4 Qué se cambió (desplegado `a4265059`)
+
+| Pieza | Qué hace |
+|---|---|
+| `CONOCIMIENTO_PLAYBOOK` | El copy aprobado (M2, M3, M5 + las 9 objeciones) como corpus de anclaje. **Se arma desde las plantillas**, no se escribe a mano: hay un test que falla si aparece texto que no salga de la biblioteca. El link se **arranca** del corpus. |
+| `pregunta_libre` | Campo nuevo del clasificador: el LLM *enuncia* lo que el lead preguntó cuando ningún campo lo captura. No lo responde ahí. |
+| `responderPreguntaConLLM()` | Segunda llamada, con el playbook delante. Aparte de la clasificación porque el corpus pesa ~1460 tokens y el límite que muerde hoy es el ITPM de Groq. |
+| `verificarRespuestaLibre()` | G1-G10 + tope de 600 caracteres + **cero cifras que el playbook no diga**. |
+| `preguntaLibre` en el router | El router **expone** que hay algo que resolverle al lead. No redacta. |
+
+### Por qué esto no es el `respuesta_generada` de §2.1
+
+| Objeción de §2.1 | Cómo sobrevive |
+|---|---|
+| **(a)** Revierte una decisión del fundador | Es Gaby quien la revisa, con la conversación real en la mano, y queda registrada en Decisiones cerradas |
+| **(b)** Reabre la superficie de inyección / phishing del link | El link lo sigue enviando el router. `G2_LLEVA_LINK` descarta cualquier texto generado con URL. Y el link se arrancó del corpus: el modelo ni lo ve. **Ese último punto lo atrapó un test, no una revisión** |
+| **(c)** Borra la compuerta 3 | La lista blanca no se toca: el guion mapeado sigue siendo literal. El texto libre pasa por un verificador **determinista y por reglas**, que corre en cada commit |
+| **(d)** Rompe el corpus | Los fixtures afirman sobre el flujo mapeado, que no cambió |
+
+Y lo que **no** se movió, que es lo que sostiene el sistema: las transiciones
+de etapa siguen siendo código, los umbrales de los filtros siguen siendo
+aritmética, y si Groq falla o el verificador rechaza el texto, **el lead
+recibe exactamente lo que recibía antes**.
+
+### Verificado en vivo, contra los dos turnos reales
+
+```
+M2  ->  "No, esos gastos no cuentan. Para el cálculo solo sumas créditos,
+         tarjetas, préstamos o deudas con alguien."
+        + la pregunta pendiente
+        (es lo CONTRARIO de lo que decía sin anclaje)
+
+M3  ->  "¡Dale! Cuéntame, ¿cuál es esa otra frustración que te tiene más
+         de cabeza hoy?"
+        (en vez de la casi-descalificación)
+
+Control: el lead da la cifra -> flujo idéntico, sin llamada extra al LLM
+```
+
+## B.5 Lo que sigue: la política de escalamiento
+
+Gaby: *"la única objeción que debe escalarse a un setter es cuando el lead
+llega a la fase final y no encuentra espacios en el calendar; en las
+anteriores etapas sí se puede manejar con el playbook, a menos que sea un
+caso extremo"*.
+
+Inventario de los **13** puntos de escalada actuales:
+
+| Punto | Razón | Propuesta |
+|---|---|---|
+| `crisis_emocional`, `contenido_hostil`, `ex_cliente` | seguridad | **Intactos.** No son objeciones |
+| `agendamiento_manual_pendiente` (SIN_HORARIOS) | sin cupos en el calendario | **Intacto.** Es el caso que Gaby señala: requiere una acción humana real |
+| `objecion_fuera_playbook` (L1406) | la objeción no es una de las 9 | → responder anclado al playbook |
+| `objecion_no_habilitada` (L1477) | objeción reconocida pero apagada | → responder anclado al playbook |
+| `pregunta_precio` (L1428) | repite la objeción 7 | → responder anclado al playbook |
+| `resistencia_repetida` / `resistencia_acumulada` (L1440/L1450) | topes de 3 y 4 | → subir mucho o retirar para curiosidad |
+| `ambiguo` × 6 (L749, L950, L1027, L1091, L1343, L1377) | no se entendió | → responder anclado al playbook |
+
+**Una advertencia con evidencia de hoy mismo** (It. 23): el tope de
+`reencauzar()` **no puede quedar en cero**. Con Groq caído (429 sostenido) el
+bot repitió el mismo mensaje 12 turnos seguidos, sordo a todo, sin escalar
+jamás. El tope debe dejar de ser *"el lead insiste, fuera"* y pasar a ser
+**"el LLM lleva N turnos sin responder, que entre un humano"** — que es la red
+correcta y no castiga al lead.
