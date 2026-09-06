@@ -5,9 +5,8 @@
 >
 > **Para retomar en una sesión nueva, empieza por `RETOMAR_AQUI.md`.**
 
-**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (5-sep-2026) · **412 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
-**Estado del bot: DESPLEGADO** (versión `9c1ad47d`) **— 4 rondas de QA en vivo aplicadas.**
-**⚠️ `BOT_ACTIVO=false` (modo secretaria): el bot NO le responde a nadie ahora mismo** -- lee, clasifica y guarda para el dashboard, pero no habla. Confirmar con Yeisiton si sigue siendo intencional antes de asumir que el bot esta "caido".
+**Compuerta:** `./verificar.sh` · **Última corrida: VERDE** (6-sep-2026) · **412 tests** · **4 de 5 compuertas corridas de verdad** (la 5 exige el nombre real del secret, `WEBHOOK_SECRET` -- `verificar.sh` todavia busca `BOT_WEBHOOK_SECRET`, desalineado)
+**Estado del bot: ACTIVO Y DESPLEGADO** (versión `ecfca36d`) **— `BOT_ACTIVO=true`, ya no esta en modo secretaria. Verificado en vivo con el LLM real.**
 **Alerta de handoff a Google Chat: FUNCIONANDO** (verificada en vivo, Yeisiton).
 **Cierre: M5 pitch → M6 link SOLO → M7 acompañante → M8 pre-llamada.**
 **Apertura personalizada ENCENDIDA**: el LLM redacta la frase de entrada, el cuerpo sigue siendo copy aprobado.
@@ -750,6 +749,47 @@ borrando la version vieja explicitamente.
 404 → **412 tests**. Desplegado: `9c1ad47d-e5c2-46de-b122-f93c663bbcc0`.
 **Sin verificar E2E**: el Worker esta en modo secretaria (`BOT_ACTIVO=false`,
 canario de Yeisiton) y no responde a nadie ahora mismo.
+
+---
+
+### It. 20 — activacion del bot (`BOT_ACTIVO=true`) + bug critico encontrado en el primer turno real
+
+Gaby pidio activar el bot y correr las pruebas necesarias. Compuerta completa
+en verde antes de tocar nada (arbol limpio, 412 tests, smoke real). Se cambio
+`BOT_ACTIVO` a `"true"` en `wrangler.toml` (variable versionada a proposito,
+no secret -- "se ve en el diff quien encendio el bot y cuando"), commit y
+deploy.
+
+**El primer turno real con el LLM revento la conversacion entera.**
+`ReferenceError: TIMEOUT_RPC_MS is not defined` dentro de
+`registrarTelemetria()` (feature de Yeison, pool de llaves) -- se llama sin
+`await`/`catch` justo despues de CADA llamada real a Groq. Como esa
+constante nunca se definio en ningun lado del archivo, **el bot habria
+fallado con `error_tecnico` en el 100% de las conversaciones reales** apenas
+alguien le escribiera. Los 412 tests no lo vieron: usan `ENV_SIN_LLM` (sin
+`GROQ_API_KEY`), que corta antes de llegar a ese codigo -- el mismo agujero
+de cobertura ya documentado varias veces ("los tests no ejercitan el camino
+real con LLM"). Solo goteo al probar en vivo con la clave real. Arreglado
+(`TIMEOUT_RPC_MS = TIMEOUT_DB_MS`) y redesplegado de inmediato.
+
+**Verificado en vivo con el LLM real, sobre el lead de prueba compartido**
+(con la misma limitacion de siempre: trafico real concurrente interrumpio
+la verificacion de la Objecion 9 a mitad de camino):
+- **Recuperacion de handoff funciona de punta a punta**: M2_NO_SABE ->
+  mensaje ambiguo (escala en silencio, correcto) -> "bueno, me da el 40%"
+  -> `recupera_handoff` SI se detecto, avanzo saltando M3 (el dolor ya era
+  conocido de sesiones previas) hasta M4 -- confirma en produccion real el
+  bug critico de validacion que se encontro y corrigio ayer (It. 19).
+- Guard de seguridad del webhook: `401` sin secreto, confirmado.
+
+Desplegado: `ecfca36d-f8bc-41c6-b0bd-95abb1d95385` (bot activo) →
+`ed4235e...` en git (fix de `TIMEOUT_RPC_MS`, la version LIVE ahora mismo).
+Lead de prueba (`1269883784`) reiniciado a estado limpio al terminar.
+
+**Pendiente real, otra vez:** el lead de prueba compartido sigue sin estar
+aislado del trafico real -- cada verificacion en vivo de esta sesion tropezo
+con esto. Sigue siendo el pendiente #1 para que las pruebas E2E dejen de ser
+un tiro al aire.
 
 ---
 
