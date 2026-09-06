@@ -408,6 +408,9 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
   }
   if (veredicto === 'no_sabe') {
     if (etapaEntrada === 'M2_NO_SABE') {
+      // NO se usa reencauzar() aca a proposito: reencauzar reenviaria
+      // P.M2_NO_SABE (la pregunta pendiente de esta etapa), que es la MISMA
+      // que ya se mando -- regla dura de "nunca el mismo mensaje dos veces".
       return HANDOFF('ambiguo', estado, {
         summary: 'No logra estimar su endeudamiento tras insistir. Handoff.',
       });
@@ -734,7 +737,9 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
         // Regla de oro V4.1: NUNCA descalificar sobre un ingreso ambiguo.
         if (etapa === 'M1_INGRESO_AMBIGUO') {
-          // Ya se pidio la cifra una vez y sigue sin darla -> humano, jamas descarte.
+          // Ya se pidio la cifra una vez y sigue sin darla -> humano, jamas
+          // descarte. Tampoco reencauzar() aca: repetiria P.M1_PEDIR_CIFRA,
+          // la misma pregunta que ya se hizo (regla dura de no repetir).
           return HANDOFF('ambiguo', estado, {
             campos: { profesion: c.profesion ?? null },
             summary: 'Ingreso sigue ambiguo tras pedir la cifra. Handoff en vez de descartar (regla V4.1).',
@@ -848,9 +853,12 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       // preguntar antes de cerrarle la puerta.
       if (c.deuda_mayoritariamente_buena === undefined && sobrante === null
           && !c.objecion_num && !c.objecion_detectada) {
-        return HANDOFF('ambiguo', estado, {
-          summary: 'Borderline sin datos para decidir (ni tipo de deuda ni sobrante). Humano, jamas descarte a ciegas.',
-        });
+        // Reencauzar (5-sep-2026): el comentario de esta regla siempre dijo
+        // "se le vuelve a preguntar antes de cerrarle la puerta", pero el
+        // codigo escalaba en silencio sin volver a preguntar nada. Ahora si
+        // cumple lo que promete, con contexto del LLM y tope de 3 intentos.
+        return reencauzar(estado, c, nombre,
+          'Borderline sin datos para decidir (ni tipo de deuda ni sobrante).');
       }
 
       return {
@@ -924,8 +932,9 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: 'Reconduccion exitosa: el dolor si esta conectado con el dinero.',
         };
       }
-      // No hay script del SOP para "no es fit por dolor". No se inventa copy:
-      // decide un humano.
+      // No hay script del SOP para "no es fit por dolor". No se inventa copy,
+      // y tampoco aplica reencauzar(): el dolor SI se clasifico (no financiero,
+      // confirmado), no es un mensaje ambiguo -- decide un humano.
       return HANDOFF('ambiguo', estado, {
         summary: 'Dolor no financiero confirmado. Sin script del SOP para este cierre -> humano.',
       });
@@ -996,7 +1005,21 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: 'No se pudo leer la urgencia. Se reformula una vez antes de escalar.',
         };
       }
-      return HANDOFF('ambiguo', estado, { summary: 'No se pudo leer la urgencia con confianza.' });
+      // Ya paso por el peldaño de la escalera y sigue sin entenderse: ESE es
+      // el peldaño terminal (su propio contrato es "no ofrece otro peldaño",
+      // para no darle 3 intentos MAS encima de los que ya dio la escalera).
+      // Nada de reencauzar aca -- escala directo.
+      if (etapa === 'M4_URGENCIA_REINTENTO') {
+        return HANDOFF('ambiguo', estado, {
+          summary: 'No se pudo leer la urgencia ni tras la reformulacion. Handoff.',
+        });
+      }
+      // Reencauzar (5-sep-2026): antes escalaba en silencio ante CUALQUIER
+      // respuesta no clasificable -- exactamente el caso real reportado
+      // ("cual es la diferencia si lo hago ahora o despues?" mal leido, luego
+      // "como asi?" sin respuesta). Ahora el LLM contesta con contexto y
+      // reencauza, hasta 3 veces insistiendo en la misma duda.
+      return reencauzar(estado, c, nombre, 'No se pudo leer la urgencia con confianza.');
     }
 
     // =====================================================================
@@ -1048,7 +1071,15 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: 'Respuesta al pitch no clasificable. Se reformula una vez antes de escalar.',
         };
       }
-      return HANDOFF('ambiguo', estado, { summary: 'Respuesta al pitch no clasificable.' });
+      // Peldaño terminal: mismo criterio que M4_URGENCIA_REINTENTO, ver ese
+      // comentario. Nada de reencauzar aca -- escala directo.
+      if (etapa === 'M5_PITCH_REINTENTO') {
+        return HANDOFF('ambiguo', estado, {
+          summary: 'Respuesta al pitch no clasificable ni tras la reformulacion. Handoff.',
+        });
+      }
+      // Reencauzar (5-sep-2026): mismo criterio que en M4 -- ver ese comentario.
+      return reencauzar(estado, c, nombre, 'Respuesta al pitch no clasificable.');
     }
 
     // =====================================================================
@@ -1296,7 +1327,30 @@ export function reencauzar(estado, c, nombre, contexto = '') {
 
   if (!pendientes.length) {
     return HANDOFF('ambiguo', estado, {
+      campos: { ambiguedad_consecutiva: 0 },
       summary: `${contexto} Sin pregunta pendiente en ${etapaActual}: no hay a donde reencauzar.`,
+    });
+  }
+
+  // TOPE DE INSISTENCIA (5-sep-2026, decision de Gaby): "dale mas libertad al
+  // LLM, que no responda en automatico" -- pero sin dejar a un lead confundido
+  // dando vueltas para siempre sin que un humano se entere. 3 intentos SEGUIDOS
+  // insistiendo en LA MISMA duda, luego escala de verdad. Una duda NUEVA
+  // (`es_duda_nueva`) no acumula -- en una conversacion real surgen varias
+  // preguntas distintas, y cada una merece su propio intento desde cero.
+  // `es_duda_nueva` lo decide el LLM comparando este mensaje con el turno
+  // INMEDIATAMENTE anterior del lead (ver CONTEXTO en worker_bot_setter_v42.js);
+  // si hubo turnos exitosos en el medio, la comparacion ya no aplica y el LLM
+  // marca nueva -- el contador se corrige solo, sin tener que resetearlo a
+  // mano en cada case que SI clasifica bien.
+  const esDudaNueva = c?.es_duda_nueva !== false; // undefined/true -> nueva
+  const previos = estado?.ambiguedad_consecutiva || 0;
+  const consecutivas = esDudaNueva ? 1 : previos + 1;
+
+  if (!esDudaNueva && consecutivas >= UMBRALES.AMBIGUEDAD_MISMA_DUDA) {
+    return HANDOFF('ambiguo', estado, {
+      campos: { ambiguedad_consecutiva: 0 },
+      summary: `${contexto} Insiste con la misma duda sin resolverse (${consecutivas} veces seguidas). Escala.`,
     });
   }
 
@@ -1308,14 +1362,15 @@ export function reencauzar(estado, c, nombre, contexto = '') {
     mensajes: generada ? [generada, ...pendientes] : pendientes,
     // No avanza el guion: reencauzar no es progresar.
     etapaNueva: etapaActual, estadoDestino: null,
-    handoffRazon: null, motivoPerdida: null, campos: {},
+    handoffRazon: null, motivoPerdida: null,
+    campos: { ambiguedad_consecutiva: consecutivas },
     permitirEmpatia: false,
     // El Worker lo usa para eximir esta burbuja de la lista blanca y para
     // dejarlo anotado en el activity_log como texto generado.
     textoGenerado: generada || null,
     summary: generada
-      ? `${contexto} Reencauce con respuesta generada + la pregunta pendiente.`
-      : `${contexto} Reencauce determinista: se reenvia la pregunta pendiente.`,
+      ? `${contexto} Reencauce con respuesta generada + la pregunta pendiente (intento ${consecutivas}/${UMBRALES.AMBIGUEDAD_MISMA_DUDA}).`
+      : `${contexto} Reencauce determinista: se reenvia la pregunta pendiente (intento ${consecutivas}/${UMBRALES.AMBIGUEDAD_MISMA_DUDA}).`,
   };
 }
 

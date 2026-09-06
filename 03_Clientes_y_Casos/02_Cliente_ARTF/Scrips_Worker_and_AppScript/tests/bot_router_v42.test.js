@@ -25,7 +25,7 @@ import {
   pareceRemanente, esSoloPalabraClave, detectarSinHorarios, detectarSiNo, pareceDolorFinanciero,
   pareceIncertidumbre,
   etapaParaRetomar, cuentaCifrasDeDinero,
-  preguntaPendiente,
+  preguntaPendiente, reencauzar,
 } from '../bot_router_v42.js';
 import {
   CALENDAR_LINK, CALENDAR_ARTF, CALENDAR_PRUEBAS, UMBRALES, OBJECIONES_HABILITADAS, PLANTILLAS,
@@ -463,8 +463,21 @@ describe('Descalificacion con valor', () => {
     assert.equal(p.campos.remanente_cop, 3_000_000, 'la cifra en plata manda sobre el % estimado');
   });
 
-  test('borderline SIN datos para decidir -> humano, jamas descarte a ciegas', () => {
-    const p = decidirTurno(estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000 }), {});
+  // Reescrito el 5-sep-2026 (decision de Gaby: "dale mas libertad al LLM, que
+  // no responda en automatico"): antes escalaba en silencio a la primera vez
+  // que no habia datos. Ahora reencauza con contexto y repregunta -- sigue
+  // sin descartar a ciegas, solo que ya no deja al lead sin respuesta.
+  test('borderline SIN datos para decidir -> reencauza (nunca descarta a ciegas)', () => {
+    const p = decidirTurno(estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000 }), {}, 'no se');
+    assert.equal(p.handoffRazon, null, 'primer intento: no escala todavia');
+    assert.equal(p.etapaNueva, 'M2_BORDERLINE', 'se queda en la misma etapa a repreguntar');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.ok(p.mensajes.length > 0, 'no se queda mudo');
+  });
+
+  test('borderline SIN datos, 3 veces insistiendo en LO MISMO -> ahora si escala', () => {
+    const estado = estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000, ambiguedad_consecutiva: 2 });
+    const p = decidirTurno(estado, { es_duda_nueva: false }, 'sigo sin entender');
     assert.equal(p.handoffRazon, 'ambiguo');
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
@@ -1015,11 +1028,29 @@ describe('Escalera de repreguntas antes de escalar', () => {
   });
 
   describe('con la perilla APAGADA (estado actual)', () => {
-    test('M4 y M5 escalan como siempre', () => {
+    // Reescrito el 5-sep-2026 (decision de Gaby): el primer "no entendi" en
+    // M4/M5 ya no escala en silencio -- reencauza con contexto (ver
+    // reencauzar()). Solo insistir 3 veces en LA MISMA duda escala de verdad.
+    test('M4 y M5 reencauzan en el primer intento (no escalan mudos)', () => {
       assert.equal(ESCALERA_REPREGUNTAS_HABILITADA, false,
         'si esto cambia, hay que mover estos tests al bloque de abajo');
-      assert.equal(decidirTurno(st('M4_ENVIADO'), { urgencia: null }).handoffRazon, 'ambiguo');
-      assert.equal(decidirTurno(st('M5_ENVIADO'), {}).handoffRazon, 'ambiguo');
+      const p4 = decidirTurno(st('M4_ENVIADO'), { urgencia: null }, 'no se');
+      assert.equal(p4.handoffRazon, null);
+      assert.equal(p4.etapaNueva, 'M4_ENVIADO');
+      assert.ok(p4.mensajes.length > 0, 'no se queda mudo');
+
+      const p5 = decidirTurno(st('M5_ENVIADO'), {}, 'no se');
+      assert.equal(p5.handoffRazon, null);
+      assert.equal(p5.etapaNueva, 'M5_ENVIADO');
+      assert.ok(p5.mensajes.length > 0, 'no se queda mudo');
+    });
+
+    test('M4 y M5 SI escalan a la 3ra vez seguida con la misma duda', () => {
+      const estado4 = st('M4_ENVIADO'); estado4.ambiguedad_consecutiva = 2;
+      assert.equal(decidirTurno(estado4, { urgencia: null, es_duda_nueva: false }, 'sigo sin entender').handoffRazon, 'ambiguo');
+
+      const estado5 = st('M5_ENVIADO'); estado5.ambiguedad_consecutiva = 2;
+      assert.equal(decidirTurno(estado5, { es_duda_nueva: false }, 'sigo sin entender').handoffRazon, 'ambiguo');
     });
   });
 
@@ -1552,5 +1583,68 @@ describe('Calendario de producción (5-sep-2026)', () => {
         assert.equal(u.trim(), CALENDAR_LINK, `la plantilla ${nombre} apunta a otro calendario`);
       }
     }
+  });
+});
+
+// ===========================================================================
+// REENCAUZAR CON CONTEXTO (5-sep-2026, decision de Gaby): "dale mas libertad
+// al LLM, que no responda en automatico". Reemplaza 3 de los 6 sitios donde
+// el bot escalaba en silencio ante un mensaje que no clasifico en nada, por
+// una respuesta con contexto + repregunta -- con tope de 3 intentos SEGUIDOS
+// insistiendo en LA MISMA duda (una duda nueva no acumula).
+// ===========================================================================
+describe('Reencauzar con contexto: tope de 3 insistiendo en lo mismo', () => {
+  const st = (etapa, extra = {}) => ({
+    estado_codigo: 'calificado', etapa_bot: etapa, nombre: 'Marly',
+    salario_monto: 10_000_000, ambiguedad_consecutiva: 0, handoff_razon: null,
+    ...extra,
+  });
+
+  // BUG REAL reportado: "cual es la diferencia si lo hago ahora o despues?"
+  // el determinista de detectarUrgencia lo arreglo (ver otro describe), pero
+  // si el LLM aun asi no logra clasificar algo en M4, "como asi?" ya NO se
+  // queda sin respuesta.
+  test('BUG REAL: "como asi?" en M4 ya no escala mudo -- responde con contexto', () => {
+    const p = reencauzar(st('M4_ENVIADO'), {}, 'Marly', 'No se pudo leer la urgencia con confianza.');
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.etapaNueva, 'M4_ENVIADO');
+    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+    assert.equal(p.campos.ambiguedad_consecutiva, 1);
+  });
+
+  test('3 veces insistiendo en LA MISMA duda -> escala de verdad', () => {
+    let estado = st('M4_ENVIADO');
+    // Intento 1: duda nueva (no hay turno anterior que comparar).
+    let p = reencauzar(estado, { es_duda_nueva: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.campos.ambiguedad_consecutiva, 1);
+
+    // Intento 2: el LLM confirma que es LA MISMA duda de antes.
+    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
+    p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null, 'segundo intento: todavia no escala');
+    assert.equal(p.campos.ambiguedad_consecutiva, 2);
+
+    // Intento 3: sigue siendo la misma duda -> AHORA si escala.
+    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
+    p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, 'ambiguo', 'tercera vez con la misma duda: escala');
+    assert.equal(p.campos.ambiguedad_consecutiva, 0, 'se resetea al escalar');
+  });
+
+  // Exactamente lo que pidio Gaby: "a lo largo de la conversacion pueden
+  // generarse varias preguntas y/o incertidumbres" -- una duda NUEVA cada vez
+  // no debe acumular hacia la escalada.
+  test('3 dudas DISTINTAS seguidas NO acumulan -- cada una arranca de cero', () => {
+    let estado = st('M4_ENVIADO', { ambiguedad_consecutiva: 2 }); // ya iba 2 veces con OTRA duda
+    const p = reencauzar(estado, { es_duda_nueva: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null, 'duda nueva: no hereda el conteo de la duda anterior');
+    assert.equal(p.campos.ambiguedad_consecutiva, 1, 'arranca en 1, no en 3');
+  });
+
+  test('sin pregunta pendiente en la etapa, no hay a donde reencauzar: escala directo', () => {
+    const p = reencauzar(st('CIERRE_PRECALL'), {}, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, 'ambiguo');
+    assert.equal(p.campos.ambiguedad_consecutiva, 0);
   });
 });

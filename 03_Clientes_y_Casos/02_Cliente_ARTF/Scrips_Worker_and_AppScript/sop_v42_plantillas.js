@@ -226,6 +226,12 @@ export const UMBRALES = {
   // Volver a 2 y 3 es cambiar estos dos numeros.
   RESISTENCIA_MISMA_OBJECION: 3,
   RESISTENCIA_ACUMULADA: 4,
+
+  // Reencauzar (5-sep-2026, decision de Gaby): un mensaje que no clasifica en
+  // ningun campo se responde con contexto y se reenvia la pregunta pendiente,
+  // hasta 3 veces SEGUIDAS insistiendo en la MISMA duda -- una duda nueva no
+  // suma (`es_duda_nueva`, ver worker_bot_setter_v42.js). A la 3ra, escala.
+  AMBIGUEDAD_MISMA_DUDA: 3,
 };
 
 const P = {};

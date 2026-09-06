@@ -302,6 +302,7 @@ async function manejar(request, env, ctx) {
     p_asiste_acompanado: plan.campos.asiste_acompanado ?? null,
     p_ultima_objecion_codigo: plan.campos.ultima_objecion_codigo ?? null,
     p_objeciones_consecutivas: plan.campos.objeciones_consecutivas ?? null,
+    p_ambiguedad_consecutiva: plan.campos.ambiguedad_consecutiva ?? null,
     p_califica: plan.campos.califica ?? null,
     p_handoff_razon: plan.handoffRazon === LIMPIAR_HANDOFF ? null : plan.handoffRazon,
     p_motivo_perdida_nombre: plan.motivoPerdida,
@@ -550,6 +551,7 @@ const CAMPOS_COMUNES =
   '"objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, '
   + '"crisis": boolean, "hostil": boolean, "ex_cliente": boolean'
   + ', "recupera_handoff": boolean'
+  + ', "es_duda_nueva": boolean'
   + (CATCHALL_LLM_HABILITADO ? ', "respuesta_empatica": string|null' : '');
 
 /**
@@ -718,6 +720,7 @@ REGLAS DE EXTRACCION:
   ⚠️ FALSO POSITIVO REAL: el lead escribio "esperame, antes me gustaria tener mas claro de que trata el protocolo" y se clasifico como acepta=true. Eso es la objecion 8, NO una aceptacion. Si el lead pide informacion o pone un "espera", "antes", "primero" -> NO acepta.
 - "pide_link": true si pregunta donde agendarse, dice que no le llego el link o que no lo encuentra. TU NUNCA ESCRIBES EL LINK: solo marcas este campo y el sistema lo envia.
 - "recupera_handoff": true SOLO si el lead esta pidiendo CONTINUAR con el proceso -- da el dato que se le pidio, dice que quiere seguir, o pide agendar. Ejemplo: "pero igual quiero seguir, me da 40%" -> true. Un simple "hola" o una queja sin intencion de avanzar -> false.
+- "es_duda_nueva": SOLO importa cuando el mensaje del lead NO se pudo clasificar en ningun campo de arriba (vas a usar "respuesta_empatica"). Compara este mensaje sin clasificar con el turno INMEDIATAMENTE ANTERIOR del lead (si lo hay): true si es una pregunta/duda/confusion DISTINTA a la anterior (un tema nuevo). false si es la MISMA pregunta insistida, una repeticion, o "no entendi" sobre lo mismo que ya se le explico. Sin turno anterior que comparar, o si el mensaje SI se clasifico en algun campo -> true (no aplica el conteo de insistencia).
 
 REGLAS PARA "respuesta_empatica" (SOLO si el mensaje del lead no encaja en ninguno de los campos de arriba):
 - Es una respuesta corta y humana (maximo 2 frases, 320 caracteres) para un mensaje que no es ninguna de las objeciones ni una respuesta a la pregunta que se le hizo.
@@ -911,9 +914,18 @@ export function validarClasificacionLLM(bruto) {
     const n = num(bruto.objecion_num);
     limpio.objecion_num = n !== null && Number.isInteger(n) && n >= 1 && n <= 9 ? n : null;
   }
+  // ⚠️ BUG REAL Y GRAVE que esto corrige (5-sep-2026): "recupera_handoff" NO
+  // estaba en esta lista. `limpio` nace vacio (sin spread de `bruto`), asi que
+  // cualquier campo booleano que el LLM SI devolviera pero no estuviera aca se
+  // descartaba en silencio. Resultado: aunque el LLM devolviera
+  // recupera_handoff:true de verdad, `clasificar()` nunca lo veia -- TODA la
+  // auto-recuperacion de handoff (It. 17) seguia rota en produccion real pese
+  // a tener ya el esquema correcto. Los tests unitarios no lo vieron porque
+  // pasan `c` directo a `decidirTurno`, saltandose esta funcion por completo
+  // -- mismo agujero de cobertura ya documentado para `clasificar()`.
   for (const campo of ['pide_link', 'crisis', 'hostil', 'ex_cliente', 'acepta', 'confirmo_agendo',
                        'dolor_financiero', 'objecion_conocida', 'deuda_mayoritariamente_buena',
-                       'sin_horarios']) {
+                       'sin_horarios', 'recupera_handoff', 'es_duda_nueva']) {
     const b = bool(bruto[campo]);
     if (b !== undefined) limpio[campo] = b;
   }
@@ -969,6 +981,7 @@ async function leerEstado(env, manychatId) {
     asiste_acompanado: f.out_asiste_acompanado,
     ultima_objecion_codigo: f.out_ultima_objecion_codigo,
     objeciones_consecutivas: f.out_objeciones_consecutivas ?? 0,
+    ambiguedad_consecutiva: f.out_ambiguedad_consecutiva ?? 0,
     handoff_razon: f.out_handoff_razon,
     califica: f.out_califica,
     calendario_enviado_at: f.out_calendario_enviado_at,

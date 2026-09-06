@@ -93,6 +93,18 @@ describe('Validación de la salida del LLM', () => {
     assert.equal(validarClasificacionLLM({ crisis: true }).crisis, true);
   });
 
+  // BUG REAL Y GRAVE (5-sep-2026): "recupera_handoff" no estaba en la lista de
+  // booleanos permitidos, asi que se descartaba en silencio -- TODA la
+  // auto-recuperacion de handoff (It. 17) seguia rota en produccion real pese
+  // a tener ya el esquema de LLM correcto. Los tests del router no lo vieron
+  // porque pasan `c` directo a `decidirTurno`, saltandose esta funcion.
+  test('BUG REAL: recupera_handoff y es_duda_nueva SI sobreviven la validacion', () => {
+    assert.equal(validarClasificacionLLM({ recupera_handoff: true }).recupera_handoff, true);
+    assert.equal(validarClasificacionLLM({ recupera_handoff: false }).recupera_handoff, false);
+    assert.equal(validarClasificacionLLM({ es_duda_nueva: true }).es_duda_nueva, true);
+    assert.equal(validarClasificacionLLM({ es_duda_nueva: false }).es_duda_nueva, false);
+  });
+
   test('una respuesta basura no revienta ni inventa datos', () => {
     assert.deepEqual(validarClasificacionLLM(null), {});
     assert.deepEqual(validarClasificacionLLM('no soy json'), {});
