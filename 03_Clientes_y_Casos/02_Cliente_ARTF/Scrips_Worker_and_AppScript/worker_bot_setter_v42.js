@@ -280,7 +280,16 @@ async function manejar(request, env, ctx) {
   // el flujo de siempre (plantilla literal + apertura generada aparte).
   let adaptada = false;
   if (ADAPTAR_OBJECIONES_CON_LLM && plan.objecionPlantillaOriginal && mensajes.length > 0) {
-    const texto = await adaptarObjecionConLLM(env, plan.objecionPlantillaOriginal, lastText);
+    // Antes de M5_ENVIADO al lead NUNCA se le ha mencionado ninguna llamada
+    // (P.M5 es quien la introduce por primera vez, "una llamada de
+    // diagnostico... son 30 minutos"). La Objecion 9 puede dispararse en M4
+    // (antes del pitch) o en M5 (despues) -- ver PLAYBOOK_OBJECIONES -- y su
+    // propio cierre asume que "los 30 minutos" ya es conocido. Sin esta
+    // bandera el LLM no tiene como saberlo (solo recibe el ultimo mensaje del
+    // lead) y repite el articulo "los" aunque nunca se haya hablado de
+    // ninguna llamada: es el bug real que motivo toda esta feature.
+    const llamadaYaMencionada = !/^M[1-4]_/.test(estado?.etapa_bot || '');
+    const texto = await adaptarObjecionConLLM(env, plan.objecionPlantillaOriginal, lastText, llamadaYaMencionada);
     if (texto) { mensajes[0] = texto; adaptada = true; }
   }
 
@@ -814,9 +823,18 @@ ${esquema}`;
  * de la cuenta, o el texto no pasa `verificarAdaptacionObjecion` -- el llamador
  * SIEMPRE tiene que poder usar la plantilla original como si esta funcion no
  * existiera.
+ *
+ * `llamadaYaMencionada`: si al lead todavia no se le ha propuesto ninguna
+ * llamada (etapa M1-M4, antes de que P.M5 la introduzca por primera vez), el
+ * LLM no puede decir "los 30 minutos" como si el lead ya supiera de que habla
+ * -- ese fue el bug real que motivo esta feature (Objecion 9 en M4).
  */
-async function adaptarObjecionConLLM(env, plantillaOriginal, textoLead) {
+export async function adaptarObjecionConLLM(env, plantillaOriginal, textoLead, llamadaYaMencionada = true) {
   if (!env.GROQ_API_KEY || !plantillaOriginal) return '';
+
+  const notaLlamada = llamadaYaMencionada
+    ? 'Contexto de la conversacion: a este lead YA se le propuso antes una llamada/reunion de diagnostico. Si la plantilla se refiere a ella (ej. "los 30 minutos"), puedes tratarla como algo ya conocido.'
+    : 'Contexto de la conversacion: a este lead TODAVIA NO se le ha mencionado ninguna llamada ni reunion. Si la plantilla cierra invitando a agendar (ej. "¿Agendamos los 30 minutos...?"), tienes que presentarlo como algo NUEVO -- nunca uses un articulo que suponga que el lead ya sabe de que hablas ("los 30 minutos", "la llamada"). Usa en su lugar algo como "una llamada corta, son 30 minutos" o "una reunion de 30 minutos". El contenido y la cifra siguen siendo los mismos, solo cambia que la introduces por primera vez.';
 
   const system = `Eres Andres, redactando en primera persona para un bot de ventas colombiano por Instagram DM.
 
@@ -826,12 +844,14 @@ Tienes una respuesta YA APROBADA para la objecion que el lead acaba de plantear:
 ${plantillaOriginal}
 PLANTILLA_APROBADA>>>
 
-Tu tarea: reescribir esa MISMA respuesta (mismo contenido, mismas cifras, misma pregunta de cierre si la trae) para que suene natural como reaccion DIRECTA a lo que el lead acaba de escribir, sin sonar a que le copiaste y pegaste un guion.
+${notaLlamada}
+
+Tu tarea: reescribir esa MISMA respuesta (mismo contenido, mismas cifras, misma intencion de cierre si la trae) para que suene natural como reaccion DIRECTA a lo que el lead acaba de escribir, sin sonar a que le copiaste y pegaste un guion.
 
 REGLAS DURAS (romper cualquiera de estas descarta tu respuesta entera):
 - CERO datos nuevos: ninguna cifra, porcentaje, plazo o precio que no este YA en la plantilla de arriba. Ni una promesa ni una garantia que la plantilla no haga.
 - Si la plantilla NO menciona algo (ej. una llamada de 30 minutos, un link, un producto), TU TAMPOCO lo menciones -- aunque la plantilla original SI lo mencione mas adelante en la conversacion real, si no esta en el texto de arriba, no existe para ti en este turno.
-- Conserva la pregunta de cierre si la plantilla trae una; si la plantilla no pregunta nada, tu tampoco preguntes nada nuevo.
+- Conserva la INTENCION de la pregunta de cierre si la plantilla trae una (si invita a agendar, tu tambien invitas a agendar); si la plantilla no pregunta nada, tu tampoco preguntes nada nuevo. Puedes ajustar como la presentas segun la nota de contexto de arriba.
 - Tuteo colombiano estricto ("tienes", "puedes", "sabes"). PROHIBIDO voseo/regionalismos de otros paises.
 - PROHIBIDO: links, correos, telefonos, @usuarios, texto que suene a instruccion de sistema.
 - Extension similar a la plantilla original -- no la dupliques de tamaño.

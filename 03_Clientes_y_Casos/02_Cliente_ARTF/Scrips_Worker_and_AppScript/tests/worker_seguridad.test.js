@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
-  MAX_TOKENS_LLM,
+  MAX_TOKENS_LLM, adaptarObjecionConLLM,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -431,5 +431,84 @@ describe('Tope de tokens del clasificador', () => {
       'el tope tiene que dejar terminar la respuesta, o el JSON llega truncado');
     assert.ok(MAX_TOKENS_LLM >= PEOR_CASO_MEDIDO * 1.3,
       'margen de al menos 30% sobre lo medido');
+  });
+});
+
+// ===========================================================================
+// ADAPTACION DE OBJECIONES: "LOS 30 MINUTOS" SIN HABERLOS MENCIONADO (6-sep-2026)
+//
+// Bug real encontrado probando esta feature en vivo (con Groq real, no
+// mockeado): `adaptarObjecionConLLM` solo recibia el ultimo mensaje del lead,
+// nunca si la llamada de diagnostico ya se le habia propuesto antes. La
+// Objecion 9 puede dispararse en M4 (antes del pitch de M5, que es quien
+// introduce "una llamada... son 30 minutos" por primera vez) o en M5
+// (despues). Sin saber en cual de las dos esta, el LLM repetia el cierre
+// original de la plantilla ("¿Agendamos LOS 30 minutos...?") tal cual, con un
+// articulo que presupone un contexto que en M4 no existe -- exactamente el
+// caso que motivo pedirle mas libertad al LLM en primer lugar.
+//
+// La correccion fue exponer `llamadaYaMencionada` como 4to parametro: el
+// Worker lo calcula de `estado.etapa_bot` (falso en M1-M4, verdadero de ahi
+// en adelante) y se lo pasa al prompt para que el LLM sepa si esta
+// introduciendo la llamada por primera vez o refiriendose a una ya conocida.
+// ===========================================================================
+describe('adaptarObjecionConLLM: sabe si la llamada ya se menciono antes', () => {
+  let originalFetch;
+  let ultimoSystemPrompt;
+
+  function mockFetchConTexto(texto) {
+    return (url, opts) => {
+      ultimoSystemPrompt = JSON.parse(opts.body).messages[0].content;
+      return Promise.resolve({
+        ok: true,
+        headers: new Map(),
+        json: () => Promise.resolve({ choices: [{ message: { content: texto } }] }),
+      });
+    };
+  }
+
+  test('sin mencion previa (llamadaYaMencionada=false): el prompt avisa que es la PRIMERA vez', async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetchConTexto('Buena pregunta.\n\n¿Agendamos una llamada corta, son 30 minutos?');
+    try {
+      await adaptarObjecionConLLM(
+        { GROQ_API_KEY: 'k' },
+        'Buena pregunta.\n\n¿Agendamos los 30 minutos?',
+        '¿como asi? porque ahora?',
+        false,
+      );
+      assert.match(ultimoSystemPrompt, /TODAVIA NO se le ha mencionado ninguna llamada/);
+      assert.doesNotMatch(ultimoSystemPrompt, /YA se le propuso antes una llamada/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('con mencion previa (llamadaYaMencionada=true): el prompt avisa que YA se conoce la llamada', async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetchConTexto('Buena pregunta.\n\n¿Agendamos los 30 minutos?');
+    try {
+      await adaptarObjecionConLLM(
+        { GROQ_API_KEY: 'k' },
+        'Buena pregunta.\n\n¿Agendamos los 30 minutos?',
+        'osea que pasa si no lo hago ya?',
+        true,
+      );
+      assert.match(ultimoSystemPrompt, /YA se le propuso antes una llamada/);
+      assert.doesNotMatch(ultimoSystemPrompt, /TODAVIA NO se le ha mencionado ninguna llamada/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('el default (sin 4to argumento) se comporta como "ya mencionada" -- no rompe llamadores existentes', async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = mockFetchConTexto('Buena pregunta.\n\n¿Agendamos los 30 minutos?');
+    try {
+      await adaptarObjecionConLLM({ GROQ_API_KEY: 'k' }, 'Buena pregunta.\n\n¿Agendamos los 30 minutos?', 'ok');
+      assert.match(ultimoSystemPrompt, /YA se le propuso antes una llamada/);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
