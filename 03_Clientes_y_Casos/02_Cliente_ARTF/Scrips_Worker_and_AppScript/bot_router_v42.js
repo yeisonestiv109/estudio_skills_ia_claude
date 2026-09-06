@@ -1433,6 +1433,17 @@ export function reencauzar(estado, c, nombre, contexto = '', situacionParaLLM = 
 
   return {
     mensajes: generada ? [generada, ...pendientes] : pendientes,
+    // BUG REAL (marlyy318, 6-sep-2026): la pregunta pendiente se reenviaba
+    // TEXTUAL. La lead recibio dos veces, con 54 segundos de diferencia,
+    // "Última pregunta antes de contarte cómo funciona: ¿Resolver esto es una
+    // prioridad AHORA...?" -- palabra por palabra. Medido despues en la base:
+    // 84 turnos repetidos textualmente en 22 leads. Y viola una regla dura que
+    // ya estaba escrita ("nunca el mismo mensaje dos veces"), que nadie
+    // vigilaba porque la compuerta mira cada turno AISLADO, sin memoria.
+    //
+    // Se marca cual burbuja es un REENVIO para que el Worker deje al LLM
+    // reformularla. Es un indice, no el texto: el router no redacta.
+    reenvioPendienteIdx: generada ? 1 : 0,
     // No avanza el guion: reencauzar no es progresar.
     etapaNueva: etapaActual, estadoDestino: null,
     handoffRazon: null, motivoPerdida: null,
@@ -1573,6 +1584,12 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
       ? (OBJECIONES_PRE_PITCH[num] || OBJECIONES[c.objecion_num])
       : OBJECIONES[c.objecion_num];
 
+  // La segunda burbuja de este caso es un REENVIO: la pregunta de la etapa ya
+  // se le hizo al lead cuando entro en ella. Reenviarla textual fue el bug de
+  // marlyy318 (ver `reenvioPendienteIdx` en reencauzar). La de la Objecion 6
+  // en M1 NO cuenta: P.M1_PEDIR_RANGO es una pregunta NUEVA, no un reenvio.
+  const reenviaPendiente = !esObjecion6EnM1 && esPrePitch && !traePreguntaPropia;
+
   const mensajes = esObjecion6EnM1
     ? [render(plantilla, nombre), render(P.M1_PEDIR_RANGO, nombre)]
     : esPrePitch
@@ -1605,6 +1622,7 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     // nunca con link en el turno. El router solo EXPONE el texto aprobado
     // original -- decidir si se adapta y como es responsabilidad del Worker.
     objecionPlantillaOriginal: llevaLink ? null : render(plantilla, nombre),
+    reenvioPendienteIdx: reenviaPendiente ? 1 : null,
     summary: (esObjecion6EnM1
       ? `${contexto} Objecion 6 en ${etapaActual}: se le quita la presion de la profesion y la cifra exacta, y se le pregunta solo por el rango $7M-$15M.`
       : esPrePitch
