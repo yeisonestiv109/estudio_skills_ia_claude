@@ -1102,6 +1102,80 @@ no puede quedar en cero** — la It. 23 probó que con Groq caído el bot repite
 mismo mensaje indefinidamente. Ese tope debe pasar de *"el lead insiste,
 fuera"* a *"el LLM lleva N turnos sin responder, que entre un humano"*.
 
+---
+
+### It. 25 — Nueva política de escalamiento: el lead confuso ya no escala, escala el bot sin LLM
+
+Pedido de Gaby tras la Auditoría B: *"la única objeción que debe escalarse a un
+setter es cuando el lead llega a la fase final y no encuentra espacios en el
+calendar; en las anteriores etapas sí se puede manejar con el playbook"*.
+Principio rector que dejó explícito: **que haya un razonamiento frente a todo
+mensaje**.
+
+**De 13 puntos de escalada a 5.**
+
+| Se mantienen | Por qué |
+|---|---|
+| `crisis_emocional`, `contenido_hostil`, `ex_cliente` | Seguridad. No son objeciones |
+| `agendamiento_manual_pendiente` | Sin cupos en el calendario: requiere una acción humana real |
+| `ambiguo` | **Cambió de significado** (ver abajo) |
+
+| Se retiraron → ahora se razona con el playbook |
+|---|
+| `objecion_fuera_playbook` |
+| `objecion_no_habilitada` — apagar una objeción ahora significa "no uses ESA plantilla", no "no atiendas a este lead" |
+| `pregunta_precio` — preguntar el precio dos veces es un lead interesado |
+| `resistencia_repetida` y `resistencia_acumulada` |
+| `ambiguo` ×4 (M1 ingreso, M3 dolor no financiero, peldaños de M4 y M5) |
+
+Los tres topes de objeción compartían un supuesto que dejó de ser cierto con la
+Auditoría B: *"la plantilla ya no le sirvió, que entre un humano"*. Era válido
+cuando la única respuesta posible era esa **misma plantilla literal**. Hoy el
+LLM la reformula con el contexto y puede responder con el playbook completo
+delante: **insistir ya no es repetirse**. Los contadores se mantienen —
+alimentan el dashboard y dejan la señal en el `summary`; lo que se fue es el
+handoff, no la medición.
+
+**El tope que queda cambió de significado, no de número.**
+`UMBRALES.AMBIGUEDAD_MISMA_DUDA` → `LLM_SIN_RESPUESTA_SEGUIDAS`. Antes contaba
+"el lead insiste con la misma duda" y lo sacaba del embudo por ser confuso.
+Ahora cuenta **turnos seguidos en los que el LLM no pudo responder**. No escala
+el lead confuso: escala el bot sin cerebro. Ese tope **no puede quedar en cero**
+y la It. 23 lo probó en vivo — con Groq caído el bot repitió el mismo mensaje 12
+turnos, sordo a todo. El Worker cierra el otro lado del conteo: si la
+clasificación funciona pero la llamada de **redacción** falla, también suma.
+
+**Un problema que encontró la verificación en vivo, y no los tests:** con el
+dolor no financiero salían DOS burbujas con dos preguntas distintas y tonos
+opuestos. El catch-all (`respuesta_empatica`) no sabe que hay una plantilla
+detrás ni tiene el playbook. Ahora, cuando el router trae una instrucción
+explícita, gana la respuesta **anclada**; y si la plantilla **contradice** esa
+instrucción (el cierre que insinúa "no eres buen fit"), la reemplaza en vez de
+anteponerse, quedando la plantilla como fallback.
+
+**Verificado en vivo con Groq real — los 4 casos que antes iban a un humano:**
+
+```
+"¿tienen sede física en Medellín?"  -> explica que es 100% online, por videollamada
+"ya pero en serio, cuánto vale?"    -> reformula la objeción 7 con el contexto
+"ya probé cosas así y nada"         -> reformula la objeción 4
+"lo mío es más un tema de salud"    -> UNA burbuja, con respeto, sin descalificar,
+                                       anclada al 15% que el playbook sí dice
+```
+
+456/456 tests. **23 tests que fijaban la política vieja se reescribieron para
+fijar la nueva** (no se borraron), incluido el fixture 04 del corpus. Compuerta
+verde con smoke RPC real. Desplegado: `64fe0df6-56eb-4560-ba45-c3210ccb1a7c`.
+
+**Dato operativo medido en el camino** (al verificar si Groq estaba vivo): la
+telemetría real muestra **70 llamadas OK y 19 rechazadas por límite** en
+producción. Cada clasificación cuesta ~2.698 tokens de entrada y la respuesta
+anclada ~2.153, contra un límite de 8.000/minuto por llave → **~3 mensajes por
+minuto por llave**, ~1.6 en los turnos que necesitan respuesta libre. El
+derrochador principal NO es la feature nueva: es el prompt del clasificador,
+que se paga en el 100% de los turnos. **Pendiente: revisar ese prompt** — es
+donde más capacidad hay que ganar.
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
@@ -1126,6 +1200,7 @@ fuera"* a *"el LLM lleva N turnos sin responder, que entre un humano"*.
 - Vincular una reserva **reclama** el lead para el Setter.
 - **"No sé" en M2 es incertidumbre, no la Objeción 6** (5-sep-2026): solo una reticencia explícita ("prefiero no decir") va a la Objeción 6.
 - **`SIN_HORARIOS_ESPERANDO_FRANJA`**: tras "no encuentro horarios" el bot SIEMPRE captura la franja y se despide antes de callar para siempre — nunca deja la pregunta de `P.SIN_HORARIOS` sin respuesta (5-sep-2026).
+- **Un lead confuso NUNCA escala; escala el bot sin LLM** (6-sep-2026, auditoría B): las únicas escaladas son seguridad (crisis/hostilidad/ex-cliente), no encontrar cupos en el calendario, y que el LLM lleve `UMBRALES.LLM_SIN_RESPUESTA_SEGUIDAS` turnos sin responder. Los topes por objeción repetida o acumulada se retiraron: con el LLM reformulando, insistir ya no es repetirse. **Los contadores se mantienen para el dashboard.** Ese último tope no puede quedar en cero — con Groq caído el bot repite el mismo mensaje indefinidamente (It. 23).
 - **El LLM responde lo que el guion no mapea, anclado al playbook** (6-sep-2026, auditoría de la conversación real de marlyy318): cuando el lead pregunta algo que ningún campo del clasificador captura, el LLM redacta la respuesta con `CONOCIMIENTO_PLAYBOOK` delante (copy aprobado, armado desde las plantillas) y pasando por `verificarRespuestaLibre`. **El router expone la duda; no redacta.** Las etapas, los umbrales y el link siguen siendo código. Si el LLM falla, sale el turno determinista de siempre.
 - **El LLM puede reformular la copy aprobada de una objeción** (6-sep-2026, decisión explícita de Gaby pese a los 3 riesgos advertidos): solo cuando el turno NO lleva el link de agenda, con `verificarAdaptacionObjecion` (cero cifras nuevas, mismas reglas G1-G10) como compuerta antes de usar el texto generado. Si el LLM falla o la compuerta lo rechaza, se usa la plantilla original tal cual — nunca queda el lead sin respuesta.
 - **M2 (endeudamiento) tiene el mismo presupuesto de 3 intentos que M4/M5** (6-sep-2026, decisión explícita de Gaby): antes escalaba en silencio al segundo "no sé" sin cifra; ahora usa `reencauzar()` como M4/M5, con tope de 3 intentos con la MISMA duda antes de escalar de verdad. M1 se queda con su tope de 2, sin cambios.
