@@ -253,6 +253,28 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.ok(!/Sin presión, dame un estimado/.test(p.mensajes.join('\n')));
   });
 
+  // BUG REAL reportado (5-sep-2026): tras la Objecion 9 en M4 ("cual es la
+  // diferencia si lo hago ahora o despues?"), el lead escribio "como asi?"
+  // (confusion, no aceptacion) -> escalo a HANDOFF ambiguo en silencio.
+  // Despues escribio "pero si agendemos" -- el codigo viejo solo reenviaba la
+  // pregunta de urgencia (P.M4_P2), IGNORANDO la "bifurcacion oficial
+  // post-Objecion 9" que ya existe en el case M4_ENVIADO (aceptar ahi debe
+  // mandar el pitch real de M5, no repetir la pregunta). El replay generalizado
+  // deja que esa logica corra de verdad.
+  test('BUG REAL: aceptar tras la Objecion 9, ya en HANDOFF, manda el pitch real -- no repite la pregunta de urgencia', () => {
+    const estado = estadoEn('HANDOFF', {
+      handoff_razon: 'ambiguo', salario_monto: 10_000_000, endeudamiento_pct: 40,
+      dolor: 'B', ultima_objecion_codigo: '9',
+    });
+    // La clasificacion viene del esquema de HANDOFF: no pregunta "acepta" ni
+    // "urgencia" (esos campos no existen ahi) -- solo recupera_handoff.
+    const p = decidirTurno(estado, { recupera_handoff: true }, 'pero si agendemos');
+    assert.equal(p.handoffRazon, LIMPIAR_HANDOFF);
+    assert.equal(p.etapaNueva, 'M5_ENVIADO', 'la bifurcacion oficial manda el pitch, no repite la pregunta de M4');
+    assert.ok(!/prioridad AHORA/.test(p.mensajes.join('\n')), 'nunca repite la pregunta de urgencia ya hecha');
+    assert.match(p.mensajes.join('\n'), /30 minutos/, 'el pitch real SI menciona los 30 minutos, por primera vez');
+  });
+
   test('la crisis NO se recupera aunque el lead diga que quiere seguir', () => {
     // Es la linea que no se cruza. Alguien en crisis que escribe "no, sigamos"
     // necesita a una persona, no que el bot siga vendiendo.
@@ -1354,6 +1376,18 @@ describe('Detectores del cierre (QA 4-sep-2026)', () => {
     for (const t of ['si, agendemos', 'dale', 'listo', 'claro', 'claro que si',
                      'de una', 'perfecto, hagamoslo', 'me sirve']) {
       assert.equal(detectarAceptacion(t), true, JSON.stringify(t));
+    }
+  });
+
+  // BUG REAL (5-sep-2026): "pero" al inicio SIEMPRE frenaba, aunque el lead
+  // estuviera aceptando pese a la duda ("pero si agendemos" tras la Objecion 9).
+  test('"pero" antes de una afirmacion clara SI es aceptar (no una negacion)', () => {
+    for (const t of ['pero si agendemos', 'pero dale', 'pero bueno, si, hagamoslo']) {
+      assert.equal(detectarAceptacion(t), true, JSON.stringify(t));
+    }
+    // "pero" seguido de una negacion o de nada claro SIGUE frenando.
+    for (const t of ['pero no tengo tiempo', 'pero primero una pregunta', 'pero no se']) {
+      assert.equal(detectarAceptacion(t), false, JSON.stringify(t));
     }
   });
 

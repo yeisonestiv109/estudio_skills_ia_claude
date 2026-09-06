@@ -494,37 +494,37 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // iba, no donde quedo la etapa (que es 'HANDOFF' y no dice nada).
     const retomaEn = etapaParaRetomar(estado);
 
-    // CASO ESPECIAL M2 (5-sep-2026): si lo que falta es el endeudamiento, NUNCA
-    // se reenvia P.M2_NO_SABE -- ya se le pregunto antes de escalar, y mandar
-    // la misma pregunta otra vez esta prohibido (regla dura del fundador). En
-    // vez de reenviarla, se evalua el DATO que trae ESTE mensaje de vuelta
-    // (bug real: el lead lo dio dividido en dos mensajes -- "si me queda, no
-    // se cuanto" y despues "por ahi unos 4m" -- y el bot se quedo mudo porque
-    // el LLM ni corria en HANDOFF, ver ESQUEMA_POR_ETAPA.HANDOFF). Se fuerza
-    // `etapaEntrada: 'M2_NO_SABE'` a proposito: llegar a un handoff implica
-    // que la pregunta YA se hizo, asi que este intento es la segunda vez de
-    // verdad, nunca la primera -- si sigue sin resolver, se re-escala en
-    // silencio (nunca con la misma pregunta), nunca se vuelve a preguntar.
-    if (retomaEn === 'M2_ENVIADO') {
-      const resultado = evaluarYResponderEndeudamiento(estado, c, nombre, 'M2_NO_SABE', textoLead);
-      if (resultado.etapaNueva === 'HANDOFF') {
-        // Sigue ambiguo (o es otra escalada, ej. objecion no habilitada): se
-        // queda escalado, sin mandarle nada de nuevo al lead.
-        return resultado;
-      }
-      // Se resolvio de verdad (avanza a M3, borderline, descalifica, o una
-      // objecion valida lo regresa al carril): ahora si se limpia el handoff,
-      // no se deja "ambiguo" pegado mientras la conversacion ya sigue.
-      return { ...resultado, handoffRazon: LIMPIAR_HANDOFF };
-    }
+    // GENERALIZADO (5-sep-2026): en vez de solo reenviar la pregunta pendiente
+    // (que puede ser la MISMA que ya se mando antes de escalar -- prohibido),
+    // se REPROCESA el mensaje de vuelta como si el lead ya estuviera en
+    // `retomaEn`, corriendo la logica REAL de esa etapa en vez de duplicarla
+    // aca. BUG REAL que esto corrige: tras la Objecion 9 en M4, "pero si
+    // agendemos" llegaba con el lead ya en HANDOFF (por una confusion previa)
+    // y el codigo viejo solo reenviaba la pregunta de urgencia -- ignorando la
+    // "bifurcacion oficial post-Objecion 9" que YA existe en el case
+    // M4_ENVIADO (aceptar ahi manda el pitch real de M5, no la pregunta de
+    // vuelta). Con el replay, esa logica corre sola, sin repetirla aca.
+    //
+    // Excepcion: M2. Llegar a un handoff desde M2 implica que YA se pregunto
+    // al menos una vez (es la unica forma de llegar aca desde ahi); tratar la
+    // recuperacion como "primer intento" reenviaria P.M2_NO_SABE de nuevo. Se
+    // fuerza a 'M2_NO_SABE' para que, si sigue sin resolver, escale en
+    // silencio en vez de repetir (ver evaluarYResponderEndeudamiento).
+    const etapaParaReprocesar = retomaEn === 'M2_ENVIADO' ? 'M2_NO_SABE' : retomaEn;
+    const estadoRetomado = { ...estado, etapa_bot: etapaParaReprocesar, handoff_razon: null };
+    const resultado = decidirTurno(estadoRetomado, c, textoLead);
 
+    if (resultado.etapaNueva === 'HANDOFF') {
+      // Sigue sin resolver (o es una escalada nueva de otro tipo, ej. objecion
+      // no habilitada): se queda escalado, sin mandarle al lead nada que ya vio.
+      return resultado;
+    }
+    // Se resolvio de verdad: ahora si se limpia el handoff, no se deja la
+    // razon vieja pegada mientras la conversacion ya sigue.
     return {
-      mensajes: preguntaPendiente(retomaEn, nombre),
-      etapaNueva: retomaEn, estadoDestino: null,
-      handoffRazon: LIMPIAR_HANDOFF, motivoPerdida: null, campos: {},
-      // Aca la apertura personalizada vale oro: el lead viene de un roce.
-      permitirEmpatia: true,
-      summary: `El lead pide continuar tras el handoff (${estado.handoff_razon}). Se recupera y se retoma en ${retomaEn}.`,
+      ...resultado,
+      handoffRazon: LIMPIAR_HANDOFF,
+      summary: `El lead pide continuar tras el handoff (${estado.handoff_razon}). Se recupera y se retoma en ${etapaParaReprocesar}. ${resultado.summary}`,
     };
   }
 
@@ -1688,9 +1688,16 @@ export function detectarAceptacion(texto) {
   //      "esperame, antes..." se le escapaba. Ahora mira el mensaje completo y
   //      cubre tambien "espera", "antes" y "primero", que son aplazamientos.
   if (/\b(espera|esperame|esper[aá]|antes|primero|todav[ií]a\s+no|aun\s+no|a[uú]n\s+no)\b/.test(t)) return false;
-  if (/\b(no|pero|aunque)\b/.test(t.slice(0, 20))) return false;
 
   const AFIRMA = /\b(dale|listo|s[ií]|dele|dal[eé]|dalee|dsl|dsp|de\s*una|dale\s*pues|agendemos|agendamos|me\s*sirve|dale\s*ah[ií]|perfecto|obvio|por\s*supuesto|hag[aá]moslo|vamos)\b/;
+
+  // "no"/"aunque" al inicio SIEMPRE frenan. "pero" NO, si el mensaje trae una
+  // afirmacion clara -- BUG REAL (5-sep-2026): "pero si agendemos" (tras la
+  // Objecion 9) se leia como rechazo por la sola palabra "pero", cuando el
+  // lead esta aceptando pese a la duda, no rechazando.
+  if (/\b(no|aunque)\b/.test(t.slice(0, 20))) return false;
+  if (/\bpero\b/.test(t.slice(0, 20)) && !AFIRMA.test(t)) return false;
+
   if (AFIRMA.test(t)) return true;
 
   // "claro" suelto SI es aceptacion ("claro", "claro que si"); pegado a un verbo
