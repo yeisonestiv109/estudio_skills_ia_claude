@@ -41,6 +41,9 @@
         "estado": "contactado",
         "handoff": null,
         "contiene": "nivel de endeudamiento"
+      },
+      "pista": {
+        "confirma_rango": true
       }
     },
     {
@@ -57,6 +60,13 @@
       "espera": {
         "etapa": "M4_ENVIADO",
         "contiene": "¿Resolver esto es una prioridad AHORA para ti"
+      },
+      "pista": {
+        "dolores": [
+          "C",
+          "B"
+        ],
+        "dolor_financiero": true
       }
     },
     {
@@ -65,6 +75,9 @@
         "etapa": "M4_ENVIADO",
         "handoff": null,
         "contiene": "Lo más caro NO es la plata"
+      },
+      "pista": {
+        "urgencia": "pregunta_por_que"
       }
     }
   ]

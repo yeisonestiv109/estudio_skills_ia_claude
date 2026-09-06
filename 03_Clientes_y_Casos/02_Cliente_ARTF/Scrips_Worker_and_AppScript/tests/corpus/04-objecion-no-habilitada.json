@@ -15,7 +15,8 @@
     {
       "lead": "soy ingeniero civil, gano 15 millones",
       "pista": {
-        "profesion": "Ingeniero civil"
+        "profesion": "Ingeniero civil",
+        "ingreso_cop": 15000000
       },
       "espera": {
         "etapa": "M2_ENVIADO"
@@ -25,12 +26,21 @@
       "lead": "40%",
       "espera": {
         "etapa": "M3_ENVIADO"
+      },
+      "pista": {
+        "endeudamiento_pct": 40
       }
     },
     {
       "lead": "C",
       "espera": {
         "etapa": "M4_ENVIADO"
+      },
+      "pista": {
+        "dolores": [
+          "C"
+        ],
+        "dolor_financiero": true
       }
     },
     {
@@ -38,6 +48,9 @@
       "espera": {
         "etapa": "M5_ENVIADO",
         "estado": "calificado"
+      },
+      "pista": {
+        "urgencia": "ahora"
       }
     },
     {

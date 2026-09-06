@@ -60,7 +60,7 @@
         "dolores": [
           "D"
         ],
-        "dolor_financiero": false,
+        "dolor_financiero": true,
         "dolor_detalle": "preocupada por la cantidad de deudas"
       },
       "espera": {

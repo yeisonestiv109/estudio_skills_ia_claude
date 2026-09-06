@@ -400,8 +400,12 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
   // es el mismo tipo de guarda determinista que ya usa `pareceDolorFinanciero`:
   // no le quita al LLM la decision en el caso general, solo la anula cuando el
   // texto es un "no se" inequivoco.
-  if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)
-      && !pareceIncertidumbre(textoLead)) {
+  // Antes habia aqui un `!pareceIncertidumbre(textoLead)` para que un "no se"
+  // no se leyera como la Objecion 6. Se quito con el resto de la capa de regex
+  // (6-sep-2026): distinguir "no tengo el dato" de "no te lo quiero dar" es
+  // comprension pura, y ahora el LLM lo decide con el historial delante y con
+  // la regla escrita en su prompt.
+  if (veredicto === 'no_sabe' && (c.objecion_num || c.objecion_detectada)) {
     // Igual que en M1: "esa info es sensible" es la Objecion 6, no un
     // "no se". Preguntar por deudas la dispara con la misma frecuencia.
     return manejarObjecion(estado, c, nombre, 'Objecion al pedir el endeudamiento (M2).');
@@ -491,6 +495,20 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
   const etapa = estado?.etapa_bot || null;
 
   // --- Prioridad maxima, se evalua siempre y por encima de la etapa ---
+  //
+  // SIN LLM NO SE ADIVINA (6-sep-2026, regla de Gaby). Antes, si Groq fallaba,
+  // el turno seguia "solo con deterministas" -- y esos deterministas eran los
+  // que leian "si, ahora tengo mas claro que NO quiero" como una aceptacion y
+  // le mandaban el link del calendario. Prefiere que lo atienda una persona
+  // antes que un regex ciego adivinando.
+  //
+  // Va ANTES que el lead nuevo y que la etapa: si no se pudo entender el
+  // mensaje, no hay decision que tomar sobre el.
+  if (c.llm_fallo && etapa) {
+    return HANDOFF('error_tecnico', estado, {
+      summary: 'El LLM no respondio (sin cupo o caido). No se adivina lo que dijo el lead: lo atiende una persona.',
+    });
+  }
   if (c.crisis) return HANDOFF('crisis_emocional', estado, { estadoDestino: 'nutricion' });
   if (c.hostil) return HANDOFF('contenido_hostil', estado);
   if (c.ex_cliente) return HANDOFF('ex_cliente', estado);
@@ -808,7 +826,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         // que dice "me quedan $5M" o "menos de $7M" a veces habla del dinero
         // que le SOBRA despues de gastos, no de su ingreso total. Descalificar
         // ahi quema un lead bueno. Se aclara UNA vez antes de decidir.
-        if (etapa !== 'M1_ACLARAR_REMANENTE' && pareceRemanente(textoLead)) {
+        if (etapa !== 'M1_ACLARAR_REMANENTE' && c.cifra_es_remanente === true) {
           return {
             mensajes: [render(P.M1_ACLARAR_REMANENTE, nombre)],
             etapaNueva: 'M1_ACLARAR_REMANENTE', estadoDestino: 'contactado',
@@ -916,9 +934,11 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       // punto. El LLM ya fallo con "me siento preocupada por la cantidad de
       // deudas que tengo" y mando a reconducir a una lead perfecta (QA 4-sep).
       const esAvatar = letras.some((l) => ['A', 'B', 'C'].includes(l));
-      const dFinanciero = c.dolor_financiero
-        || pareceDolorFinanciero(c.dolor_detalle)
-        || pareceDolorFinanciero(textoLead);
+      // El respaldo por regex (`pareceDolorFinanciero`) se quito el 6-sep-2026.
+      // Existia porque el LLM habia fallado una vez con "me siento preocupada
+      // por la cantidad de deudas que tengo"; ese caso ahora esta escrito como
+      // regla en el prompt, que es donde se puede leer y corregir.
+      const dFinanciero = c.dolor_financiero === true;
       if (esAvatar || (letras.includes('D') && dFinanciero)) {
         return {
           mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
@@ -964,7 +984,7 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
     // =====================================================================
     case 'M3_RECONDUCIR': {
-      if (c.dolor_financiero || c.acepta || pareceDolorFinanciero(textoLead)) {
+      if (c.dolor_financiero === true || c.acepta) {
         return {
           mensajes: [render(P.M4_P1, nombre), render(P.M4_P2, nombre)],
           etapaNueva: 'M4_ENVIADO', estadoDestino: 'contactado',
@@ -1007,8 +1027,11 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       // Bifurcacion oficial post-Objecion 9 del SOP: "Tiene sentido, agendemos"
       // -> se avanza al cierre. Aceptar agendar ES mostrar urgencia, asi que se
       // trata como tal y el lead pasa por el pitch antes del link.
-      if (!c.urgencia && (c.acepta || estado?.ultima_objecion_codigo === '9')
-          && detectarAceptacion(textoLead)) {
+      // Antes esto exigia ADEMAS un `detectarAceptacion(textoLead)` por regex.
+      // Se quito (6-sep-2026): `acepta` ya lo decide el LLM, y el regex era
+      // justo el que leia "si, ahora tengo mas claro que NO quiero" como una
+      // aceptacion.
+      if (!c.urgencia && c.acepta === true) {
         return {
           mensajes: [render(P.M5_P1, nombre), render(P.M5_P2, nombre)],
           etapaNueva: 'M5_ENVIADO', estadoDestino: 'calificado',

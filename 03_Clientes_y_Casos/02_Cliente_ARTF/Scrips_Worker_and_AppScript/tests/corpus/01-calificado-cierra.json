@@ -17,7 +17,8 @@
     {
       "lead": "Hola! Soy ingeniera de software, gano alrededor de 7 millones netos al mes",
       "pista": {
-        "profesion": "Ingeniera de software"
+        "profesion": "Ingeniera de software",
+        "ingreso_cop": 7000000
       },
       "espera": {
         "etapa": "M2_ENVIADO",
@@ -34,6 +35,9 @@
       "espera": {
         "etapa": "M3_ENVIADO",
         "contiene": "¿cuál es tu mayor frustración hoy con tu dinero?"
+      },
+      "pista": {
+        "endeudamiento_pct": 30
       }
     },
     {
@@ -42,6 +46,12 @@
         "etapa": "M4_ENVIADO",
         "burbujas": 2,
         "contiene": "¿Resolver esto es una prioridad AHORA para ti"
+      },
+      "pista": {
+        "dolores": [
+          "B"
+        ],
+        "dolor_financiero": true
       }
     },
     {
@@ -51,6 +61,9 @@
         "estado": "calificado",
         "burbujas": 2,
         "contiene": "¿Agendamos?"
+      },
+      "pista": {
+        "urgencia": "ahora"
       }
     },
     {
@@ -62,6 +75,9 @@
         "no_contiene": [
           "asistirás solo tú"
         ]
+      },
+      "pista": {
+        "acepta": true
       }
     },
     {

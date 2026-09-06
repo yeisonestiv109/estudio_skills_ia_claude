@@ -2,15 +2,24 @@
   "nombre": "02 · \"Gano el mínimo integral\" — el caso que motivó la regla V4.1",
   "fuente": "SOP Setter DM en Instagram V4.2.pdf, sección \"Corrección de descarte (RetornoLead)\"",
   "nota": "Caso REAL documentado en el playbook del cliente: se descartó por error a una lead que ganaba $22M porque respondió \"gano el mínimo integral\" y el bot leyó \"mínimo\". Tuvo que intervenir un humano a disculparse. Esta conversación existe para que eso no vuelva a pasar nunca.",
-  "lead": { "nombre": "Carolina" },
+  "lead": {
+    "nombre": "Carolina"
+  },
   "turnos": [
     {
       "lead": "CONTROL",
-      "espera": { "etapa": "M1_ENVIADO", "estado": "contactado" }
+      "espera": {
+        "etapa": "M1_ENVIADO",
+        "estado": "contactado"
+      }
     },
     {
       "lead": "soy abogada y gano el mínimo integral",
-      "pista": { "profesion": "Abogada" },
+      "pista": {
+        "profesion": "Abogada",
+        "ingreso_cop": null,
+        "ingreso_glosario": "salario_integral"
+      },
       "espera": {
         "etapa": "M1_INGRESO_AMBIGUO",
         "estado": "contactado",
@@ -23,6 +32,9 @@
         "etapa": "M2_ENVIADO",
         "estado": "contactado",
         "contiene": "nivel de endeudamiento"
+      },
+      "pista": {
+        "ingreso_cop": 22000000
       }
     }
   ]

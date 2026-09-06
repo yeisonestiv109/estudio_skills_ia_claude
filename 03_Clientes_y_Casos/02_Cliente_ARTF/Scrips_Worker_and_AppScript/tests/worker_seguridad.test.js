@@ -223,11 +223,16 @@ describe('clasificar: ninguna etapa puede reventar', () => {
   // pendiente ("el 40%"), pero el determinista de M2 solo corria en
   // M2_ENVIADO/M2_NO_SABE -- en HANDOFF dependia 100% del LLM, sin red de
   // seguridad (el mismo criterio que ya protege al resto de M2).
-  test('BUG REAL: el % de endeudamiento se detecta tambien en HANDOFF, sin LLM', async () => {
-    const estado = { etapa_bot: 'HANDOFF', estado_codigo: 'calificado',
-      salario_monto: 10_000_000, handoff_razon: 'ambiguo' };
-    const c = await clasificar(ENV_SIN_LLM, estado, 'el 40%');
-    assert.equal(c.endeudamiento_pct, 40, 'el determinista lo extrae sin necesitar al LLM');
+  // Reescrito el 6-sep-2026: el respaldo determinista se elimino. Lo que se
+  // protege sigue siendo lo mismo -- que un lead escalado que vuelve dando el
+  // dato pendiente pueda retomar -- pero ahora depende de que HANDOFF tenga
+  // esquema de LLM. Que lo tenga es el sitio 2 de "la trampa de los 4 sitios",
+  // y olvidarlo ya apago la deteccion de crisis en 3 etapas.
+  test('BUG REAL: el esquema de HANDOFF pide los datos para poder retomar', () => {
+    const esquema = ESQUEMA_POR_ETAPA.HANDOFF;
+    for (const campo of ['endeudamiento_pct', 'ingreso_cop', 'remanente_cop', 'acepta', 'recupera_handoff']) {
+      assert.ok(esquema.includes(campo), `HANDOFF no pide "${campo}": un lead que retoma se queda atascado`);
+    }
   });
 });
 
@@ -348,7 +353,7 @@ describe('Modo secretaria invisible', () => {
     // antes por `if (!etapa) return c`.
     const c = await clasificar({ BOT_ACTIVO: 'false' }, null, 'soy médica y gano 12 millones');
     assert.equal(typeof c, 'object');
-    assert.equal(c.hostil, false);
+    assert.ok(!c.llm_fallo, 'no hay GROQ_API_KEY configurada: eso no es un fallo del LLM');
   });
 
   test('los campos extraídos se mapean para Supabase, sin decidir nada', () => {
@@ -680,5 +685,88 @@ describe('El esquema no puede pedir enums que el prompt no explica', () => {
     assert.match(src, /Un "me gustaria" es un SI, no una duda/,
       'se perdio la regla que distingue responder de preguntar');
     assert.match(src, /Tiene que haber una pregunta de verdad/);
+  });
+});
+
+// ===========================================================================
+// LAS REGLAS QUE ANTES ERAN REGEX AHORA VIVEN EN EL PROMPT (6-sep-2026)
+//
+// Al eliminar la capa de regex de negocio, cada regla que ese codigo encarnaba
+// tuvo que quedar escrita en el prompt del clasificador. Estos tests son su
+// unica red: si alguien recorta el prompt para ahorrar tokens y se lleva una
+// de estas reglas por delante, vuelve el bug que la origino -- y esos bugs
+// fallan EN SILENCIO, que es justo por lo que se borro el regex.
+//
+// Cada una viene de un caso real, no de una hipotesis.
+// ===========================================================================
+describe('El prompt conserva las reglas que sostenian los regex borrados', () => {
+  const prompt = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+
+  test('glosario colombiano: "integral" es ingreso ALTO, no el minimo', () => {
+    // Costo una lead real de $22M descartada.
+    assert.match(prompt, /salario integral.*NO es el salario minimo|"minimo integral" NO es el salario minimo/s);
+    assert.match(prompt, /18-22 millones/);
+  });
+
+  test('sumar varias fuentes de ingreso', () => {
+    // Dos leads que calificaban, descartados por quedarse con la primera cifra.
+    assert.match(prompt, /SUMA LAS FUENTES/);
+    assert.match(prompt, /11000000/, 'el ejemplo real de las 3 fuentes');
+    assert.match(prompt, /8000000/, 'el ejemplo de fijo + comisiones');
+  });
+
+  test('una cifra puede ser el remanente, no el ingreso total', () => {
+    assert.match(prompt, /cifra_es_remanente/);
+    assert.match(prompt, /me quedan 5 millones/);
+  });
+
+  test('hablar de deudas ES dolor financiero', () => {
+    // El LLM habia mandado a reconducir a una lead perfecta.
+    assert.match(prompt, /dolor_financiero.*deudas, pagos, tarjetas/s);
+  });
+
+  test('"no se" es incertidumbre, NO la Objecion 6', () => {
+    assert.match(prompt, /INCERTIDUMBRE vs OBJECION 6/);
+  });
+
+  test('la frustracion NO es hostilidad', () => {
+    // Este regex saco del embudo a un lead que seguia interesado.
+    assert.match(prompt, /FRUSTRACION NO ES HOSTILIDAD/i);
+  });
+
+  test('"esperame, antes quiero saber" NO es aceptar', () => {
+    assert.match(prompt, /acepta.*confirmo_agendo/s);
+    assert.match(prompt, /esperame/i);
+  });
+});
+
+// ===========================================================================
+// SIN LLM NO SE ADIVINA (regla de Gaby, 6-sep-2026)
+// ===========================================================================
+describe('clasificar ya no adivina con regex cuando el LLM falla', () => {
+  test('un 429 devuelve llm_fallo y NADA mas: ni cifras ni intenciones', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve({
+      ok: false, status: 429, headers: new Map(), text: () => Promise.resolve('rate limit'),
+    });
+    try {
+      const estado = { etapa_bot: 'M1_ENVIADO', estado_codigo: 'contactado' };
+      // Un texto que el regex viejo SI habria "entendido" (y mal).
+      const c = await clasificar({ GROQ_API_KEY: 'k' }, estado,
+        'gano 5 millones fijos y unos 3 mas por comisiones');
+      assert.equal(c.llm_fallo, true);
+      assert.equal(c.ingreso_cop, undefined,
+        'sin LLM no se inventa una cifra: el regex viejo habria puesto 5000000 y descalificado');
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test('y el router lo manda a un humano, no adivina el turno', () => {
+    const estado = { etapa_bot: 'M5_ENVIADO', estado_codigo: 'calificado', nombre: 'Ana',
+      salario_monto: 10_000_000, handoff_razon: null, objeciones_consecutivas: 0 };
+    const p = decidirTurno(estado, { llm_fallo: true }, 'si, ahora tengo mas claro que no quiero');
+    assert.equal(p.handoffRazon, 'error_tecnico');
+    assert.equal(p.mensajes.length, 0, 'no le manda NADA, mucho menos el link');
   });
 });

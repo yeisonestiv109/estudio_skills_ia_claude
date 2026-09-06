@@ -46,12 +46,21 @@
  *                                sistema actual ya usa (HANDOFF_ANDRES...).
  */
 
+// Los detectores de COMPRENSION (parseIngresoCOP, detectarAceptacion,
+// detectarHostilidad, detectarUrgencia, detectarDolorLetras, detectarSiNo...)
+// se dejaron de importar el 6-sep-2026: entender lenguaje es del LLM. Ver el
+// bloque grande dentro de `clasificar`.
+//
+// Sobreviven dos, y ninguno decide lo que el lead ve:
+//   · `detectarAceptacion`/`detectarConfirmacionAgenda`, SOLO para marcar en
+//     el log interno "este lead quiere agendar y el bot esta callado, atiendan
+//     ya". Un falso positivo cuesta una linea de log; ademas corre en el
+//     camino donde a proposito NO se llama al LLM (el bot no va a hablar).
+//   · `detectarVarianteM1`, que no interpreta nada: hace match literal con la
+//     palabra clave del anuncio (CONTROL / CLARIDAD) para elegir el saludo.
 import {
-  decidirTurno, decidirSiResponder, parseIngresoCOP,
-  detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
-  detectarUrgencia, detectarDolorLetras, detectarAceptacion,
-  detectarHostilidad, detectarEndeudamientoPct,
-  detectarSinHorarios, detectarSiNo, esSoloPalabraClave,
+  decidirTurno, decidirSiResponder,
+  detectarVarianteM1, detectarConfirmacionAgenda, detectarAceptacion,
 } from './bot_router_v42.js';
 import {
   PLANTILLAS as P, render, EMPATIA_HABILITADA, DISPARADORES_OBJECIONES,
@@ -545,14 +554,18 @@ async function manejar(request, env, ctx) {
  */
 export async function clasificar(env, estado, texto, ctxLLM = null, historial = '') {
   const etapa = estado?.etapa_bot || null;
-  const c = { hostil: detectarHostilidad(texto) };
+  // `detectarHostilidad` tambien se elimino (6-sep-2026): decidir si alguien es
+  // hostil o solo esta frustrado es comprension pura, y ese regex ya costo un
+  // lead real -- leyo "me estas haciendo perder el tiempo" como agresion y
+  // saco del embudo a una persona que seguia interesada. Lo decide el LLM,
+  // que ademas tiene el historial para distinguir un desahogo de un rechazo.
+  const c = {};
 
   // MODO SECRETARIA: se clasifica SIEMPRE, haya etapa o no, con el esquema
   // universal. Los deterministas por etapa NO corren: todos asumen que el bot
   // acaba de hacer una pregunta concreta, y aca las preguntas las hace un
   // humano, asi que aplicarlos leeria respuestas que nadie pidio.
   if (enModoSecretaria(env)) {
-    if (c.hostil) return c;
     const llm = await clasificarConLLM(env, etapa, texto, {}, ESQUEMA_SECRETARIA, ctxLLM, historial)
       .catch((e) => { console.error('LLM (secretaria) fallo:', e?.message); return {}; });
     return { ...c, ...llm };
@@ -560,116 +573,50 @@ export async function clasificar(env, estado, texto, ctxLLM = null, historial = 
 
   // Lead nuevo: no hay nada que clasificar, se envia M1 y ya.
   if (!etapa) return c;
-  if (c.hostil) return c; // corta seco, no se gasta LLM en un troll
 
-  // --- Deterministas por etapa ---
-  const det = {};
-  // ⚠️ BUG QUE ESTUVO OCULTO: faltaban `M1_ACLARAR_REMANENTE` y
-  // `RETORNO_PREGUNTA`. En esas dos etapas se le pregunta al lead por una CIFRA
-  // ("¿esos 5 millones son tu ingreso total?", "¿cambio tu situacion?") y el
-  // parser determinista no corria: el turno dependia solo del LLM.
+  // ─────────────────────────────────────────────────────────────────────────
+  // AQUI VIVIA LA CAPA DE REGEX DE NEGOCIO. Se elimino el 6-sep-2026.
   //
-  // No se veia porque `simulador.js` tenia su PROPIA copia de esta clasificacion
-  // -- y su copia si las incluia. Al hacer que el simulador use esta funcion, el
-  // corpus 03 se puso rojo y destapo la diferencia. Esa duplicacion era el
-  // agujero de cobertura que la auditoria ya habia señalado.
-  const ETAPAS_QUE_PIDEN_CIFRA = ['M1_ENVIADO', 'M1_INGRESO_AMBIGUO',
-                                  'M1_ACLARAR_REMANENTE', 'RETORNO_PREGUNTA'];
-  if (ETAPAS_QUE_PIDEN_CIFRA.includes(etapa) || estado?.estado_codigo === 'descalificado') {
-    const ing = parseIngresoCOP(texto);
-    // El glosario determinista gana sobre el LLM cuando encontro una unidad
-    // real ("millones", "SMLV", "integral"...). Este es EL guard del caso de
-    // la lead de $22M descartada por leer "minimo integral" como "minimo".
-    if (!ing.ambiguo) { det.ingreso_cop = ing.monto; det.ingreso_glosario = ing.glosario; }
-    else if (ing.glosario) {
-      det.ingreso_glosario = ing.glosario;
-      // El guard que ANULA la cifra del LLM existe para "integral" y compañia:
-      // ahi el modelo adivinaria. Pero `varias_fuentes` es lo contrario -- el
-      // parser se abstuvo justamente PARA que el LLM sume. Anularlo aca dejaria
-      // el arreglo del QA sin efecto.
-      if (ing.glosario !== 'varias_fuentes') det.ingreso_forzado_ambiguo = true;
-    }
-  }
-  // ⚠️ 'HANDOFF' va aca tambien (5-sep-2026): si el lead retoma dando el %
-  // pendiente ("el 40%", "o 3 millones") mientras esta escalado, la
-  // recuperacion (bot_router_v42.js) solo avanza si el dato llega -- sin este
-  // determinista, dependia 100% de que el LLM lo extrajera bien, sin red de
-  // seguridad (mismo criterio que ya usan M2_ENVIADO/M2_NO_SABE). Es seguro
-  // ejecutarlo siempre en HANDOFF: el router solo USA `endeudamiento_pct` si
-  // `etapaParaRetomar` ya habia decidido que eso es justo lo que falta.
-  if (etapa === 'M2_ENVIADO' || etapa === 'M2_NO_SABE' || etapa === 'HANDOFF') {
-    const pct = detectarEndeudamientoPct(texto);
-    if (pct !== null) det.endeudamiento_pct = pct;
-    // `deuda_cop` y `remanente_cop` NO se ponen aca: no hay detector
-    // determinista para ellos, los aporta el LLM y ya viajan en `llm` dentro
-    // de la fusion de abajo. Hubo dos lineas leyendo un `limpio` que solo
-    // existe dentro de `validarClasificacionLLM` (copy-paste): reventaban el
-    // turno entero con ReferenceError en TODO M2. Ver el test de regresion en
-    // tests/worker_seguridad.test.js.
-  }
-  if (etapa === 'M3_ENVIADO') {
-    const letras = detectarDolorLetras(texto);
-    if (letras.length) {
-      det.dolores = letras;
-      det.dolor_financiero = !letras.every((l) => l === 'D');
-    }
-  }
-  if (etapa === 'M1_RANGO_PREGUNTADO') {
-    const r = detectarSiNo(texto);
-    if (r !== null) det.confirma_rango = r;
-    const ing = parseIngresoCOP(texto);
-    if (!ing.ambiguo) det.ingreso_cop = ing.monto;
-  }
-  if (etapa === 'M4_ENVIADO' || etapa === 'M4_URGENCIA_REINTENTO') {
-    const u = detectarUrgencia(texto);
-    if (u) det.urgencia = u;
-  }
-  if ((etapa === 'M5_ENVIADO' || etapa === 'M5_PITCH_REINTENTO') && detectarAceptacion(texto)) det.acepta = true;
-  // ORDEN NUEVO: en M6 se espera la confirmacion de agenda; en M7, el acompañante.
-  // Antes ambas se clasificaban en las dos etapas, y por eso un "emm si" podia
-  // leerse como "ya agende" cuando contestaba a la pregunta del acompañante.
-  if (etapa === 'M6_ENVIADO') {
-    if (detectarConfirmacionAgenda(texto)) det.confirmo_agendo = true;
-  }
-  if (etapa === 'M7_ENVIADO') {
-    const acomp = detectarAcompanante(texto);
-    if (acomp !== null) det.acompanado = acomp;
-    else {
-      // En M7 la UNICA pregunta abierta es la del acompañante, asi que un "si"
-      // o un "no" a secas la contestan. Antes esto no se leia y el bot
-      // repreguntaba; ahora que la etapa esta aislada del link, el si/no ya no
-      // es ambiguo -- que era justo el problema del "emm si" en el QA.
-      const sn = detectarSiNo(texto);
-      if (sn !== null) det.acompanado = sn;
-    }
-  }
-  if (['M7_ENVIADO', 'M6_ENVIADO', 'M7_ESPERANDO_VINCULO'].includes(etapa)) {
-    if (detectarSinHorarios(texto)) det.sin_horarios = true;
-    // "¿donde me agendo?" salio del QA: el bot se quedaba mudo. El determinista
-    // cubre las formas obvias; el LLM cubre el resto con `pide_link`.
-    if (/\b(d[oó]nde\s+me\s+agendo|d[oó]nde\s+agendo|cu[aá]l\s+link|no\s+me\s+lleg[oó]\s+el\s+link|no\s+veo\s+el\s+link|mandame\s+el\s+link|env[ií]ame\s+el\s+link|pasa(me)?\s+el\s+link)\b/i.test(String(texto || ''))) {
-      det.pide_link = true;
-    }
-  }
-  if (etapa === 'RETORNO_PREGUNTA') {
-    const r = detectarSiNo(texto);
-    if (r !== null) det.retoma = r;
-  }
-
-  // --- LLM: cubre lo que los deterministas no resolvieron + crisis + empatia ---
-  // `llm_fallo` (a diferencia de que `clasificarConLLM` simplemente no corra
-  // por falta de GROQ_API_KEY, que no tira excepcion) marca que la llamada
-  // reviento de verdad (429, timeout, red) -- ver el uso en reencauzar():
-  // sin esto, un Groq caido dejaba al lead en un bucle sin salida.
-  const llm = await clasificarConLLM(env, etapa, texto, det, null, ctxLLM, historial).catch((e) => {
-    console.error('LLM fallo, se sigue solo con deterministas:', e?.message);
+  // Decision de Gaby, tras una auditoria externa y tres bugs verificados EN
+  // VIVO el mismo dia -- los tres por la misma linea, que hacia que el regex
+  // le ganara al LLM:
+  //
+  //   "4 millones del trabajo, 3 del negocio y 4 de un local"
+  //      el LLM sumo 11M (correcto) · el regex tomo la primera: 4M
+  //      -> DESCALIFICADO. Un lead que calificaba, perdido en silencio.
+  //
+  //   "gano 5 millones fijos y unos 3 mas por comisiones"
+  //      el LLM sumo 8M (correcto) · el regex tomo 5M -> DESCALIFICADO.
+  //
+  //   "si, ahora tengo mas claro que NO quiero seguir"  (tras el pitch)
+  //      el LLM leyo acepta=false · el regex vio "claro" -> acepta=true
+  //      -> le mando el LINK DEL CALENDARIO a quien acababa de decir que no.
+  //
+  // El patron, y la razon de fondo para borrar y no parchear: un regex no
+  // revienta. Acierta al 95% y falla EN SILENCIO en el 5%. Con la frase exacta
+  // del QA las tres fuentes se sumaban bien; cambiando el fraseo a algo igual
+  // de natural, se caia. De los 12 bugs de estas sesiones, 6 fueron regex mal
+  // escritos y solo 1 fue el modelo equivocandose.
+  //
+  // Se evaluo una precedencia mixta (que el regex ganara solo en el glosario
+  // colombiano). Gaby la rechazo con razon: "jugar a quien tiene la
+  // precedencia es dejar bombas de tiempo en el codigo". El glosario ahora
+  // vive en el prompt, que es donde se puede leer y corregir.
+  //
+  // LO QUE SIGUE SIENDO CODIGO (y no se toca): la aritmetica de los 3 filtros,
+  // las transiciones de etapa, la regla del link y las escaladas de seguridad.
+  // Esa mitad nunca ha fallado.
+  //
+  // SIN LLM NO SE ADIVINA: si Groq no responde, el turno escala a un humano
+  // (`error_tecnico`). Antes se seguia "solo con deterministas", que es
+  // exactamente como se le mando un calendario a alguien que dijo que no.
+  // ─────────────────────────────────────────────────────────────────────────
+  const llm = await clasificarConLLM(env, etapa, texto, {}, null, ctxLLM, historial).catch((e) => {
+    console.error('LLM fallo:', e?.message);
     return { llm_fallo: true };
   });
 
-  // Los deterministas se aplican DESPUES para que ganen sobre el LLM.
-  const fusion = { ...c, ...llm, ...det };
-  // Excepcion: si el glosario forzo ambiguo, el numero del LLM no vale.
-  if (det.ingreso_forzado_ambiguo) fusion.ingreso_cop = null;
+  return { ...c, ...llm };
   return fusion;
 }
 
@@ -770,8 +717,8 @@ function serializarDolorSecretaria(letras, detalle) {
 }
 
 export const ESQUEMA_POR_ETAPA = {
-  M1_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
-  M1_INGRESO_AMBIGUO:   `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M1_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, "ingreso_glosario": "salario_integral"|"ingreso_variable"|"varias_fuentes"|null, "cifra_es_remanente": boolean, ${CAMPOS_COMUNES}}`,
+  M1_INGRESO_AMBIGUO:   `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, "ingreso_glosario": "salario_integral"|"ingreso_variable"|"varias_fuentes"|null, "cifra_es_remanente": boolean, ${CAMPOS_COMUNES}}`,
   M1_RANGO_PREGUNTADO:  `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "confirma_rango": true|false|null, ${CAMPOS_COMUNES}}`,
   M1_ACLARAR_REMANENTE: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
   M2_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
@@ -808,7 +755,11 @@ export const ESQUEMA_POR_ETAPA = {
   // etapa mas importante de todas. Los campos de dinero van aca tambien: si
   // el lead retoma dando la cifra pendiente (ingreso o endeudamiento), que
   // no se pierda y haya que volver a preguntarla.
-  HANDOFF: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
+  // `acepta` entro aca el 6-sep-2026 al quitar los regex: la bifurcacion
+  // oficial post-Objecion 9 ("pero si agendemos" estando escalado) se leia con
+  // `detectarAceptacion`. Sin ese regex y sin este campo, el lead que acepta
+  // desde un handoff se quedaba sin pitch.
+  HANDOFF: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, "acepta": boolean, ${CAMPOS_COMUNES}}`,
 };
 
 const CONTEXTO_POR_ETAPA = {
@@ -867,10 +818,27 @@ Recien despues llena el resto. Ejemplo real que se clasifico MAL por no hacer es
 REGLAS DE EXTRACCION:
 - "ingreso_cop": el ingreso MENSUAL en pesos colombianos, como numero entero. "12 millones" -> 12000000. Si el lead NO da una cifra clara, devuelve null. NUNCA adivines.
 - GLOSARIO CRITICO: "salario integral" o "minimo integral" = ingreso ALTO (~18-22 millones), NO es el salario minimo. Si ves "integral", devuelve null en ingreso_cop (se le pedira la cifra exacta aparte).
+- ⚠️ GLOSARIO COLOMBIANO DEL INGRESO — esto no lo puedes deducir, hay que saberlo:
+  · "salario integral" o "minimo integral" NO es el salario minimo: es un ingreso ALTO (~18-22 millones). Si el lead dice "integral", devuelve null en "ingreso_cop" (se le pedira la cifra exacta aparte) y NUNCA lo leas como ~1.4 millones.
+  · "SMLV" / "salario minimo" (sin "integral") si es el minimo colombiano: ~1.400.000 en 2026.
+  · "un palo" = 1 millon. "luca" = mil.
+  Este glosario costo un lead real de \$22M que fue descartado por leer "minimo integral" como "minimo".
+- ⚠️ SUMA LAS FUENTES. Si el lead menciona VARIOS ingresos, "ingreso_cop" es la SUMA, no el primero que aparece:
+  · "4 millones del trabajo, 3 del negocio y 4 de un local" -> 11000000
+  · "gano 5 millones fijos y unos 3 mas por comisiones"     -> 8000000
+  Dos leads reales que CALIFICABAN fueron descartados por quedarse con la primera cifra. Si no estas seguro de que se sumen, devuelve null: es preferible repreguntar a descartar.
+- "ingreso_glosario" — POR QUE no pudiste dar una cifra. Cambia la pregunta que se le hace despues, asi que importa:
+  · "salario_integral" = uso un termino que no puedes cuantificar ("integral", "el minimo integral"). Se le pedira el numero exacto.
+  · "ingreso_variable" = dijo que varia y no dio un numero ("depende del mes", "por comisiones").
+  · "varias_fuentes"   = menciono varios ingresos pero NO lograste sumarlos con confianza. Se le pedira el TOTAL (no tendria sentido ofrecerle un rango: ya dio cifras).
+  · null               = simplemente no menciono ningun ingreso, o si diste una cifra en "ingreso_cop".
+- "cifra_es_remanente": true si la cifra que dio NO es su ingreso total sino lo que le SOBRA despues de gastos o deudas ("me quedan 5 millones", "libres me quedan 3"). Con true el sistema le pregunta antes de descartarlo -- un lead que dice "me quedan \$5M" puede ganar \$15M.
+  ⚠️ En ese caso la cifra IGUAL va en "ingreso_cop" (es el unico numero que dio); lo que dice que no es su ingreso es la bandera, no un null. Si pones null, el sistema no sabe que hay algo que aclarar y le pregunta otra cosa.
 - "objecion_num": ${DISPARADORES_OBJECIONES}
 - OJO: "¿cuanto cuesta la CONSULTA/LLAMADA/SESION?" es objecion 1 (la llamada es gratis), NO la 7.
 - ⚠️ INCERTIDUMBRE vs OBJECION 6, no las confundas: "no se", "no estoy segura", "ni idea de cuanto debo" es que el lead NO TIENE el dato -> objecion_num debe ser null (deja que el flujo le pida un estimado). La Objecion 6 es cuando el lead SI sabe el dato pero se NIEGA a compartirlo ("eso es privado", "prefiero no decir eso por aqui", "no doy esa info por mensaje"). Bug real que esto corrige: un "no se" en la pregunta de endeudamiento se leyo como Objecion 6 y el lead recibio la respuesta de "dato sensible" en vez de que se le pidiera un estimado.
 - "objecion_conocida": false si el lead objeta algo que NO esta en esa lista de 9.
+- "dolor_financiero": true si la frustracion que describe tiene que ver con el dinero, aunque no use la palabra "dinero". Cuenta hablar de deudas, pagos, tarjetas, no poder ahorrar, no saber en que se le va, no llegar a fin de mes o sentir que gana bien y no lo ve. Caso real que se clasifico MAL: "me siento preocupada por la cantidad de deudas que tengo" es dolor financiero (true) -- hablar de deudas ES hablar de dinero.
 - "crisis": true SOLO ante señales reales de crisis emocional grave (duelo, crisis de pareja, ansiedad mencionada, autolesion, desesperacion profunda).
   ⚠️ FALSO POSITIVO FRECUENTE, no lo cometas: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION, no crisis -> crisis=false. Escalar eso quema un lead bueno.
 - "hostil": true SOLO ante insultos, groserias, amenazas, acusaciones de estafa o peticiones de que no le escriban mas.
@@ -1391,6 +1359,10 @@ export function validarClasificacionLLM(bruto) {
   for (const campo of ['confirma_rango', 'retoma']) {
     if (campo in bruto) limpio[campo] = typeof bruto[campo] === 'boolean' ? bruto[campo] : null;
   }
+  if ('ingreso_glosario' in bruto) {
+    limpio.ingreso_glosario = enumDe(bruto.ingreso_glosario,
+      ['salario_integral', 'ingreso_variable', 'varias_fuentes']);
+  }
   if ('urgencia' in bruto) {
     limpio.urgencia = enumDe(bruto.urgencia, ['ahora', 'algun_dia', 'pregunta_por_que']);
   }
@@ -1409,7 +1381,7 @@ export function validarClasificacionLLM(bruto) {
   // -- mismo agujero de cobertura ya documentado para `clasificar()`.
   for (const campo of ['pide_link', 'crisis', 'hostil', 'ex_cliente', 'acepta', 'confirmo_agendo',
                        'dolor_financiero', 'objecion_conocida', 'deuda_mayoritariamente_buena',
-                       'sin_horarios', 'recupera_handoff']) {
+                       'sin_horarios', 'recupera_handoff', 'cifra_es_remanente']) {
     const b = bool(bruto[campo]);
     if (b !== undefined) limpio[campo] = b;
   }

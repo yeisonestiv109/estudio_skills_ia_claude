@@ -325,8 +325,13 @@ describe('Objeciones antes del pitch: NUNCA el link del calendario', () => {
   });
 
   test('tras la Objecion 9, aceptar agendar cuenta como urgencia (SOP)', () => {
+    // La aceptacion la lee el LLM (`acepta`). Antes esta rama exigia ADEMAS un
+    // `detectarAceptacion(textoLead)` por regex, y ese regex era justo el que
+    // leia "si, ahora tengo mas claro que NO quiero" como un si. Se elimino
+    // con el resto de la capa (6-sep-2026); la regla del SOP no cambio.
     const p = decidirTurno(
-      estadoEn('M4_ENVIADO', { ultima_objecion_codigo: '9' }), {}, 'tiene sentido, agendemos');
+      estadoEn('M4_ENVIADO', { ultima_objecion_codigo: '9' }),
+      { acepta: true }, 'tiene sentido, agendemos');
     assert.equal(p.etapaNueva, 'M5_ENVIADO');
     assert.equal(p.estadoDestino, 'calificado');
   });

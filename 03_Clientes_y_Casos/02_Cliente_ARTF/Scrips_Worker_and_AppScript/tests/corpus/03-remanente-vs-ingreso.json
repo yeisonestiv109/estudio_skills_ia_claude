@@ -2,15 +2,24 @@
   "nombre": "03 · \"Me quedan 5 millones\" — remanente, no ingreso total",
   "fuente": "Setter-IA-Claude-Code-Project/sops/sop-05-aprendizajes-produccion.md (aprendizaje #2)",
   "nota": "Patrón real de producción: el lead responde con lo que le SOBRA después de gastos, no con su ingreso. Descalificarlo sin aclarar quema un lead que puede estar ganando bien. Aquí resulta que sí era su total, así que la descalificación es correcta -- pero solo DESPUÉS de preguntar.",
-  "lead": { "nombre": "Andrea" },
+  "lead": {
+    "nombre": "Andrea"
+  },
   "turnos": [
     {
       "lead": "CLARIDAD",
-      "espera": { "etapa": "M1_ENVIADO", "contiene": "buscas tener claridad" }
+      "espera": {
+        "etapa": "M1_ENVIADO",
+        "contiene": "buscas tener claridad"
+      }
     },
     {
       "lead": "soy diseñador, me quedan como 5 millones libres al mes",
-      "pista": { "profesion": "Diseñador" },
+      "pista": {
+        "profesion": "Diseñador",
+        "ingreso_cop": 5000000,
+        "cifra_es_remanente": true
+      },
       "espera": {
         "etapa": "M1_ACLARAR_REMANENTE",
         "estado": "contactado",
@@ -23,6 +32,10 @@
         "etapa": "DESCALIFICADO",
         "estado": "descalificado",
         "contiene": "la prioridad es subir el ingreso primero"
+      },
+      "pista": {
+        "ingreso_cop": 5000000,
+        "cifra_es_remanente": false
       }
     }
   ]

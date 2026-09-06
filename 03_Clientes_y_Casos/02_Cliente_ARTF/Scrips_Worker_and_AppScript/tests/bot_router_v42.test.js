@@ -249,14 +249,17 @@ describe('Convivencia bot <-> Setter humano', () => {
     assert.ok(p.mensajes.length > 0, 'y si le habla');
   });
 
-  test('handoff recuperable + el LLM caido 3 turnos seguidos: AHI si re-escala', () => {
+  test('sin LLM se escala de INMEDIATO: no se adivina lo que dijo el lead', () => {
+    // Regla de Gaby (6-sep-2026): "si Groq se cae prefiero que escale a humano
+    // antes que dejar que un regex ciego adivine y le mande un calendario a
+    // alguien que dijo 'claro que no quiero'". Ya no se cuentan 3 turnos.
     const estado = estadoEn('HANDOFF', {
-      handoff_razon: 'ambiguo', salario_monto: 11_000_000, ambiguedad_consecutiva: 2,
+      handoff_razon: 'ambiguo', salario_monto: 11_000_000,
     });
     const p = decidirTurno(estado, { recupera_handoff: true, llm_fallo: true }, 'sigo sin saber');
     assert.equal(p.etapaNueva, 'HANDOFF');
-    assert.equal(p.handoffRazon, 'ambiguo');
-    assert.match(p.summary, /sin responder/, 'la razon es el LLM, no el lead');
+    assert.equal(p.handoffRazon, 'error_tecnico', 'la razon es tecnica, no del lead');
+    assert.equal(p.mensajes.length, 0);
   });
 
   // BUG REAL reportado (5-sep-2026): "no lo se, no estoy segura" (fallback
@@ -295,7 +298,9 @@ describe('Convivencia bot <-> Setter humano', () => {
     });
     // La clasificacion viene del esquema de HANDOFF: no pregunta "acepta" ni
     // "urgencia" (esos campos no existen ahi) -- solo recupera_handoff.
-    const p = decidirTurno(estado, { recupera_handoff: true }, 'pero si agendemos');
+    // `acepta` lo aporta ahora el LLM (entro al esquema de HANDOFF al quitar
+    // los regex); antes se leia con `detectarAceptacion` sobre el texto.
+    const p = decidirTurno(estado, { recupera_handoff: true, acepta: true }, 'pero si agendemos');
     assert.equal(p.handoffRazon, LIMPIAR_HANDOFF);
     assert.equal(p.etapaNueva, 'M5_ENVIADO', 'la bifurcacion oficial manda el pitch, no repite la pregunta de M4');
     assert.ok(!/prioridad AHORA/.test(p.mensajes.join('\n')), 'nunca repite la pregunta de urgencia ya hecha');
@@ -507,10 +512,10 @@ describe('Descalificacion con valor', () => {
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
 
-  test('borderline con el LLM caido 3 turnos: escala por falta de LLM', () => {
-    const estado = estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000, ambiguedad_consecutiva: 2 });
+  test('borderline sin LLM: escala por tecnico, y JAMAS descalifica', () => {
+    const estado = estadoEn('M2_BORDERLINE', { salario_monto: 8_000_000 });
     const p = decidirTurno(estado, { llm_fallo: true }, 'sigo sin entender');
-    assert.equal(p.handoffRazon, 'ambiguo');
+    assert.equal(p.handoffRazon, 'error_tecnico');
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
 
@@ -596,10 +601,9 @@ describe('Descalificacion con valor', () => {
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
 
-  test('el ingreso ambiguo SI escala si el LLM lleva 3 turnos caido', () => {
-    const estado = estadoEn('M1_INGRESO_AMBIGUO', { ambiguedad_consecutiva: 2 });
-    const p = decidirTurno(estado, { ingreso_cop: null, llm_fallo: true });
-    assert.equal(p.handoffRazon, 'ambiguo');
+  test('el ingreso ambiguo sin LLM escala por tecnico, nunca descarta', () => {
+    const p = decidirTurno(estadoEn('M1_INGRESO_AMBIGUO'), { ingreso_cop: null, llm_fallo: true });
+    assert.equal(p.handoffRazon, 'error_tecnico');
     assert.notEqual(p.estadoDestino, 'descalificado');
   });
 });
@@ -978,7 +982,11 @@ describe('Detectores deterministas', () => {
 
 describe('Aprendizajes de produccion (proyecto Setter IA de Javier)', () => {
   test('SOP-05 #2: "me quedan $5M" NO descalifica -- primero se aclara', () => {
-    const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 5_000_000 }, 'me quedan como 5 millones libres');
+    // Antes esto lo detectaba un regex sobre el texto (`pareceRemanente`).
+    // Desde el 6-sep-2026 lo dice el LLM en `cifra_es_remanente`; la REGLA de
+    // negocio no cambio: una cifra baja que es remanente NO descalifica.
+    const p = decidirTurno(estadoEn('M1_ENVIADO'),
+      { ingreso_cop: 5_000_000, cifra_es_remanente: true }, 'me quedan como 5 millones libres');
     assert.notEqual(p.estadoDestino, 'descalificado');
     assert.equal(p.etapaNueva, 'M1_ACLARAR_REMANENTE');
     assert.match(p.mensajes[0], /ingreso total al mes, o lo que te queda/);
@@ -1124,10 +1132,9 @@ describe('Escalera de repreguntas antes de escalar', () => {
       decidirTurno(insiste, { endeudamiento_pct: null, es_duda_nueva: false }, 'sigo sin saber bien').handoffRazon,
       null, 'el lead confuso se atiende');
 
-    const sinLLM = st('M2_NO_SABE'); sinLLM.ambiguedad_consecutiva = 2;
     assert.equal(
-      decidirTurno(sinLLM, { endeudamiento_pct: null, llm_fallo: true }, 'sigo sin saber bien').handoffRazon,
-      'ambiguo', 'el bot sin cerebro si escala');
+      decidirTurno(st('M2_NO_SABE'), { endeudamiento_pct: null, llm_fallo: true }, 'x').handoffRazon,
+      'error_tecnico', 'el bot sin cerebro escala de inmediato');
   });
 
   describe('con la perilla APAGADA (estado actual)', () => {
@@ -1153,11 +1160,8 @@ describe('Escalera de repreguntas antes de escalar', () => {
       assert.equal(decidirTurno(insiste4, { urgencia: null, es_duda_nueva: false }, 'sigo sin entender').handoffRazon,
         null, 'insistir no saca del embudo');
 
-      const sinLLM4 = st('M4_ENVIADO'); sinLLM4.ambiguedad_consecutiva = 2;
-      assert.equal(decidirTurno(sinLLM4, { urgencia: null, llm_fallo: true }, 'sigo sin entender').handoffRazon, 'ambiguo');
-
-      const sinLLM5 = st('M5_ENVIADO'); sinLLM5.ambiguedad_consecutiva = 2;
-      assert.equal(decidirTurno(sinLLM5, { llm_fallo: true }, 'sigo sin entender').handoffRazon, 'ambiguo');
+      assert.equal(decidirTurno(st('M4_ENVIADO'), { urgencia: null, llm_fallo: true }, 'x').handoffRazon, 'error_tecnico');
+      assert.equal(decidirTurno(st('M5_ENVIADO'), { llm_fallo: true }, 'x').handoffRazon, 'error_tecnico');
     });
   });
 
@@ -1456,12 +1460,15 @@ describe('Dolor financiero: raíces de dinero (QA 4-sep-2026)', () => {
   });
 
   test('"quiero ahorrar" en M3 ya NO sale por reconducir', () => {
-    // El caso exacto del QA. Se simula el LLM fallando (dolor_financiero:false):
-    // el determinista tiene que rescatarlo igual.
+    // El caso exacto del QA. Antes un regex (`pareceDolorFinanciero`) rescataba
+    // al lead cuando el LLM se equivocaba. Ese respaldo se quito el 6-sep-2026
+    // junto con toda la capa de regex; la regla vive ahora en el prompt (ver
+    // el test de abajo, que la fija). Aca se prueba lo que el router hace con
+    // la lectura CORRECTA.
     const p = decidirTurno(
       { estado_codigo: 'contactado', etapa_bot: 'M3_ENVIADO', nombre: 'Marly',
         objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null },
-      { dolores: ['D'], dolor_financiero: false, dolor_detalle: 'quiero ahorrar' },
+      { dolores: ['D'], dolor_financiero: true, dolor_detalle: 'quiero ahorrar' },
       'd. quiero ahorrar',
     );
     assert.equal(p.etapaNueva, 'M4_ENVIADO');
@@ -1625,10 +1632,13 @@ describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', (
     assert.equal(pareceIncertidumbre(''), false);
   });
 
-  test('BUG REAL: un "no se" que el LLM marca como Objecion 6 ya NO repite la pregunta inicial', () => {
-    // Antes: cae en manejarObjecion y manda OBJ_6 + P.M2_P1/P.M2_P2 de nuevo.
+  test('BUG REAL: un "no se" NO se trata como Objecion 6 -- se pide un estimado', () => {
+    // Antes un regex (`pareceIncertidumbre`) anulaba al LLM cuando marcaba la
+    // Objecion 6 sobre un "no se". Se quito con el resto de la capa (6-sep-2026):
+    // distinguir "no tengo el dato" de "no te lo quiero dar" es comprension, y
+    // la regla esta escrita en el prompt (ver el test que la fija abajo).
     const p = decidirTurno(estadoEn('M2_ENVIADO'),
-      { endeudamiento_pct: null, objecion_num: 6, objecion_conocida: true },
+      { endeudamiento_pct: null, objecion_num: null },
       'no se, la verdad no estoy segura');
     assert.equal(p.etapaNueva, 'M2_NO_SABE');
     assert.match(p.mensajes.join('\n'), /dame un estimado/i);
