@@ -860,3 +860,54 @@ describe('decidirRepregunta: la accion viene en un campo JSON, no en el formato 
     assert.deepEqual(await decidirRepregunta({ GROQ_API_KEY: 'k' }, 'algo', '', '', 'ok'), { accion: 'mantener', texto: '' });
   });
 });
+
+// ===========================================================================
+// UN 200 CON EL CUERPO ROTO TAMPOCO ES "NO ENCONTRE NADA" (6-sep-2026)
+//
+// `dd98d33` cerro este fallo silencioso para los 429: cuando Groq rechaza,
+// `clasificarConLLM` marca `llm_fallo` para que no se confunda con "el LLM
+// corrio y no encontro nada que clasificar". La via del PARSEO seguia abierta:
+// si Groq responde 200 con un cuerpo truncado o que no es JSON,
+// `parseJsonLLM` devuelve null y `validarClasificacionLLM(null)` devuelve
+// `{}` -- todos los campos undefined, la misma forma exacta que toma una
+// clasificacion legitimamente vacia.
+//
+// Encontrado corriendo el eval del 6-sep contra el tope diario de Groq: un
+// turno salio como error de clasificacion ("urgencia: dio undefined") en vez
+// de saltarse por falta de cupo, que es lo que invalida una medicion. En
+// produccion es peor: `reencauzar()` usa `llm_fallo` para NO resetear el
+// contador de insistencia, asi que un cuerpo roto dejaba al lead en el mismo
+// bucle sin salida que ese bug producia.
+// ===========================================================================
+describe('clasificar: un cuerpo no parseable es llm_fallo, no una clasificacion vacia', () => {
+  function conCuerpo(contenido, fn) {
+    const original = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve({
+      ok: true,
+      headers: new Map(),
+      json: () => Promise.resolve({ choices: [{ message: { content: contenido } }] }),
+    });
+    return fn().finally(() => { globalThis.fetch = original; });
+  }
+
+  test('cuerpo vacio -> llm_fallo', async () => {
+    const r = await conCuerpo('', () => clasificar({ GROQ_API_KEY: 'k' }, { etapa_bot: 'M4_ENVIADO' }, 'si, es ahora'));
+    assert.equal(r.llm_fallo, true);
+  });
+
+  test('cuerpo truncado a la mitad -> llm_fallo', async () => {
+    const r = await conCuerpo('{"urgencia": "aho', () => clasificar({ GROQ_API_KEY: 'k' }, { etapa_bot: 'M4_ENVIADO' }, 'si, es ahora'));
+    assert.equal(r.llm_fallo, true);
+  });
+
+  test('JSON valido pero sin campos -> NO es llm_fallo (el LLM corrio y no encontro nada)', async () => {
+    const r = await conCuerpo('{}', () => clasificar({ GROQ_API_KEY: 'k' }, { etapa_bot: 'M4_ENVIADO' }, 'hmm'));
+    assert.equal(r.llm_fallo, undefined);
+  });
+
+  test('JSON valido con campos -> se clasifica normal', async () => {
+    const r = await conCuerpo('{"urgencia":"ahora"}', () => clasificar({ GROQ_API_KEY: 'k' }, { etapa_bot: 'M4_ENVIADO' }, 'si, es ahora'));
+    assert.equal(r.urgencia, 'ahora');
+    assert.equal(r.llm_fallo, undefined);
+  });
+});

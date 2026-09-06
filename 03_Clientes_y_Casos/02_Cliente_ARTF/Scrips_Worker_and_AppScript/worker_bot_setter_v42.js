@@ -617,7 +617,6 @@ export async function clasificar(env, estado, texto, ctxLLM = null, historial = 
   });
 
   return { ...c, ...llm };
-  return fusion;
 }
 
 /**
@@ -909,8 +908,22 @@ ${esquema}`;
     // seguidos para escalar.
     return { llm_fallo: true };
   }
+  // Un 200 con un cuerpo que no es JSON parseable NO es "el LLM corrio y no
+  // encontro nada": es el LLM fallando. `validarClasificacionLLM(null)`
+  // devuelve `{}`, o sea TODOS los campos undefined -- exactamente la misma
+  // forma que toma un mensaje ya resuelto por otro campo, e indistinguible de
+  // ella. Es el mismo fallo silencioso que `llm_fallo` cerro para los 429
+  // (ver arriba), que seguia abierto por la via del parseo: un cuerpo
+  // truncado dejaba al lead en el bucle sin salida que ese bug producia,
+  // porque `reencauzar()` nunca contaba el fallo. SIN LLM NO SE ADIVINA
+  // aplica igual cuando lo que falla es la respuesta, no la conexion.
+  const datos = parseJsonLLM(r.datos?.choices?.[0]?.message?.content);
+  if (!datos) {
+    console.error('[groq] respondio 200 pero el cuerpo no es JSON parseable');
+    return { llm_fallo: true };
+  }
   // Nada de lo que devuelve el LLM se usa crudo: todo pasa por el validador.
-  return validarClasificacionLLM(parseJsonLLM(r.datos?.choices?.[0]?.message?.content));
+  return validarClasificacionLLM(datos);
 }
 
 /**
