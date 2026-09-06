@@ -34,7 +34,7 @@ compatibility_date = "2026-09-01"
 # Va como VAR y no como secret a proposito: no es informacion sensible y asi
 # queda versionado -- se ve en el diff quien encendio el bot y cuando.
 [vars]
-BOT_ACTIVO = "false"
+BOT_ACTIVO = "true"
 
 [observability]
 enabled = true
