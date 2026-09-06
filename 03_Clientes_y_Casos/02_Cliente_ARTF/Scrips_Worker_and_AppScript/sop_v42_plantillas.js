@@ -65,6 +65,42 @@ export const EMPATIA_HABILITADA = true;
 
 /**
  * ===========================================================================
+ * ADAPTACION DE OBJECIONES CON LLM (6-sep-2026, decision explicita de Gaby)
+ * ===========================================================================
+ * Paso deliberado mas alla de la "apertura generada": aca el LLM puede
+ * REESCRIBIR el fraseo completo de una plantilla de objecion (no solo
+ * anteponerle una frase), para que se sienta acorde al momento exacto de la
+ * conversacion -- el caso real que lo motivo: la Objecion 9 le decia
+ * "¿Agendamos los 30 minutos?" a un lead al que nunca se le habia mencionado
+ * ninguna llamada de 30 minutos.
+ *
+ * ⚠️ Esto es MAS PERMISIVO que `EMPATIA_HABILITADA`, y se hace con los ojos
+ * abiertos: la propuesta equivalente ("respuesta_generada") se habia evaluado
+ * y RECHAZADO antes (ver auditoria_arquitectura_bot_v42.md) por 3 razones que
+ * siguen siendo ciertas -- reabre la superficie de inyeccion, la compuerta 3
+ * (lista blanca) deja de poder comparar contra un texto fijo para estos
+ * mensajes, y el corpus deja de ser 100% determinista para ellos. Gaby decidio
+ * asumir ese riesgo explicitamente el 6-sep-2026 tras que se le explicaran los
+ * 3 puntos. Mitigacion real, no cosmetica:
+ *   1. Nunca reemplaza TODO el sistema -- solo la respuesta a una objecion ya
+ *      identificada (el router sigue decidiendo CUAL objecion es y a que
+ *      etapa se pasa; el LLM solo puede cambiar el FRASEO de esa respuesta).
+ *   2. `verificarAdaptacionObjecion` (verificador_cumplimiento.js) exige que
+ *      la adaptacion transmita lo mismo que la plantilla aprobada: cero
+ *      cifras nuevas, cero links, cero promesas, mismas reglas de voz.
+ *   3. Si la adaptacion falla cualquier chequeo o el LLM no responde a
+ *      tiempo, se usa la plantilla aprobada tal cual -- fallback siempre
+ *      disponible, cero riesgo de silencio.
+ *   4. Nunca se activa si el turno lleva el link del calendario (la burbuja
+ *      mas fragil del embudo, la unica que ya se rompio en produccion).
+ *
+ * Interruptor de emergencia: esto se puede apagar solo, sin tocar el resto
+ * del bot, si algo sale mal en produccion.
+ */
+export const ADAPTAR_OBJECIONES_CON_LLM = true;
+
+/**
+ * ===========================================================================
  * ESCALERA DE REPREGUNTAS — un peldaño más antes de escalar (4-sep-2026)
  * ===========================================================================
  * Decision del fundador: el bot escalaba a un humano demasiado pronto por

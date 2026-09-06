@@ -1511,6 +1511,7 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
         : [render(plantilla, nombre), ...preguntaPendiente(etapaActual, nombre)])
       : partirEnBurbujas(render(plantilla, nombre));
 
+  const llevaLink = mensajes.some((m) => /https?:\/\//.test(m));
   return {
     mensajes,
     // Se queda en la misma etapa: tras manejar la objecion se retoma donde
@@ -1527,7 +1528,13 @@ export function manejarObjecion(estado, c, nombre, contexto = '') {
     // Con link, la primera burbuja es texto y la ultima es la URL sola; meterle
     // un prefijo generado al texto es seguro, pero se prefiere no tocar el turno
     // mas fragil del embudo -- es el que ya se rompio una vez en produccion.
-    permitirEmpatia: !mensajes.some((m) => /https?:\/\//.test(m)),
+    permitirEmpatia: !llevaLink,
+    // Adaptacion de objeciones con LLM (6-sep-2026, ver ADAPTAR_OBJECIONES_CON_LLM):
+    // el Worker puede reescribir el FRASEO de esta burbuja especifica (nunca
+    // inventa cifras nuevas, verificado aparte). Mismo criterio que la apertura:
+    // nunca con link en el turno. El router solo EXPONE el texto aprobado
+    // original -- decidir si se adapta y como es responsabilidad del Worker.
+    objecionPlantillaOriginal: llevaLink ? null : render(plantilla, nombre),
     summary: esObjecion6EnM1
       ? `${contexto} Objecion 6 en ${etapaActual}: se le quita la presion de la profesion y la cifra exacta, y se le pregunta solo por el rango $7M-$15M.`
       : esPrePitch

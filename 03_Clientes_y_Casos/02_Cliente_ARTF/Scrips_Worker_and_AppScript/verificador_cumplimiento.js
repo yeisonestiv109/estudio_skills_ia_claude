@@ -215,6 +215,68 @@ export function verificarTextoGenerado(texto) {
 }
 
 /**
+ * Extrae los tokens numericos "de negocio" de un texto: porcentajes, plazos
+ * (semanas/meses/dias/años) y montos de dinero. Normaliza espacios para que
+ * "30 minutos" y "30  minutos" cuenten como el mismo token.
+ */
+function tokensNumericos(texto) {
+  const t = String(texto || '').toLowerCase().replace(/\s+/g, ' ');
+  const pats = [
+    /\d+(?:[.,]\d+)?\s*%/g,
+    /\d+(?:[.,]\d+)?\s*(?:semanas?|meses?|d[ií]as?|años?|minutos?|horas?)/g,
+    /\$\s*\d+(?:[.,]\d+)?\s*[km]?/g,
+    /\d+(?:[.,]\d+)?\s*(?:mil|millones?)/g,
+  ];
+  const tokens = [];
+  for (const re of pats) {
+    const m = t.match(re);
+    if (m) tokens.push(...m.map((x) => x.replace(/\s+/g, ' ').trim()));
+  }
+  return tokens;
+}
+
+/**
+ * Verifica una ADAPTACION de una plantilla ya aprobada (5-sep-2026) --
+ * distinto de `verificarTextoGenerado`, que asume texto libre corto (una
+ * apertura de 1-2 frases) donde NINGUNA cifra es legitima (G1/G10 la
+ * rechazarian). Aca el LLM SI puede reescribir el fraseo de una plantilla
+ * completa (una objecion entera), asi que las cifras que YA estaban en el
+ * original son legitimas -- lo que no se permite es que aparezca una cifra
+ * NUEVA que no estaba ahi (eso seria inventar un hecho del programa).
+ *
+ * Reusa las reglas de seguridad que no dependen del largo o de las cifras
+ * (link, contacto, inyeccion, voseo, tercera persona, lexico prohibido,
+ * promesas, afirmar agendamiento); reemplaza G1 por un tope mas generoso
+ * (una plantilla completa es mas larga que una apertura) y reemplaza G10 por
+ * la comparacion de cifras contra el original.
+ */
+export function verificarAdaptacionObjecion(textoOriginal, textoGenerado) {
+  const t = String(textoGenerado || '');
+  if (!t.trim()) return [{ regla: 'A0_VACIO', detalle: 'la adaptacion vino vacia.' }];
+
+  // Mismo set de reglas "siempre validas" de verificarTextoGenerado, MENOS
+  // G1 (largo) y G10 (cifras) -- esas dos si dependen del contexto de uso.
+  const fallas = verificarTextoGenerado(t).filter((f) => !['G1_MUY_LARGO', 'G10_CIFRA_INVENTADA'].includes(f.regla));
+
+  // Tope generoso: la plantilla mas larga del playbook son 649 caracteres: una
+  // adaptacion que se duplica de tamaño ya es sospechosa, no una reformulacion.
+  if (t.length > 900) {
+    fallas.push({ regla: 'A1_MUY_LARGO', detalle: `${t.length} caracteres (max 900 para una adaptacion).` });
+  }
+
+  // La regla que de verdad importa aca: cero cifras NUEVAS. Las que ya estaban
+  // en la plantilla aprobada son legitimas; una que aparece de la nada es un
+  // hecho inventado sobre el programa (precio, plazo, porcentaje de resultado).
+  const original = new Set(tokensNumericos(textoOriginal));
+  const nuevas = tokensNumericos(t).filter((tok) => !original.has(tok));
+  if (nuevas.length) {
+    fallas.push({ regla: 'A2_CIFRA_NUEVA', detalle: `cifra(s) que no estaban en la plantilla original: ${nuevas.join(', ')}` });
+  }
+
+  return fallas;
+}
+
+/**
  * @param {object} contexto
  *   - nombre: para renderizar las plantillas al comparar huellas.
  *   - generado: string opcional. La burbuja que produjo el LLM en el catch-all;

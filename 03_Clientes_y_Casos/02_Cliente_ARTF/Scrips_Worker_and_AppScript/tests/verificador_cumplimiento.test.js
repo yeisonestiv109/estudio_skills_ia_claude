@@ -15,7 +15,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { verificarMensajes, esCopyAprobado } from '../verificador_cumplimiento.js';
+import { verificarMensajes, esCopyAprobado, verificarAdaptacionObjecion } from '../verificador_cumplimiento.js';
 import {
   PLANTILLAS as P, CALENDAR_LINK, render, OBJECIONES_CON_PREGUNTA_PROPIA,
   PLAYBOOK_OBJECIONES, OBJECIONES, OBJECIONES_HABILITADAS, OBJECIONES_PRE_PITCH,
@@ -661,6 +661,28 @@ describe('Apertura personalizada sobre plantilla aprobada', () => {
     assert.equal(p.permitirEmpatia, true);
   });
 
+  // Adaptacion de objeciones con LLM (6-sep-2026): el router SOLO expone el
+  // texto aprobado original cuando el turno no lleva link -- mismo criterio
+  // que ya usaba permitirEmpatia, reusado aca a proposito (misma razon: el
+  // turno del link es el mas fragil del embudo).
+  test('objecionPlantillaOriginal se expone SIN link, es null CON link', () => {
+    const sinLink = decidirTurno(
+      { estado_codigo: 'contactado', etapa_bot: 'M1_ENVIADO', nombre: 'Marly',
+        objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null },
+      { objecion_num: 6, objecion_conocida: true },
+    );
+    assert.equal(typeof sinLink.objecionPlantillaOriginal, 'string');
+    assert.ok(sinLink.objecionPlantillaOriginal.length > 0);
+
+    const conLink = decidirTurno(
+      { estado_codigo: 'calificado', etapa_bot: 'M5_ENVIADO', nombre: 'Marly',
+        objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null },
+      { objecion_num: 2, objecion_conocida: true },
+    );
+    assert.ok(conLink.mensajes.some((m) => m.includes(CALENDAR_LINK)), 'la Objecion 2 post-pitch lleva el link');
+    assert.equal(conLink.objecionPlantillaOriginal, null, 'nunca se expone la plantilla cuando hay link en el turno');
+  });
+
   test('M3_RECONDUCIR admite apertura: es el caso que reporto el QA', () => {
     const p = decidirTurno(
       { estado_codigo: 'contactado', etapa_bot: 'M3_ENVIADO', nombre: 'Marly',
@@ -670,5 +692,58 @@ describe('Apertura personalizada sobre plantilla aprobada', () => {
     );
     assert.equal(p.etapaNueva, 'M3_RECONDUCIR');
     assert.equal(p.permitirEmpatia, true, 'aca es donde sonaba a robot');
+  });
+});
+
+// ===========================================================================
+// ADAPTACION DE OBJECIONES CON LLM (6-sep-2026, decision explicita de Gaby).
+// verificarAdaptacionObjecion es MAS PERMISIVO que verificarTextoGenerado con
+// las cifras (las de la plantilla original son legitimas), pero MAS ESTRICTO
+// en un sentido nuevo: cero cifras que no estuvieran ya ahi.
+// ===========================================================================
+describe('verificarAdaptacionObjecion: cifras del original SI, cifras nuevas NO', () => {
+  const ORIGINAL = 'Te entiendo. Igual son solo 30 minutos, y podrias ahorrar el 20% de tus gastos.';
+
+  test('repetir las MISMAS cifras del original pasa limpio', () => {
+    const fallas = verificarAdaptacionObjecion(ORIGINAL,
+      'Entiendo tu duda. De todas formas son solo 30 minutos, y ahi vemos como bajar ese 20% de gastos.');
+    assert.deepEqual(fallas, []);
+  });
+
+  test('BUG QUE ESTO PREVIENE: una cifra que NO estaba en el original se rechaza', () => {
+    const fallas = verificarAdaptacionObjecion(ORIGINAL,
+      'Entiendo. Son solo 30 minutos, y en 8 semanas veras resultados garantizados del 50%.');
+    assert.ok(fallas.some((f) => f.regla === 'A2_CIFRA_NUEVA'), 'la de 8 semanas / 50% no estaban en el original');
+  });
+
+  test('el caso real que motivo esto: "30 minutos" que NO estaba en ningun mensaje previo', () => {
+    // Simula literalmente el bug de la Objecion 9: el original SI trae "30
+    // minutos" (viene del propio playbook), asi que repetirlo esta bien --
+    // el problema nunca fue la cifra en si, era mencionarla ANTES de tiempo.
+    // Eso lo resuelve el prompt (instrucción de no adelantar nada que la
+    // plantilla no traiga), no este verificador -- este solo cuida que no
+    // aparezcan cifras de la nada.
+    const conCifraDeMas = 'Buena pregunta. Ademas, si agendas ahora te regalamos una sesion extra de 15 minutos.';
+    const fallas = verificarAdaptacionObjecion(ORIGINAL, conCifraDeMas);
+    assert.ok(fallas.some((f) => f.regla === 'A2_CIFRA_NUEVA'), '"15 minutos" no estaba en el original');
+  });
+
+  test('sigue rechazando links, voseo, tercera persona y promesas (mismas reglas de siempre)', () => {
+    assert.ok(verificarAdaptacionObjecion(ORIGINAL, 'Mira aca: https://x.co').some((f) => f.regla === 'G2_LLEVA_LINK'));
+    assert.ok(verificarAdaptacionObjecion(ORIGINAL, 'Vos podes agendarlo ya').some((f) => f.regla === 'G5_VOSEO_O_REGIONALISMO'));
+    assert.ok(verificarAdaptacionObjecion(ORIGINAL, 'Andres te va a ayudar con esto').some((f) => f.regla === 'G6_TERCERA_PERSONA'));
+    assert.ok(verificarAdaptacionObjecion(ORIGINAL, 'Te garantizamos resultados').some((f) => f.regla === 'G9_PROMESA'));
+  });
+
+  test('un texto vacio se rechaza explicito (nunca se manda la nada)', () => {
+    const fallas = verificarAdaptacionObjecion(ORIGINAL, '');
+    assert.ok(fallas.some((f) => f.regla === 'A0_VACIO'));
+  });
+
+  test('una adaptacion razonablemente mas larga que el original pasa; una desproporcionada no', () => {
+    const razonable = ORIGINAL + ' ¿Te sirve que lo veamos juntos?';
+    assert.deepEqual(verificarAdaptacionObjecion(ORIGINAL, razonable), []);
+    const desproporcionada = 'x'.repeat(901);
+    assert.ok(verificarAdaptacionObjecion(ORIGINAL, desproporcionada).some((f) => f.regla === 'A1_MUY_LARGO'));
   });
 });
