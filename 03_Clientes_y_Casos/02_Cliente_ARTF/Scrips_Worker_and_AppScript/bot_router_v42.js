@@ -932,12 +932,20 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: 'Reconduccion exitosa: el dolor si esta conectado con el dinero.',
         };
       }
-      // No hay script del SOP para "no es fit por dolor". No se inventa copy,
-      // y tampoco aplica reencauzar(): el dolor SI se clasifico (no financiero,
-      // confirmado), no es un mensaje ambiguo -- decide un humano.
-      return HANDOFF('ambiguo', estado, {
-        summary: 'Dolor no financiero confirmado. Sin script del SOP para este cierre -> humano.',
-      });
+      // BUG REAL reportado en Instagram (6-sep-2026): esta rama trataba
+      // "no se pudo clasificar nada" exactamente igual que "se confirmo que
+      // NO es financiero" -- el lead quedaba mudo (HANDOFF silencioso) ante
+      // CUALQUIER respuesta que el LLM no lograra leer, no solo ante una
+      // confirmacion real. Solo escala directo (sin script, decision de
+      // negocio real) cuando el LLM SI logro determinar que no es financiero.
+      // Si simplemente no se entendio el mensaje, se reencauza como en el
+      // resto del bot -- misma regla del 5-sep, ahora tambien aca.
+      if (c.dolor_financiero === false) {
+        return HANDOFF('ambiguo', estado, {
+          summary: 'Dolor no financiero confirmado. Sin script del SOP para este cierre -> humano.',
+        });
+      }
+      return reencauzar(estado, c, nombre, 'No se entendio si la frustracion esta conectada con el dinero.');
     }
 
     // =====================================================================

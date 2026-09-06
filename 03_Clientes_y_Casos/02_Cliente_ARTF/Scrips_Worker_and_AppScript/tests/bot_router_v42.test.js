@@ -1193,6 +1193,24 @@ describe('M3: "todas" (fundador, 4-sep-2026)', () => {
     assert.match(p.mensajes[0], /¿O tu frustración está conectada con/);
   });
 
+  // BUG REAL reportado en Instagram (6-sep-2026): el lead eligio D, contesto
+  // la pregunta de M3_RECONDUCIR con algo que el LLM no logro leer como
+  // financiero NI como no-financiero (dolor_financiero quedo undefined, no
+  // false) -- y el bot lo trataba igual que una confirmacion real de "no es
+  // financiero", escalando en silencio total. Solo debia escalar asi cuando
+  // el LLM SI logra confirmar que no es financiero.
+  test('BUG REAL: en M3_RECONDUCIR, si no se entiende la respuesta, reencauza (no escala mudo)', () => {
+    const p = decidirTurno(st('M3_RECONDUCIR'), {}, 'pues no se, es complicado de explicar');
+    assert.equal(p.handoffRazon, null, 'no escala en el primer intento sin entender');
+    assert.equal(p.etapaNueva, 'M3_RECONDUCIR');
+    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+  });
+
+  test('en M3_RECONDUCIR, si el LLM SI confirma que no es financiero, escala de verdad', () => {
+    const p = decidirTurno(st('M3_RECONDUCIR'), { dolor_financiero: false }, 'no, es un tema de salud');
+    assert.equal(p.handoffRazon, 'ambiguo');
+  });
+
   test('"todo" o "toda" en otra frase no dispara el atajo', () => {
     // Falso positivo peligroso: "no me alcanza para todo el mes" no es "todas".
     assert.notDeepEqual(detectarDolorLetras('no me alcanza para todo el mes'), ['A', 'B', 'C', 'D']);
