@@ -421,12 +421,25 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
       // pero ya no llega en silencio.
       return reencauzar(estado, c, nombre, 'No logra estimar su endeudamiento tras insistir.');
     }
+    // BUG REAL (auditoria del 6-sep-2026 sobre la conversacion de marlyy318):
+    // aca caia TODO lo que no fuera una cifra, incluida una pregunta legitima.
+    // La lead pregunto "los gastos que le paso a mi mama, ¿los incluyo?" y
+    // recibio "dame un estimado" -- se le contesto al lado. El LLM SI habia
+    // entendido la pregunta; este `return` la tiraba a la basura.
+    //
+    // Ahora, si el lead pregunto algo, se expone en `preguntaLibre` para que
+    // el Worker la responda con el playbook delante y DESPUES insista con el
+    // estimado. Si no pregunto nada (o el LLM no logra responder), el turno
+    // queda exactamente como antes.
     return {
       mensajes: [render(P.M2_NO_SABE, nombre)],
       etapaNueva: 'M2_NO_SABE', estadoDestino: 'contactado',
       handoffRazon: null, motivoPerdida: null, campos: {},
       permitirEmpatia: false,
-      summary: 'No sabe su endeudamiento. Se insiste suave con un estimado.',
+      preguntaLibre: c.pregunta_libre || null,
+      summary: c.pregunta_libre
+        ? `Pregunta algo antes de dar la cifra ("${c.pregunta_libre}"). Se le responde y se insiste con el estimado.`
+        : 'No sabe su endeudamiento. Se insiste suave con un estimado.',
     };
   }
   if (veredicto === 'borderline') {
@@ -913,6 +926,20 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           summary: `Dolor ${dolor} (califica emocionalmente). Se pregunta urgencia.`,
         };
       }
+      // BUG REAL (auditoria del 6-sep-2026, conversacion de marlyy318): el
+      // playbook ofrece "D) Otra (¿cuál?)" -- pregunta el "¿cuál?" el mismo --
+      // pero NO habia ninguna rama que lo preguntara. La lead contesto "d" y
+      // recibio M3_RECONDUCIR, que le insinua que no es buen fit ("puede que
+      // no seamos el mejor fit") por no haber dicho algo que nadie le pidio
+      // dos veces. Elegir D sin detalle no es un lead fuera del avatar: es un
+      // lead que todavia no ha contado su caso.
+      //
+      // Se resuelve con el LLM y no con otra plantilla a proposito: la
+      // pregunta ya existe en el copy aprobado (P.M3), asi que redactarla no
+      // inventa nada. `preguntaLibreReemplaza` = el LLM escribe el turno
+      // entero; si falla, sale M3_RECONDUCIR igual que antes.
+      const dSinDetalle = letras.includes('D') && !c.dolor_detalle;
+
       // Es EL caso que reporto el QA del 4-sep: el lead da un contexto rico
       // ("quiero ahorrar", "me preocupa mi futuro") y recibe una plantilla que
       // no lo menciona. Aca la apertura personalizada es lo que evita que suene
@@ -923,6 +950,10 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         handoffRazon: null, motivoPerdida: null,
         campos: { dolor: dolor || null },
         permitirEmpatia: true,
+        preguntaLibre: dSinDetalle
+          ? 'El lead eligio la opcion "D) Otra" de la lista de frustraciones con el dinero, pero no dijo cual es esa otra frustracion. Preguntale con calidez cual es, dandole pie a que la cuente con sus palabras. NO insinues que no es buen fit ni lo descalifiques: todavia no te ha contado su caso.'
+          : (c.pregunta_libre || null),
+        preguntaLibreReemplaza: dSinDetalle,
         summary: 'Dolor D no financiero. Se reconduce.',
       };
     }

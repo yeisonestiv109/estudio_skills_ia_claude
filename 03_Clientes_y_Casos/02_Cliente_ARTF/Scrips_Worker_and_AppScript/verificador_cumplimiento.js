@@ -277,6 +277,50 @@ export function verificarAdaptacionObjecion(textoOriginal, textoGenerado) {
 }
 
 /**
+ * Verifica una RESPUESTA LIBRE: el texto que el LLM redacta cuando el lead
+ * pregunta algo que el guion no tiene mapeado (6-sep-2026).
+ *
+ * Es el mismo criterio que `verificarAdaptacionObjecion`, pero la fuente de
+ * verdad ya no es UNA plantilla sino TODO el copy aprobado
+ * (`CONOCIMIENTO_PLAYBOOK`): la respuesta puede citar cualquier cifra que el
+ * playbook ya diga, y ninguna que no diga.
+ *
+ * POR QUE ESTA REGLA ES LA QUE SOSTIENE TODO: sin ella, "dale libertad al LLM"
+ * es lo mismo que "dejalo prometer lo que quiera sobre el programa". El caso
+ * real que lo motiva es al reves y aun mas fino -- el modelo no invento una
+ * cifra, invento una REGLA ("sumamos todos los gastos fijos") que contradice
+ * al playbook. Contra eso la defensa no es el verificador sino darle el texto
+ * aprobado como fuente; esta funcion es la segunda linea, no la primera.
+ *
+ * @param {string} conocimiento  el corpus aprobado (CONOCIMIENTO_PLAYBOOK)
+ * @param {string} textoGenerado la respuesta que el LLM quiere enviar
+ */
+export function verificarRespuestaLibre(conocimiento, textoGenerado) {
+  const t = String(textoGenerado || '');
+  if (!t.trim()) return [{ regla: 'L0_VACIA', detalle: 'la respuesta libre vino vacia.' }];
+
+  const fallas = verificarTextoGenerado(t).filter((f) => !['G1_MUY_LARGO', 'G10_CIFRA_INVENTADA'].includes(f.regla));
+
+  // Mas corto que una adaptacion de objecion a proposito: esto se ANTEPONE a
+  // la pregunta pendiente, asi que el turno completo ya trae otra burbuja.
+  // Una respuesta de 600+ caracteres encima de la pregunta satura el DM.
+  if (t.length > 600) {
+    fallas.push({ regla: 'L1_MUY_LARGA', detalle: `${t.length} caracteres (max 600 para una respuesta libre).` });
+  }
+
+  const aprobadas = new Set(tokensNumericos(conocimiento));
+  const nuevas = tokensNumericos(t).filter((tok) => !aprobadas.has(tok));
+  if (nuevas.length) {
+    fallas.push({
+      regla: 'L2_CIFRA_FUERA_DEL_PLAYBOOK',
+      detalle: `cifra(s) que el playbook aprobado no dice: ${nuevas.join(', ')}`,
+    });
+  }
+
+  return fallas;
+}
+
+/**
  * @param {object} contexto
  *   - nombre: para renderizar las plantillas al comparar huellas.
  *   - generado: string opcional. La burbuja que produjo el LLM en el catch-all;

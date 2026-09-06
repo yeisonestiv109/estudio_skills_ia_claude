@@ -30,6 +30,7 @@ import {
 import {
   CALENDAR_LINK, CALENDAR_ARTF, CALENDAR_PRUEBAS, UMBRALES, OBJECIONES_HABILITADAS, PLANTILLAS,
   ESCALERA_REPREGUNTAS_HABILITADA, COPY_PENDIENTE_APROBACION, LIMPIAR_HANDOFF,
+  CONOCIMIENTO_PLAYBOOK,
 } from '../sop_v42_plantillas.js';
 
 // Helper: estado como lo devuelve fn_bot_get_estado
@@ -1745,5 +1746,136 @@ describe('Reencauzar con contexto: tope de 3 insistiendo en lo mismo', () => {
     const p = reencauzar(st('M2_NO_SABE'), { llm_fallo: true }, 'Marly', 'ctx');
     assert.equal(p.handoffRazon, null);
     assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+  });
+});
+
+// ===========================================================================
+// RESPUESTA LIBRE GUIADA POR EL PLAYBOOK (6-sep-2026)
+//
+// Auditoria de la conversacion REAL de marlyy318 (Instagram). Dos turnos donde
+// el bot contesto al lado, y ninguno era un bug de una rama: era que "el lead
+// pregunto algo" no existia como concepto en el sistema. El clasificador tiene
+// un vocabulario CERRADO por etapa; lo que no encaja en un campo se volvia
+// "no clasifico" y caia en una plantilla que no responde lo que se pregunto.
+//
+//  · M2 — la lead pregunto "los gastos que le paso a mi mama, ¿los incluyo?"
+//    y recibio "Sin presion, dame un estimado". El LLM SI habia entendido la
+//    pregunta: el router tiraba esa lectura a la basura (permitirEmpatia:false
+//    y respuesta_empatica solo se consumia dentro de reencauzar()).
+//
+//  · M3 — el playbook ofrece "D) Otra (¿cuál?)" pero no habia rama que
+//    preguntara el "¿cuál?": contestar "d" caia en M3_RECONDUCIR, que le
+//    insinua al lead que no es buen fit.
+//
+// El router NO redacta: solo EXPONE que hay que resolverle algo al lead
+// (`preguntaLibre`). Quien redacta es el Worker, con el playbook aprobado
+// delante y pasando por `verificarRespuestaLibre`. Si eso falla, `mensajes`
+// ya trae el turno determinista de siempre.
+// ===========================================================================
+describe('Respuesta libre: el router expone lo que hay que resolverle al lead', () => {
+  const stM2 = (extra = {}) => ({
+    estado_codigo: 'contactado', etapa_bot: 'M2_ENVIADO', nombre: 'Marly',
+    salario_monto: 7_000_000, endeudamiento_pct: null,
+    objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
+    ...extra,
+  });
+  const stM3 = (extra = {}) => ({
+    estado_codigo: 'contactado', etapa_bot: 'M3_ENVIADO', nombre: 'Marly',
+    salario_monto: 7_000_000, endeudamiento_pct: 57,
+    objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
+    ...extra,
+  });
+
+  test('BUG REAL M2: una pregunta sin cifra ya no se traga -- se expone para responderla', () => {
+    const p = decidirTurno(
+      stM2(),
+      { endeudamiento_pct: null, pregunta_libre: 'si los gastos que le da a su mama cuentan como deuda' },
+      'los gastos mensuales que le paso a mi mamá los incluyo?',
+    );
+    assert.equal(p.preguntaLibre, 'si los gastos que le da a su mama cuentan como deuda');
+    assert.ok(!p.preguntaLibreReemplaza, 'la respuesta se ANTEPONE: la pregunta pendiente sigue yendo detras');
+    assert.match(p.mensajes.join('\n'), /dame un estimado/i, 'el fallback determinista sigue ahi');
+    assert.equal(p.etapaNueva, 'M2_NO_SABE', 'la etapa la decide el codigo, no el LLM');
+  });
+
+  test('M2 sin pregunta del lead: se comporta igual que siempre', () => {
+    const p = decidirTurno(stM2(), { endeudamiento_pct: null }, 'no se');
+    assert.equal(p.preguntaLibre, null, 'nadie pregunto nada: no hay que responder nada');
+    assert.match(p.mensajes.join('\n'), /dame un estimado/i);
+  });
+
+  test('BUG REAL M3: "d" a secas se le pregunta cual es, no se le insinua que no es fit', () => {
+    const p = decidirTurno(stM3(), { dolores: ['D'], dolor_financiero: false }, 'd');
+    assert.ok(p.preguntaLibre, 'hay algo que resolverle: no dijo cual es esa "otra"');
+    assert.equal(p.preguntaLibreReemplaza, true, 'el LLM redacta el turno entero, no se antepone a nada');
+    assert.match(p.preguntaLibre, /cual es/i);
+    assert.ok(p.mensajes.length > 0, 'si el LLM falla, sale la plantilla de siempre -- nunca mudo');
+    assert.equal(p.handoffRazon, null, 'elegir D no escala a un humano');
+  });
+
+  test('M3 con "D" Y detalle NO pide redaccion libre: ya conto su caso', () => {
+    const p = decidirTurno(
+      stM3(),
+      { dolores: ['D'], dolor_detalle: 'no puedo ahorrar nada', dolor_financiero: true },
+      'otra: no puedo ahorrar nada',
+    );
+    assert.ok(!p.preguntaLibreReemplaza);
+    assert.equal(p.etapaNueva, 'M4_ENVIADO', 'el dolor si es financiero: avanza normal');
+  });
+
+  test('el camino feliz de M2 no gana ninguna llamada extra al LLM', () => {
+    const p = decidirTurno(stM2(), { endeudamiento_pct: 20 }, 'como el 20%');
+    assert.ok(!p.preguntaLibre, 'dio la cifra: no hay nada que responderle aparte');
+    assert.equal(p.etapaNueva, 'M3_ENVIADO');
+  });
+});
+
+// ===========================================================================
+// La base de conocimiento es lo que evita que el LLM invente REGLAS.
+//
+// El caso real: al redactar libre, lo unico que se le daba como "playbook"
+// eran los 9 disparadores (etiquetas tipo "7=¿cuanto cuesta el PROGRAMA?"),
+// sin una linea de contenido. Con eso el modelo respondio "sumamos todos los
+// gastos fijos... sin importar a quien van", que CONTRADICE a P.M2 ("El
+// arriendo, servicios y mercado NO CUENTAN"). No fue una alucinacion gratuita:
+// se le pidio apoyarse en un playbook que nunca se le mostro.
+// ===========================================================================
+describe('CONOCIMIENTO_PLAYBOOK: el corpus que ancla las respuestas libres', () => {
+  test('trae la regla de calculo de deuda que el bot contesto mal en produccion', () => {
+    assert.match(CONOCIMIENTO_PLAYBOOK, /NO CUENTAN/,
+      'sin esta linea el LLM vuelve a decirle al lead que los gastos fijos si cuentan');
+    assert.match(CONOCIMIENTO_PLAYBOOK, /cr[eé]ditos, tarjetas, pr[eé]stamos o deudas con alguien/i);
+  });
+
+  test('trae las 4 opciones de dolor, incluida la "D) Otra (¿cuál?)"', () => {
+    assert.match(CONOCIMIENTO_PLAYBOOK, /D\) Otra/);
+  });
+
+  test('se arma SOLO con plantillas aprobadas -- ni un dato nuevo', () => {
+    // Cada bloque del corpus tiene que existir literal en la biblioteca de
+    // copy. Si alguien escribe conocimiento a mano aca, este test se pone rojo.
+    // Misma normalizacion que aplica el corpus: sin {nombre} y sin el link
+    // (que se arranca a proposito, ver el test de abajo).
+    const normalizar = (t) => t
+      .replace(/\{nombre\}/g, '')
+      .replace(/https?:\/\/\S+/g, '[el sistema envia el link del calendario, tu nunca lo escribes]')
+      .trim();
+    const aprobadas = Object.entries(PLANTILLAS)
+      .filter(([k, v]) => typeof v === 'string' && !k.endsWith('_pendienteAprobacion'))
+      .map(([, v]) => normalizar(v));
+    const bloques = CONOCIMIENTO_PLAYBOOK.split(/^### .+$/m).map((b) => b.trim()).filter(Boolean);
+    assert.ok(bloques.length >= 10, `se esperaban >=10 bloques, hay ${bloques.length}`);
+    for (const bloque of bloques) {
+      assert.ok(aprobadas.some((t) => t === bloque),
+        `este bloque del corpus no sale de ninguna plantilla aprobada: "${bloque.slice(0, 70)}..."`);
+    }
+  });
+
+  test('no filtra el link del calendario al prompt del LLM', () => {
+    // El link lo envia el router, jamas el modelo. Si entrara al corpus, el
+    // LLM podria citarlo -- y G2_LLEVA_LINK lo descartaria, pero mejor que ni
+    // siquiera lo vea.
+    assert.ok(!/https?:\/\//.test(CONOCIMIENTO_PLAYBOOK),
+      'el corpus de conocimiento no puede contener URLs');
   });
 });

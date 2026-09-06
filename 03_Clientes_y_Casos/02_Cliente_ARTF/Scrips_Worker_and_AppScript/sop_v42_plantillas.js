@@ -908,6 +908,83 @@ export const DISPARADORES_OBJECIONES =
   PLAYBOOK_OBJECIONES.map((o) => o.disparador).join(' ');
 
 /**
+ * ===========================================================================
+ * BASE DE CONOCIMIENTO DEL PLAYBOOK (6-sep-2026)
+ * ===========================================================================
+ * El texto REAL del playbook que el LLM puede usar para responderle a un lead
+ * cuando pregunta algo que el guion no tiene mapeado.
+ *
+ * POR QUE EXISTE — auditoria del 6-sep-2026 sobre la conversacion real de
+ * marlyy318. En M2 la lead pregunto "los gastos mensuales que le paso a mi
+ * mama, ¿los incluyo?". El LLM respondio (en `respuesta_empatica`):
+ *
+ *     "Si, incluyelos. Para que el calculo sea real, sumamos todos los gastos
+ *      fijos que salen de tu bolsillo cada mes, sin importar a quien van."
+ *
+ * Eso CONTRADICE al playbook: `P.M2` dice literalmente "El arriendo, servicios
+ * y mercado NO CUENTAN -- esos son gastos fijos". El modelo no mintio por
+ * capricho: al redactar texto libre, lo UNICO que se le daba como playbook era
+ * `DISPARADORES_OBJECIONES`, que son 9 etiquetas de disparador ("7=¿cuanto
+ * cuesta el PROGRAMA?") SIN una sola linea de contenido. Se le pedia "apoyate
+ * unicamente en el playbook" mientras se le entregaba un indice, no el libro.
+ *
+ * REGLA DE ORO DE ESTE ARRAY: se ARMA con plantillas ya aprobadas, nunca con
+ * texto nuevo. Si aca hiciera falta un dato que el copy aprobado no dice, la
+ * respuesta correcta es pedirle ese copy al fundador, no escribirlo aca.
+ * Asi la base de conocimiento no puede desincronizarse del copy ni introducir
+ * promesas que el cliente nunca aprobo.
+ */
+export const CONOCIMIENTO_PLAYBOOK = [
+  ['Como se calcula el nivel de endeudamiento (que cuenta y que NO)', P.M2],
+  ['Las 4 opciones de frustracion que se le ofrecen al lead', P.M3],
+  ['En que consiste la llamada de diagnostico', P.M5],
+  ['Si la llamada tiene costo', P.OBJ_1],
+  ['Si dice que no tiene tiempo', P.OBJ_2],
+  ['Si dice que lo va a pensar', P.OBJ_3],
+  ['Si ya probo otras cosas o desconfia', P.OBJ_4],
+  ['Si pide mas informacion', P.OBJ_5],
+  ['Si le incomoda dar datos sensibles por DM', P.OBJ_6],
+  ['Cuanto cuesta el programa', P.OBJ_7],
+  ['Que es el Protocolo de Reconexion Financiera', P.OBJ_8],
+  ['Por que resolverlo ahora y no despues', P.OBJ_9],
+]
+  .map(([tema, texto]) => `### ${tema}\n${String(texto)
+    .replace(/\{nombre\}/g, '')
+    // El link se ARRANCA del corpus, no solo se prohibe en el prompt. Varias
+    // plantillas (OBJ_6, OBJ_7) lo traen incrustado, y meterselo al modelo
+    // como "material aprobado" es exactamente la superficie de phishing que la
+    // auditoria del 4-sep señalo (§2.1.b): el link lo manda el router, punto.
+    // Lo atrapo un test, no una revision: ver el test "no filtra el link del
+    // calendario al prompt del LLM".
+    .replace(/https?:\/\/\S+/g, '[el sistema envia el link del calendario, tu nunca lo escribes]')}`)
+  .join('\n\n');
+
+/**
+ * Perilla de la respuesta libre guiada por el playbook (6-sep-2026, decision
+ * de Gaby tras auditar la conversacion de marlyy318).
+ *
+ * QUE HABILITA: que el LLM REDACTE la respuesta cuando el lead dice algo que
+ * el guion no tiene mapeado -- una pregunta de aclaracion, una duda sobre el
+ * programa, una objecion que no es ninguna de las 9. Hoy esos turnos caen en
+ * una plantilla que no responde lo que se pregunto (la lead pregunto como
+ * calcular su deuda y recibio "dame un estimado").
+ *
+ * QUE **NO** HABILITA, y es lo que separa esto del `respuesta_generada` que la
+ * auditoria del 4-sep rechazo con razon (ver auditoria_arquitectura_bot_v42.md
+ * §2.1):
+ *   - El LLM NO decide etapas: las transiciones siguen siendo codigo.
+ *   - El LLM NO evalua los filtros: los umbrales siguen siendo aritmetica.
+ *   - El LLM NO escribe el link NUNCA: sigue saliendo del router, y
+ *     `G2_LLEVA_LINK` descarta cualquier texto generado que traiga una URL.
+ *   - El copy aprobado del guion mapeado NO se toca: sigue siendo literal y
+ *     sigue pasando por la lista blanca de la compuerta 3.
+ * Lo que se agrega es una respuesta EXTRA en los turnos donde hoy el bot
+ * contesta al lado o escala. Si el LLM falla o el verificador la rechaza, se
+ * envia exactamente lo que se enviaba antes.
+ */
+export const RESPONDER_PREGUNTAS_CON_LLM = true;
+
+/**
  * ¿Esta objecion es RESISTENCIA, o es CURIOSIDAD?
  *
  * QA en vivo del 4-sep-2026, y es el hallazgo que mas cuesta ver: una lead

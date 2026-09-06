@@ -15,7 +15,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { verificarMensajes, esCopyAprobado, verificarAdaptacionObjecion } from '../verificador_cumplimiento.js';
+import {
+  verificarMensajes, esCopyAprobado, verificarAdaptacionObjecion, verificarRespuestaLibre,
+} from '../verificador_cumplimiento.js';
 import {
   PLANTILLAS as P, CALENDAR_LINK, render, OBJECIONES_CON_PREGUNTA_PROPIA,
   PLAYBOOK_OBJECIONES, OBJECIONES, OBJECIONES_HABILITADAS, OBJECIONES_PRE_PITCH,
@@ -745,5 +747,61 @@ describe('verificarAdaptacionObjecion: cifras del original SI, cifras nuevas NO'
     assert.deepEqual(verificarAdaptacionObjecion(ORIGINAL, razonable), []);
     const desproporcionada = 'x'.repeat(901);
     assert.ok(verificarAdaptacionObjecion(ORIGINAL, desproporcionada).some((f) => f.regla === 'A1_MUY_LARGO'));
+  });
+});
+
+// ===========================================================================
+// verificarRespuestaLibre — la segunda linea de defensa de la respuesta libre
+//
+// La PRIMERA linea es darle al LLM el playbook real como fuente
+// (CONOCIMIENTO_PLAYBOOK). Esta funcion es la red por si aun asi se sale del
+// libreto: cero cifras que el playbook no diga, cero links, y corta.
+//
+// El caso real que lo motiva (6-sep-2026, conversacion de marlyy318) es mas
+// fino que una cifra inventada: el modelo invento una REGLA ("sumamos todos
+// los gastos fijos, sin importar a quien van") que contradice a P.M2. Contra
+// eso la defensa es el anclaje, no el verificador -- por eso ambos existen.
+// ===========================================================================
+describe('verificarRespuestaLibre: solo cifras que el playbook ya diga', () => {
+  const CONOCIMIENTO = [
+    'Para calcularlo suma todo lo que pagas al mes en créditos, tarjetas, préstamos o deudas con alguien.',
+    'El arriendo, servicios y mercado NO CUENTAN.',
+    'son 30 minutos donde vemos tu caso',
+    'trabajo con profesionales que ganan entre $7M y $15M+ al mes',
+  ].join('\n');
+
+  test('la respuesta REAL que arreglo el bug pasa limpia', () => {
+    const buena = 'No, esos gastos no cuentan. Para el cálculo solo sumas créditos, tarjetas, préstamos o deudas con alguien.';
+    assert.deepEqual(verificarRespuestaLibre(CONOCIMIENTO, buena), []);
+  });
+
+  test('puede citar una cifra que el playbook SI dice', () => {
+    assert.deepEqual(verificarRespuestaLibre(CONOCIMIENTO, 'Son 30 minutos y no tienes que pagar nada.'), []);
+  });
+
+  test('RECHAZA una cifra que el playbook no dice', () => {
+    const fallas = verificarRespuestaLibre(CONOCIMIENTO, 'En 3 semanas ya vas a ver resultados.');
+    assert.ok(fallas.some((f) => f.regla === 'L2_CIFRA_FUERA_DEL_PLAYBOOK'), JSON.stringify(fallas));
+  });
+
+  test('RECHAZA un precio inventado -- el precio solo se dice en la llamada', () => {
+    const fallas = verificarRespuestaLibre(CONOCIMIENTO, 'El programa cuesta $2.500.000.');
+    assert.ok(fallas.length, 'un precio inventado no puede pasar');
+  });
+
+  test('RECHAZA un link aunque el texto sea impecable', () => {
+    const fallas = verificarRespuestaLibre(CONOCIMIENTO, 'Claro, agenda acá: https://calendar.app.google/xxx');
+    assert.ok(fallas.some((f) => f.regla === 'G2_LLEVA_LINK'), JSON.stringify(fallas));
+  });
+
+  test('RECHAZA vacio (L0) y demasiado largo (L1)', () => {
+    assert.equal(verificarRespuestaLibre(CONOCIMIENTO, '')[0].regla, 'L0_VACIA');
+    const larga = verificarRespuestaLibre(CONOCIMIENTO, 'Claro que si. '.repeat(50));
+    assert.ok(larga.some((f) => f.regla === 'L1_MUY_LARGA'));
+  });
+
+  test('sigue aplicando las reglas de voz: voseo fuera', () => {
+    const fallas = verificarRespuestaLibre(CONOCIMIENTO, 'Vos tenés que sumar solo las deudas.');
+    assert.ok(fallas.some((f) => f.regla === 'G5_VOSEO_O_REGIONALISMO'), JSON.stringify(fallas));
   });
 });

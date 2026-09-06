@@ -547,3 +547,36 @@ describe('clasificar: marca llm_fallo cuando Groq revienta de verdad', () => {
     assert.equal(c.llm_fallo, undefined);
   });
 });
+
+// ===========================================================================
+// `pregunta_libre` — el campo que hace que el bot deje de contestar al lado
+//
+// Es la pieza del clasificador que la auditoria del 6-sep-2026 agrego. Ojo con
+// el detalle de seguridad: NO es copy, es la enunciacion de lo que el lead
+// pregunto, y viaja a un segundo prompt. Por eso no se sanea como texto para
+// el lead (no aplica tuteo ni voz de Andres) pero SI se limita el largo: es
+// texto que el lead controla entrando a otro prompt.
+// ===========================================================================
+describe('validarClasificacionLLM: pregunta_libre', () => {
+  test('conserva la pregunta cuando el LLM la enuncia', () => {
+    const r = validarClasificacionLLM({
+      pregunta_libre: 'si los gastos que le da a su mama cuentan como deuda',
+    });
+    assert.equal(r.pregunta_libre, 'si los gastos que le da a su mama cuentan como deuda');
+  });
+
+  test('null cuando no hay pregunta, y null cuando viene vacia o basura', () => {
+    assert.equal(validarClasificacionLLM({ pregunta_libre: null }).pregunta_libre, null);
+    assert.equal(validarClasificacionLLM({ pregunta_libre: '   ' }).pregunta_libre, null);
+    assert.equal(validarClasificacionLLM({ pregunta_libre: 42 }).pregunta_libre, null);
+  });
+
+  test('ausente si el LLM no devolvio el campo -- no se inventa la clave', () => {
+    assert.ok(!('pregunta_libre' in validarClasificacionLLM({ crisis: false })));
+  });
+
+  test('acota el largo: es texto del lead entrando a otro prompt', () => {
+    const r = validarClasificacionLLM({ pregunta_libre: 'a'.repeat(5000) });
+    assert.ok(r.pregunta_libre.length <= 300, `quedo en ${r.pregunta_libre.length}`);
+  });
+});
