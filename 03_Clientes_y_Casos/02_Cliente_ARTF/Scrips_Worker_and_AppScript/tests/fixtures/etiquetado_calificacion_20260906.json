@@ -1,0 +1,471 @@
+{
+  "_lea_esto": "Dataset de etiquetado del Setter experto. Es el fixture de calificacion_dinamica.test.js: si alguien mueve un umbral fuera de la banda admisible, ese test dice exactamente que caso rompio. NO editar a mano -- se regenera etiquetando de nuevo en el artefacto con la misma semilla.",
+  "version": "artf-etiquetado-calificacion-v1",
+  "semilla": 20260906,
+  "etiquetado_en": "2026-09-06T23:28:11.991Z",
+  "etiquetador": "Setter experto (Gaby)",
+  "umbrales_del_worker_al_etiquetar": {
+    "INGRESO_MINIMO": 6000000,
+    "REMANENTE_MINIMO": 2500000,
+    "ENDEUDAMIENTO_PARA_BORDERLINE": 50
+  },
+  "resumen": {
+    "total": 50,
+    "aprobar": 26,
+    "duda": 0,
+    "rechazar": 24,
+    "discrepancias_con_la_regla_de_entonces": 4
+  },
+  "casos": [
+    {
+      "id": 1,
+      "salario_cop": 17650000,
+      "deuda_pct": 29,
+      "remanente_cop": 12531500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 2,
+      "salario_cop": 25250000,
+      "deuda_pct": 27,
+      "remanente_cop": 18432500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 3,
+      "salario_cop": 15550000,
+      "deuda_pct": 91,
+      "remanente_cop": 1399500,
+      "decision": "rechazar",
+      "regla_de_entonces": "duda",
+      "forma": "rico_ahogado"
+    },
+    {
+      "id": 4,
+      "salario_cop": 3400000,
+      "deuda_pct": 2,
+      "remanente_cop": 3332000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "pobre_limpio"
+    },
+    {
+      "id": 5,
+      "salario_cop": 6600000,
+      "deuda_pct": 53,
+      "remanente_cop": 3102000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "justo_en_la_raya"
+    },
+    {
+      "id": 6,
+      "salario_cop": 4050000,
+      "deuda_pct": 87,
+      "remanente_cop": 526500,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 7,
+      "salario_cop": 7150000,
+      "deuda_pct": 64,
+      "remanente_cop": 2574000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "medio_apretado"
+    },
+    {
+      "id": 8,
+      "salario_cop": 2100000,
+      "deuda_pct": 63,
+      "remanente_cop": 777000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 9,
+      "salario_cop": 22550000,
+      "deuda_pct": 71,
+      "remanente_cop": 6539500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "rico_ahogado"
+    },
+    {
+      "id": 10,
+      "salario_cop": 3600000,
+      "deuda_pct": 77,
+      "remanente_cop": 828000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 11,
+      "salario_cop": 2100000,
+      "deuda_pct": 6,
+      "remanente_cop": 1974000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "pobre_limpio"
+    },
+    {
+      "id": 12,
+      "salario_cop": 1500000,
+      "deuda_pct": 52,
+      "remanente_cop": 720000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 13,
+      "salario_cop": 19350000,
+      "deuda_pct": 23,
+      "remanente_cop": 14899500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 14,
+      "salario_cop": 16900000,
+      "deuda_pct": 30,
+      "remanente_cop": 11830000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 15,
+      "salario_cop": 24000000,
+      "deuda_pct": 9,
+      "remanente_cop": 21840000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 16,
+      "salario_cop": 2850000,
+      "deuda_pct": 82,
+      "remanente_cop": 513000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 17,
+      "salario_cop": 5750000,
+      "deuda_pct": 51,
+      "remanente_cop": 2817500,
+      "decision": "aprobar",
+      "regla_de_entonces": "rechazar",
+      "forma": "justo_en_la_raya"
+    },
+    {
+      "id": 18,
+      "salario_cop": 7400000,
+      "deuda_pct": 74,
+      "remanente_cop": 1924000,
+      "decision": "rechazar",
+      "regla_de_entonces": "duda",
+      "forma": "medio_apretado"
+    },
+    {
+      "id": 19,
+      "salario_cop": 26550000,
+      "deuda_pct": 90,
+      "remanente_cop": 2655000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "rico_ahogado"
+    },
+    {
+      "id": 20,
+      "salario_cop": 3850000,
+      "deuda_pct": 69,
+      "remanente_cop": 1193500,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 21,
+      "salario_cop": 19800000,
+      "deuda_pct": 20,
+      "remanente_cop": 15840000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 22,
+      "salario_cop": 16100000,
+      "deuda_pct": 26,
+      "remanente_cop": 11914000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 23,
+      "salario_cop": 1050000,
+      "deuda_pct": 82,
+      "remanente_cop": 189000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 24,
+      "salario_cop": 1550000,
+      "deuda_pct": 8,
+      "remanente_cop": 1426000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "pobre_limpio"
+    },
+    {
+      "id": 25,
+      "salario_cop": 6100000,
+      "deuda_pct": 32,
+      "remanente_cop": 4148000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "justo_en_la_raya"
+    },
+    {
+      "id": 26,
+      "salario_cop": 4600000,
+      "deuda_pct": 73,
+      "remanente_cop": 1242000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "medio_apretado"
+    },
+    {
+      "id": 27,
+      "salario_cop": 1400000,
+      "deuda_pct": 66,
+      "remanente_cop": 476000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 28,
+      "salario_cop": 3800000,
+      "deuda_pct": 61,
+      "remanente_cop": 1482000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 29,
+      "salario_cop": 22050000,
+      "deuda_pct": 34,
+      "remanente_cop": 14553000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 30,
+      "salario_cop": 25100000,
+      "deuda_pct": 12,
+      "remanente_cop": 22088000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 31,
+      "salario_cop": 2600000,
+      "deuda_pct": 45,
+      "remanente_cop": 1430000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 32,
+      "salario_cop": 15350000,
+      "deuda_pct": 70,
+      "remanente_cop": 4605000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "rico_ahogado"
+    },
+    {
+      "id": 33,
+      "salario_cop": 1500000,
+      "deuda_pct": 46,
+      "remanente_cop": 810000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 34,
+      "salario_cop": 2850000,
+      "deuda_pct": 4,
+      "remanente_cop": 2736000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "pobre_limpio"
+    },
+    {
+      "id": 35,
+      "salario_cop": 12350000,
+      "deuda_pct": 11,
+      "remanente_cop": 10991500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 36,
+      "salario_cop": 6950000,
+      "deuda_pct": 52,
+      "remanente_cop": 3336000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "justo_en_la_raya"
+    },
+    {
+      "id": 37,
+      "salario_cop": 8400000,
+      "deuda_pct": 70,
+      "remanente_cop": 2520000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "medio_apretado"
+    },
+    {
+      "id": 38,
+      "salario_cop": 3650000,
+      "deuda_pct": 63,
+      "remanente_cop": 1350500,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 39,
+      "salario_cop": 15450000,
+      "deuda_pct": 72,
+      "remanente_cop": 4326000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "rico_ahogado"
+    },
+    {
+      "id": 40,
+      "salario_cop": 3300000,
+      "deuda_pct": 54,
+      "remanente_cop": 1518000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 41,
+      "salario_cop": 28350000,
+      "deuda_pct": 25,
+      "remanente_cop": 21262500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 42,
+      "salario_cop": 2000000,
+      "deuda_pct": 11,
+      "remanente_cop": 1780000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "pobre_limpio"
+    },
+    {
+      "id": 43,
+      "salario_cop": 4450000,
+      "deuda_pct": 55,
+      "remanente_cop": 2002500,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 44,
+      "salario_cop": 24200000,
+      "deuda_pct": 31,
+      "remanente_cop": 16698000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 45,
+      "salario_cop": 25050000,
+      "deuda_pct": 25,
+      "remanente_cop": 18787500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 46,
+      "salario_cop": 5900000,
+      "deuda_pct": 48,
+      "remanente_cop": 3068000,
+      "decision": "aprobar",
+      "regla_de_entonces": "rechazar",
+      "forma": "justo_en_la_raya"
+    },
+    {
+      "id": 47,
+      "salario_cop": 4850000,
+      "deuda_pct": 58,
+      "remanente_cop": 2037000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "medio_apretado"
+    },
+    {
+      "id": 48,
+      "salario_cop": 9800000,
+      "deuda_pct": 20,
+      "remanente_cop": 7840000,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    },
+    {
+      "id": 49,
+      "salario_cop": 3000000,
+      "deuda_pct": 85,
+      "remanente_cop": 450000,
+      "decision": "rechazar",
+      "regla_de_entonces": "rechazar",
+      "forma": "rechazo_obvio"
+    },
+    {
+      "id": 50,
+      "salario_cop": 16150000,
+      "deuda_pct": 29,
+      "remanente_cop": 11466500,
+      "decision": "aprobar",
+      "regla_de_entonces": "aprobar",
+      "forma": "aprobacion_obvia"
+    }
+  ]
+}
