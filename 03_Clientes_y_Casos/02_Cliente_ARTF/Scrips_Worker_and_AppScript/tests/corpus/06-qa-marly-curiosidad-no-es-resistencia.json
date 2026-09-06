@@ -48,7 +48,7 @@
     {
       "lead": "si queda como 5m",
       "pista": {
-        "endeudamiento_pct": 29
+        "remanente_cop": 5000000
       },
       "espera": {
         "etapa": "M3_ENVIADO"

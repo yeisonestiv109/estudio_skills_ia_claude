@@ -835,7 +835,7 @@ REGLAS DE EXTRACCION:
 - "objecion_num": ${DISPARADORES_OBJECIONES}
 - OJO: "¿cuanto cuesta la CONSULTA/LLAMADA/SESION?" es objecion 1 (la llamada es gratis), NO la 7.
 - ⚠️ INCERTIDUMBRE vs OBJECION 6, no las confundas: "no se", "no estoy segura", "ni idea de cuanto debo" es que el lead NO TIENE el dato -> objecion_num debe ser null (deja que el flujo le pida un estimado). La Objecion 6 es cuando el lead SI sabe el dato pero se NIEGA a compartirlo ("eso es privado", "prefiero no decir eso por aqui").
-- "objecion_conocida": false si el lead objeta algo que NO esta en esa lista de 9.
+- "objecion_conocida": true cuando "objecion_num" quedo con un numero (la objecion SI es una de las 9). false cuando el lead objeta o plantea algo que NO esta en esa lista, y tambien cuando no objeta nada.
 - "dolor_financiero": true si la frustracion que describe tiene que ver con el dinero, aunque no use la palabra "dinero". Cuenta hablar de deudas, pagos, tarjetas, no poder ahorrar, no saber en que se le va, no llegar a fin de mes o sentir que gana bien y no lo ve. Ejemplo: "me siento preocupada por la cantidad de deudas que tengo" -> true.
 - "crisis": true SOLO ante señales reales de crisis emocional grave (duelo, crisis de pareja, ansiedad mencionada, autolesion, desesperacion profunda).
   ⚠️ FALSO POSITIVO FRECUENTE: un objetivo personal grande NO es crisis. "quiero irme a vivir sola", "quiero comprar casa", "quiero independizarme" son MOTIVACION -> crisis=false.
