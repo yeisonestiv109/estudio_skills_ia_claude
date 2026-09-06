@@ -65,7 +65,7 @@ import {
 import {
   PLANTILLAS as P, render, EMPATIA_HABILITADA, DISPARADORES_OBJECIONES,
   CATCHALL_LLM_HABILITADO, LIMPIAR_HANDOFF, ADAPTAR_OBJECIONES_CON_LLM,
-  RESPONDER_PREGUNTAS_CON_LLM, CONOCIMIENTO_PLAYBOOK,
+  RESPONDER_PREGUNTAS_CON_LLM, CONOCIMIENTO_PLAYBOOK, FASE_POR_ETAPA,
 } from './sop_v42_plantillas.js';
 import {
   verificarTextoGenerado, verificarAdaptacionObjecion, verificarRespuestaLibre,
@@ -305,7 +305,11 @@ async function manejar(request, env, ctx) {
     // lead) y repite el articulo "los" aunque nunca se haya hablado de
     // ninguna llamada: es el bug real que motivo toda esta feature.
     const llamadaYaMencionada = !/^M[1-4]_/.test(estado?.etapa_bot || '');
-    const texto = await adaptarObjecionConLLM(env, plan.objecionPlantillaOriginal, lastText, llamadaYaMencionada);
+    // El historial y la pregunta pendiente van SIEMPRE (6-sep-2026): sin ellos
+    // esta funcion adaptaba objeciones a ciegas y perdia el hilo del embudo.
+    const pendienteObj = Number.isInteger(plan.reenvioPendienteIdx) ? mensajes[plan.reenvioPendienteIdx] : '';
+    const texto = await adaptarObjecionConLLM(
+      env, plan.objecionPlantillaOriginal, lastText, llamadaYaMencionada, historial, pendienteObj);
     if (texto) { mensajes[0] = texto; adaptada = true; }
   }
 
@@ -322,7 +326,14 @@ async function manejar(request, env, ctx) {
   let intentoRespuesta = false;
   if (RESPONDER_PREGUNTAS_CON_LLM && plan.preguntaLibre && mensajes.length > 0) {
     intentoRespuesta = true;
-    const pendiente = plan.preguntaLibreReemplaza ? '' : mensajes[0];
+    // BUG REAL (6-sep-2026, turno de las 21:03:26 que escalo): aca se le pasaba
+    // `mensajes[0]`, que NO es la pregunta que se reenvia -- esa vive en
+    // `plan.reenvioPendienteIdx`. Con la burbuja equivocada delante, el LLM no
+    // sabia cual era la pregunta del embudo, cerraba inventando la suya, y esa
+    // "?" disparaba el borrado de la pregunta pendiente mas abajo.
+    const idxPend = plan.reenvioPendienteIdx;
+    const pendiente = plan.preguntaLibreReemplaza ? ''
+      : (Number.isInteger(idxPend) && mensajes[idxPend] ? mensajes[idxPend] : mensajes[0]);
     const respuesta = await responderPreguntaConLLM(env, plan.preguntaLibre, lastText, pendiente);
     if (respuesta) {
       if (plan.preguntaLibreReemplaza) mensajes[0] = respuesta;
@@ -337,8 +348,12 @@ async function manejar(request, env, ctx) {
   // si la respuesta de arriba ya explico "por que ahora", preguntarle
   // "¿lo resuelves ahora?" es preguntarle lo que se le acaba de contestar.
   let repregunta = '';
+  // Se guarda el texto de la pregunta del embudo ANTES de que nadie la borre:
+  // si el turno termina vacio, es lo que se vuelve a pedir en vez de escalar.
+  let preguntaEmbudo = '';
   const idxReenvio = plan.reenvioPendienteIdx;
   if (RESPONDER_PREGUNTAS_CON_LLM && Number.isInteger(idxReenvio) && mensajes[idxReenvio]) {
+    preguntaEmbudo = mensajes[idxReenvio];
     const otras = mensajes.filter((_, i) => i !== idxReenvio).join('\n\n');
     // Si ESA pregunta ya se envio textual, no es criterio: es comparar dos
     // strings. Pedirselo al LLM salio peor -- con el historial delante
@@ -352,14 +367,28 @@ async function manejar(request, env, ctx) {
     // `preguntaPropia`, pero aplicada a lo que de verdad se va a enviar (que
     // puede venir reformulado por el LLM) en vez de a una tabla fija.
     // Se resuelve aca, sin gastar una llamada: terminar en "?" no es criterio.
-    if (/[?？]\s*$/.test(otras.trim())) {
+    // ⚠️ ANTES DE LOS 3 FILTROS LA PREGUNTA DEL EMBUDO NO SE OMITE NUNCA
+    // (regla de Gaby, 6-sep-2026). En M1-M4 el bot todavia no tiene el dato que
+    // necesita para avanzar, y omitir esa pregunta es perder el turno: el lead
+    // se queda conversando y el embudo no se mueve. Peor: el 21:03:26 la
+    // respuesta del LLM termino en "?", esta regla borro la pregunta pendiente,
+    // la unica burbuja que quedaba salio repetida, y el turno vacio escalo a un
+    // humano por una duda de precio que el bot sabia contestar.
+    // De M5 en adelante el dato ya se tiene y evitar la doble pregunta sí manda.
+    const antesDeLosFiltros = ['M1', 'M2', 'M3', 'M4'].includes(FASE_POR_ETAPA[estado?.etapa_bot] || '');
+    if (!antesDeLosFiltros && /[?？]\s*$/.test(otras.trim())) {
       mensajes.splice(idxReenvio, 1);
       repregunta = 'omitida';
     } else {
       const d = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, yaSeEnvio);
-      if (d.accion === 'omitir') {
+      if (d.accion === 'omitir' && !antesDeLosFiltros) {
         mensajes.splice(idxReenvio, 1);
         repregunta = 'omitida';
+      } else if (d.accion === 'omitir' && antesDeLosFiltros) {
+        // El LLM quiso omitirla pero el dato sigue pendiente: se reformula para
+        // no repetirla textual, y si no se puede se manda tal cual. Nunca se cae.
+        const r = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, true);
+        if (r.accion === 'reformular' && r.texto) { mensajes[idxReenvio] = r.texto; repregunta = 'reformulada'; }
       } else if (d.accion === 'reformular' && d.texto) {
         mensajes[idxReenvio] = d.texto;
         repregunta = 'reformulada';
@@ -400,7 +429,12 @@ async function manejar(request, env, ctx) {
     for (const m of mensajes) {
       // El link es la excepcion: reenviarlo es legitimo ("no me llego").
       if (/https?:\/\//.test(m) || !yaSeDijo(filasHistorial, m)) { revisadas.push(m); continue; }
-      const nuevo = await adaptarObjecionConLLM(env, m, lastText, true);
+      // CON HISTORIAL (6-sep-2026). Aca se le pide justamente que reformule
+      // algo QUE YA SE DIJO, y hasta hoy se le llamaba sin darle lo que ya se
+      // dijo: no tenia forma de saber de que huir, devolvia un equivalente,
+      // `yaSeDijo` lo tumbaba otra vez y la burbuja se perdia. Es la amnesia
+      // que dejaba turnos vacios y escalaba leads que no habia que escalar.
+      const nuevo = await adaptarObjecionConLLM(env, m, lastText, true, historial);
       if (nuevo && !yaSeDijo(filasHistorial, nuevo)) revisadas.push(nuevo);
       else repetidasQuitadas += 1;
     }
@@ -408,13 +442,34 @@ async function manejar(request, env, ctx) {
   }
 
   if (repetidasQuitadas && !mensajes.length) {
-    // Todo lo que quedaba por decir ya se habia dicho y el LLM no pudo
-    // reformularlo. Callar seria dejar al lead en visto; repetir es lo que
-    // estamos evitando. Entra un humano.
+    // ULTIMO RECURSO ANTES DEL HUMANO (6-sep-2026, regla de Gaby): si el lead
+    // todavia debe un dato del embudo, escalar es tirar la toalla. Se vuelve a
+    // pedir ese dato reformulado -- ahora si con el historial delante, que es
+    // lo que antes faltaba. Escalar deja de ser la norma y vuelve a ser lo que
+    // debe ser: el ultimo recurso.
+    const faseActual = FASE_POR_ETAPA[estado?.etapa_bot] || '';
+    const pendienteEmbudo = ['M1', 'M2', 'M3', 'M4'].includes(faseActual)
+      ? preguntaEmbudo : '';
+    if (pendienteEmbudo) {
+      const r = await decidirRepregunta(env, '', pendienteEmbudo, historial, lastText, true);
+      if (r.accion === 'reformular' && r.texto && !yaSeDijo(filasHistorial, r.texto)) {
+        mensajes = [r.texto];
+        repregunta = 'reformulada';
+        console.warn('[anti-repeticion] turno vacio: se vuelve a pedir el dato del embudo reformulado.');
+      }
+    }
+  }
+
+  if (repetidasQuitadas && !mensajes.length) {
+    // Ni reformulando quedo algo nuevo que decir. Callar seria dejar al lead en
+    // visto; repetir es lo que estamos evitando. Entra un humano.
     console.warn('[anti-repeticion] el turno quedo vacio tras quitar repetidos: escala.');
     plan.handoffRazon = 'ambiguo';
     plan.etapaNueva = 'HANDOFF';
-    plan.summary = `${plan.summary} Todo el turno era repetido y no se pudo reformular (LLM sin cupo o caido): escala en vez de repetir.`;
+    // Se dice la causa REAL. Antes esta frase afirmaba siempre "(LLM sin cupo o
+    // caido)" sin comprobarlo, y ese texto mando un diagnostico entero por el
+    // camino equivocado: el 21:03:26 la cuota estaba sana.
+    plan.summary = `${plan.summary} Todo el turno era repetido y no se pudo reformular: escala en vez de repetir.`;
   }
 
   // -------------------------------------------------------------------------
@@ -732,7 +787,6 @@ export const ESQUEMA_POR_ETAPA = {
   M4_URGENCIA_REINTENTO: `{${CAMPO_RAZONAMIENTO}"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, ${CAMPOS_COMUNES}}`,
   M5_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"acepta": boolean, ${CAMPOS_COMUNES}}`,
   M5_PITCH_REINTENTO:   `{${CAMPO_RAZONAMIENTO}"acepta": boolean, ${CAMPOS_COMUNES}}`,
-  M5_PITCH_REINTENTO:   `{${CAMPO_RAZONAMIENTO}"acepta": boolean, ${CAMPOS_COMUNES}}`,
   M6_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"confirmo_agendo": boolean, "pide_link": boolean, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
   M7_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"acompanado": boolean|null, "pide_link": boolean, "sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
   M7_ESPERANDO_VINCULO: `{${CAMPO_RAZONAMIENTO}"sin_horarios": boolean, ${CAMPOS_COMUNES}}`,
@@ -946,7 +1000,9 @@ ${esquema}`;
  * LLM no puede decir "los 30 minutos" como si el lead ya supiera de que habla
  * -- ese fue el bug real que motivo esta feature (Objecion 9 en M4).
  */
-export async function adaptarObjecionConLLM(env, plantillaOriginal, textoLead, llamadaYaMencionada = true) {
+export async function adaptarObjecionConLLM(
+  env, plantillaOriginal, textoLead, llamadaYaMencionada = true, historial = '', preguntaPendiente = '',
+) {
   if (!env.GROQ_API_KEY || !plantillaOriginal) return '';
 
   const notaLlamada = llamadaYaMencionada
@@ -962,7 +1018,27 @@ ${plantillaOriginal}
 PLANTILLA_APROBADA>>>
 
 ${notaLlamada}
-
+${historial ? `
+LO QUE YA SE HABLARON (lo mas viejo arriba, "TU" eres tu):
+<<<CONVERSACION
+${historial}
+CONVERSACION>>>
+Usalo para dos cosas: NO repetir algo que ya le dijiste con otras palabras (si
+tu adaptacion se parece a un mensaje de arriba, cambiala de verdad), y no
+perder el hilo de en que punto va la conversacion.
+` : ''}${preguntaPendiente ? `
+LA PREGUNTA DEL EMBUDO QUE SIGUE PENDIENTE (el sistema la envia justo detras de
+tu mensaje, en otra burbuja):
+<<<PREGUNTA_PENDIENTE
+${String(preguntaPendiente).slice(0, 400)}
+PREGUNTA_PENDIENTE>>>
+NO la repitas ni la parafrasees, y NO cierres tu mensaje con una pregunta tuya:
+dos preguntas seguidas y el lead no sabe cual contestar. Resolver la objecion es
+todo tu trabajo en este turno; pedir el dato lo hace el sistema.
+` : `
+Tu mensaje es el turno COMPLETO: no hay otra burbuja detras. Si la plantilla
+cierra con una pregunta, conservala; nunca dejes el turno sin nada que responder.
+`}
 Tu tarea: reescribir esa MISMA respuesta (mismo contenido, mismas cifras, misma intencion de cierre si la trae) para que suene natural como reaccion DIRECTA a lo que el lead acaba de escribir, sin sonar a que le copiaste y pegaste un guion.
 
 REGLAS DURAS (romper cualquiera de estas descarta tu respuesta entera):

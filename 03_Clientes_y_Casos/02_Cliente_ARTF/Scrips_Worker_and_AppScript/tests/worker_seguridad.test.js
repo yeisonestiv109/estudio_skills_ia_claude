@@ -17,7 +17,7 @@ import {
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
   MAX_TOKENS_LLM, adaptarObjecionConLLM, yaSeDijo, formatearHistorial, decidirRepregunta,
 } from '../worker_bot_setter_v42.js';
-import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
+import { LIMPIAR_HANDOFF, FASE_POR_ETAPA } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
 
 describe('Autenticación del webhook', () => {
@@ -909,5 +909,103 @@ describe('clasificar: un cuerpo no parseable es llm_fallo, no una clasificacion 
     const r = await conCuerpo('{"urgencia":"ahora"}', () => clasificar({ GROQ_API_KEY: 'k' }, { etapa_bot: 'M4_ENVIADO' }, 'si, es ahora'));
     assert.equal(r.urgencia, 'ahora');
     assert.equal(r.llm_fallo, undefined);
+  });
+});
+
+// ===========================================================================
+// LA AMNESIA DE adaptarObjecionConLLM Y LA RECONEXION AL EMBUDO (6-sep-2026)
+//
+// TURNO REAL QUE LO MOTIVA (gestion_lead c646e1f1, 21:03:26, ya desplegado):
+//   LEAD: "cuanto cobras, o es gratis?"   (etapa M1_ENVIADO)
+//   LOG : [LLM-respondio la duda] [LLM-omitida la repregunta] ... Todo el
+//         turno era repetido y no se pudo reformular: escala en vez de repetir.
+//   -> HANDOFF por una duda de precio que el bot sabe contestar.
+//
+// La cadena, verificada: el LLM SI respondio la duda; su respuesta termino en
+// "?"; la regla mecanica de la doble pregunta borro la pregunta del embudo;
+// quedo una sola burbuja; la guarda anti-repeticion la juzgo ya-dicha y llamo a
+// `adaptarObjecionConLLM` para reformularla -- SIN pasarle el historial, o sea
+// sin decirle de que tenia que huir; devolvio un equivalente, `yaSeDijo` lo
+// tumbo, `mensajes` quedo vacio y el turno escalo.
+//
+// Tres reglas nuevas, las tres de Gaby:
+//   1. En M1-M4 la pregunta del embudo NO se omite nunca: es el dato que hace
+//      avanzar el embudo, y sin el el turno no sirve.
+//   2. `adaptarObjecionConLLM` recibe el historial SIEMPRE.
+//   3. Turno vacio con dato pendiente -> se vuelve a pedir reformulado.
+//      Escalar es el ultimo recurso, no la norma.
+// ===========================================================================
+describe('adaptarObjecionConLLM ya no es amnesica', () => {
+  let ultimoPrompt;
+  function mock(texto) {
+    const original = globalThis.fetch;
+    globalThis.fetch = (url, opts) => {
+      ultimoPrompt = JSON.parse(opts.body).messages[0].content;
+      return Promise.resolve({
+        ok: true, headers: new Map(),
+        json: () => Promise.resolve({ choices: [{ message: { content: texto } }] }),
+      });
+    };
+    return original;
+  }
+
+  test('el historial llega al prompt', async () => {
+    const original = mock('Es gratis, no te preocupes.');
+    try {
+      await adaptarObjecionConLLM({ GROQ_API_KEY: 'k' }, 'Es gratis, no te preocupes.', 'cuanto cobras?',
+        true, 'LEAD: holis\nTU: ¡Hola Marly!');
+      assert.match(ultimoPrompt, /LO QUE YA SE HABLARON/);
+      assert.match(ultimoPrompt, /¡Hola Marly!/);
+    } finally { globalThis.fetch = original; }
+  });
+
+  test('con pregunta pendiente detras, se le prohibe cerrar preguntando', async () => {
+    const original = mock('Es gratis, no te preocupes.');
+    try {
+      await adaptarObjecionConLLM({ GROQ_API_KEY: 'k' }, 'Es gratis, no te preocupes.', 'cuanto cobras?',
+        true, '', '¿A qué te dedicas y cuánto ganas al mes?');
+      assert.match(ultimoPrompt, /PREGUNTA_PENDIENTE/);
+      assert.match(ultimoPrompt, /NO cierres tu mensaje con una pregunta tuya/);
+    } finally { globalThis.fetch = original; }
+  });
+
+  test('sin pregunta pendiente, se le pide que NO deje el turno sin cierre', async () => {
+    const original = mock('Es gratis.');
+    try {
+      await adaptarObjecionConLLM({ GROQ_API_KEY: 'k' }, 'Es gratis.', 'cuanto cobras?');
+      assert.match(ultimoPrompt, /turno COMPLETO/);
+      assert.doesNotMatch(ultimoPrompt, /PREGUNTA_PENDIENTE/);
+    } finally { globalThis.fetch = original; }
+  });
+
+  test('los llamadores viejos (4 argumentos) siguen funcionando', async () => {
+    const original = mock('Es gratis.');
+    try {
+      const r = await adaptarObjecionConLLM({ GROQ_API_KEY: 'k' }, 'Es gratis.', 'cuanto cobras?', true);
+      assert.equal(r, 'Es gratis.');
+      assert.doesNotMatch(ultimoPrompt, /LO QUE YA SE HABLARON/);
+    } finally { globalThis.fetch = original; }
+  });
+});
+
+describe('En M1-M4 la pregunta del embudo no se omite nunca', () => {
+  test('FASE_POR_ETAPA marca M1-M4 como "antes de los filtros"', () => {
+    for (const e of ['M1_ENVIADO', 'M1_RANGO_PREGUNTADO', 'M2_ENVIADO', 'M2_NO_SABE',
+      'M3_ENVIADO', 'M4_ENVIADO', 'M4_URGENCIA_REINTENTO']) {
+      assert.ok(['M1', 'M2', 'M3', 'M4'].includes(FASE_POR_ETAPA[e]), `${e} deberia ser un filtro`);
+    }
+    // De M5 en adelante el dato ya se tiene: ahi evitar la doble pregunta si manda.
+    for (const e of ['M5_ENVIADO', 'M6_ENVIADO', 'M7_ENVIADO']) {
+      assert.ok(!['M1', 'M2', 'M3', 'M4'].includes(FASE_POR_ETAPA[e]), `${e} NO deberia ser un filtro`);
+    }
+  });
+
+  test('la regla vive en el codigo, no solo en un comentario', () => {
+    const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    assert.match(src, /antesDeLosFiltros/,
+      'se perdio la guarda que impide omitir la pregunta del embudo en M1-M4');
+    assert.match(src, /d\.accion === 'omitir' && !antesDeLosFiltros/);
+    assert.match(src, /preguntaEmbudo/,
+      'se perdio el rescate del turno vacio: volveria a escalar en vez de repreguntar');
   });
 });
