@@ -1712,4 +1712,38 @@ describe('Reencauzar con contexto: tope de 3 insistiendo en lo mismo', () => {
     assert.equal(p.handoffRazon, 'ambiguo');
     assert.equal(p.campos.ambiguedad_consecutiva, 0);
   });
+
+  // BUG REAL encontrado en vivo (6-sep-2026): probando con la GROQ_API_KEY
+  // real bajo rate limit sostenido (429 en cada llamada), el lead quedaba en
+  // un bucle IMPOSIBLE de romper -- 12 turnos seguidos, el bot repitiendo
+  // literalmente el mismo mensaje sin importar que el lead dijera "ya agende"
+  // o cualquier otra cosa. Causa: `es_duda_nueva` queda `undefined` tanto si
+  // el LLM nunca corrio como si corrio y REVENTO (429/timeout/red), y el
+  // default ("undefined -> nueva") reseteaba el contador a 1 en cada fallo,
+  // sin importar cuantas veces seguidas pasara. `llm_fallo` (worker_bot_setter_v42.js,
+  // marcado SOLO cuando la llamada a Groq revienta de verdad) rompe ese ciclo:
+  // un fallo real de Groq cuenta como "misma duda" para el tope de 3.
+  test('BUG REAL: Groq caido (llm_fallo) SI acumula hacia la escalada -- nunca bucle infinito', () => {
+    let estado = st('M2_NO_SABE');
+    let p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.campos.ambiguedad_consecutiva, 1, 'un solo fallo no escala, pero SI cuenta');
+
+    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
+    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null);
+    assert.equal(p.campos.ambiguedad_consecutiva, 2);
+
+    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
+    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, 'ambiguo', 'el 3er fallo SEGUIDO de Groq escala -- garantiza que nunca queda mudo para siempre');
+  });
+
+  test('llm_fallo puntual (no sostenido) no rompe el conteo de dudas nuevas normal', () => {
+    // Un solo fallo de Groq en medio de una conversacion sana no debe leerse
+    // distinto de una duda cualquiera: sigue sumando 1, como cualquier otra.
+    const p = reencauzar(st('M2_NO_SABE'), { llm_fallo: true }, 'Marly', 'ctx');
+    assert.equal(p.handoffRazon, null);
+    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
+  });
 });

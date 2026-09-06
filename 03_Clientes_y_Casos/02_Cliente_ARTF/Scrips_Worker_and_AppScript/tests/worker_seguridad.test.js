@@ -512,3 +512,38 @@ describe('adaptarObjecionConLLM: sabe si la llamada ya se menciono antes', () =>
     }
   });
 });
+
+// ===========================================================================
+// BUG REAL: Groq caido (429/5xx/timeout) dejaba al lead en un bucle sin
+// salida (6-sep-2026, probado en vivo con la GROQ_API_KEY real bajo rate
+// limit sostenido). `clasificarConLLM` ya devolvia `{}` cuando Groq fallaba
+// -- indistinguible de "el LLM corrio bien y no encontro nada que
+// clasificar", que es la forma que toma un mensaje YA resuelto por otro
+// campo. `reencauzar()` (bot_router_v42.js) usa `llm_fallo` para no
+// confundir esos dos casos: ver sus tests de "Groq caido... nunca bucle
+// infinito".
+// ===========================================================================
+describe('clasificar: marca llm_fallo cuando Groq revienta de verdad', () => {
+  let originalFetch;
+
+  test('un 429 de Groq se marca como llm_fallo, no como "nada que clasificar"', async () => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve({
+      ok: false, status: 429, headers: new Map(),
+      text: () => Promise.resolve('{"error":"rate limit"}'),
+    });
+    try {
+      const estado = { etapa_bot: 'M2_NO_SABE', estado_codigo: 'contactado', salario_monto: 8_000_000 };
+      const c = await clasificar({ GROQ_API_KEY: 'k' }, estado, 'creo que si queda');
+      assert.equal(c.llm_fallo, true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('sin GROQ_API_KEY (no es un fallo, es que no hay LLM configurado) NO marca llm_fallo', async () => {
+    const estado = { etapa_bot: 'M2_NO_SABE', estado_codigo: 'contactado', salario_monto: 8_000_000 };
+    const c = await clasificar({}, estado, 'creo que si queda');
+    assert.equal(c.llm_fallo, undefined);
+  });
+});

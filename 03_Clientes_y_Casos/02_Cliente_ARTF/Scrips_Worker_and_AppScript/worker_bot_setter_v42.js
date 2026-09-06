@@ -537,9 +537,13 @@ export async function clasificar(env, estado, texto, ctxLLM = null) {
   }
 
   // --- LLM: cubre lo que los deterministas no resolvieron + crisis + empatia ---
+  // `llm_fallo` (a diferencia de que `clasificarConLLM` simplemente no corra
+  // por falta de GROQ_API_KEY, que no tira excepcion) marca que la llamada
+  // reviento de verdad (429, timeout, red) -- ver el uso en reencauzar():
+  // sin esto, un Groq caido dejaba al lead en un bucle sin salida.
   const llm = await clasificarConLLM(env, etapa, texto, det, null, ctxLLM).catch((e) => {
     console.error('LLM fallo, se sigue solo con deterministas:', e?.message);
-    return {};
+    return { llm_fallo: true };
   });
 
   // Los deterministas se aplican DESPUES para que ganen sobre el LLM.
@@ -803,7 +807,15 @@ ${esquema}`;
 
   if (!r.ok) {
     console.error('[groq] sin respuesta util:', r.estado || '', String(r.detalle || '').slice(0, 200));
-    return {};
+    // `llm_fallo` (BUG REAL, 6-sep-2026, probado en vivo con Groq bajo rate
+    // limit sostenido): esto se confundia con "el LLM corrio y no encontro
+    // nada que clasificar", que es la MISMA forma que toma un mensaje YA
+    // resuelto por otro campo. reencauzar() usa esta bandera para no
+    // resetear el contador de insistencia cuando la causa es que Groq
+    // fallo (429/5xx/timeout) -- sin ella, un Groq caido dejaba al lead en
+    // un bucle sin salida, sordo a todo, porque nunca se contaban 3 fallos
+    // seguidos para escalar.
+    return { llm_fallo: true };
   }
   // Nada de lo que devuelve el LLM se usa crudo: todo pasa por el validador.
   return validarClasificacionLLM(parseJsonLLM(r.datos?.choices?.[0]?.message?.content));

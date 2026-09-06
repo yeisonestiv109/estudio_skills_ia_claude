@@ -1357,7 +1357,19 @@ export function reencauzar(estado, c, nombre, contexto = '') {
   // si hubo turnos exitosos en el medio, la comparacion ya no aplica y el LLM
   // marca nueva -- el contador se corrige solo, sin tener que resetearlo a
   // mano en cada case que SI clasifica bien.
-  const esDudaNueva = c?.es_duda_nueva !== false; // undefined/true -> nueva
+  // BUG REAL encontrado en vivo (6-sep-2026, probando con Groq bajo rate
+  // limit sostenido): si el LLM FALLA (429, timeout, red), `es_duda_nueva`
+  // queda undefined -- igual que cuando el LLM nunca corrio -- y el default
+  // de abajo ("undefined -> nueva") reseteaba el contador a 1 EN CADA turno,
+  // sin importar cuantas veces fallara seguido. Resultado: con el LLM caido,
+  // el lead quedaba en un bucle IMPOSIBLE de romper, repitiendo la misma
+  // pregunta para siempre, sordo a cualquier cosa que dijera (incluido "ya
+  // agende" o pedir un humano) porque nunca se llega a las 3 veces que
+  // hacen falta para escalar. `llm_fallo` (marcado en `clasificar()` cuando
+  // la llamada a Groq revienta, no cuando simplemente no corrio) fuerza a
+  // contar el turno como "misma duda": el peor caso pasa a ser escalar unos
+  // turnos antes de lo ideal, nunca quedarse mudo para siempre.
+  const esDudaNueva = !c?.llm_fallo && c?.es_duda_nueva !== false; // undefined/true -> nueva
   const previos = estado?.ambiguedad_consecutiva || 0;
   const consecutivas = esDudaNueva ? 1 : previos + 1;
 
