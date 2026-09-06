@@ -38,7 +38,10 @@ if (!env.GROQ_API_KEY) {
   process.exit(2);
 }
 
-const ESPERA_MS = Number(process.env.EVAL_ESPERA_MS || 21000);
+// 28s y no menos: cada clasificacion son ~2200 tokens de entrada y el
+// limite de Groq es 8000 por minuto. Con 21s se pasaba y los 429 se contaban
+// como errores del modelo (la primera corrida dio 50% por eso).
+const ESPERA_MS = Number(process.env.EVAL_ESPERA_MS || 28000);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Campos que NO se evaluan: no son comprension o dependen del turno anterior. */
@@ -67,6 +70,7 @@ const archivos = readdirSync(DIR)
 
 let aciertos = 0;
 let total = 0;
+let saltados = 0;
 const fallos = [];
 
 for (const archivo of archivos) {
@@ -86,18 +90,40 @@ for (const archivo of archivos) {
     let clasificacion = { ...pista };
     if (etapa && campos.length) {
       if (total > 0) await sleep(ESPERA_MS);
-      const real = await clasificar(env, estado, turno.lead, null, formatearHistorial(historial));
-      const malos = [];
-      for (const campo of campos) {
-        total += 1;
-        if (iguales(pista[campo], real[campo])) aciertos += 1;
-        else malos.push(`${campo}: esperaba ${JSON.stringify(pista[campo])}, dio ${JSON.stringify(real[campo])}`);
+
+      // ⚠️ UN 429 NO ES UN ERROR DE CLASIFICACION, y confundirlos invalida la
+      // medicion entera. Cuando Groq rechaza por cupo, `clasificarConLLM`
+      // devuelve `{llm_fallo:true}` y TODOS los campos quedan undefined --
+      // identico a que el modelo se hubiera equivocado en todos. La primera
+      // corrida de este script dio 50% por eso; probando los mismos mensajes
+      // uno por uno, el modelo los acertaba. Se reintenta con espera.
+      let real;
+      for (let intento = 1; intento <= 4; intento += 1) {
+        real = await clasificar(env, estado, turno.lead, null, formatearHistorial(historial));
+        if (!real.llm_fallo) break;
+        const espera = ESPERA_MS * intento;
+        console.log(`      (sin cupo de Groq, reintento ${intento} en ${Math.round(espera / 1000)}s)`);
+        await sleep(espera);
       }
-      const marca = malos.length ? '✗' : '✓';
-      console.log(`  ${marca} "${turno.lead.slice(0, 46)}"${malos.length ? '' : `  (${campos.join(', ')})`}`);
-      for (const m of malos) {
-        console.log(`      ${m}`);
-        fallos.push({ conv: conv.nombre, lead: turno.lead, detalle: m });
+      if (real.llm_fallo) {
+        // No se cuenta ni a favor ni en contra, pero el turno SI se juega con
+        // la pista: si no, la conversacion se desincroniza y los turnos
+        // siguientes se evaluarian en la etapa equivocada.
+        saltados += 1;
+        console.log(`  ~ "${turno.lead.slice(0, 46)}"  SALTADO: Groq sin cupo tras 4 intentos`);
+      } else {
+        const malos = [];
+        for (const campo of campos) {
+          total += 1;
+          if (iguales(pista[campo], real[campo])) aciertos += 1;
+          else malos.push(`${campo}: esperaba ${JSON.stringify(pista[campo])}, dio ${JSON.stringify(real[campo])}`);
+        }
+        const marca = malos.length ? '✗' : '✓';
+        console.log(`  ${marca} "${turno.lead.slice(0, 46)}"${malos.length ? '' : `  (${campos.join(', ')})`}`);
+        for (const m of malos) {
+          console.log(`      ${m}`);
+          fallos.push({ conv: conv.nombre, lead: turno.lead, detalle: m });
+        }
       }
       // Se avanza con la pista, no con lo que dijo el LLM: un error en el
       // turno 3 no debe descarrilar la medicion de los turnos 4 al 9.
@@ -118,6 +144,7 @@ for (const archivo of archivos) {
 const pct = total ? (100 * aciertos / total) : 0;
 console.log(`\n${'='.repeat(60)}`);
 console.log(`ACIERTO DEL CLASIFICADOR: ${aciertos}/${total} campos = ${pct.toFixed(1)}%`);
+if (saltados) console.log(`(${saltados} turno(s) saltados por falta de cupo en Groq: no cuentan)`);
 if (fallos.length) {
   console.log('\nFallos:');
   for (const f of fallos) console.log(`  · [${f.conv.slice(0, 24)}] "${f.lead.slice(0, 34)}" -> ${f.detalle}`);
