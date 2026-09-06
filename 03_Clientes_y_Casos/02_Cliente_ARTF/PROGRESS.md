@@ -793,6 +793,60 @@ un tiro al aire.
 
 ---
 
+### It. 21 — Libertad amplia del LLM para adaptar la copy de las objeciones
+
+Gaby probo el bot activo en Instagram y encontro el caso que veniamos
+documentando en abstracto: en la Objecion 9 el bot le decia "¿Agendamos
+los 30 minutos...?" a un lead al que **nunca** se le habia mencionado
+ninguna llamada -- el articulo "los" presupone un contexto que no existe
+en esa conversacion. Pidio explicitamente que en cada turno el LLM pueda
+"plantear la respuesta basandose en la guia y con el contexto de la
+conversacion", no solo extraer datos.
+
+Se le presentaron 2 opciones con sus riesgos: un recorte determinista por
+codigo (seguro, pero no resuelve el caso general) vs. libertad amplia del
+LLM para reformular la copy aprobada en cada turno (mas flexible, pero
+reabre 3 riesgos ya documentados en `auditoria_arquitectura_bot_v42.md`
+sobre por que se rechazo "respuesta_generada": superficie de inyeccion,
+compuerta 3, corpus). **Gaby eligio explicitamente la opcion amplia**,
+con los riesgos ya advertidos.
+
+Alcance acotado a objeciones (no reescritura general del bot, que sigue
+rechazada por las mismas 3 razones):
+- `adaptarObjecionConLLM()` (nuevo, `worker_bot_setter_v42.js`): prompt
+  con la plantilla aprobada delimitada (`<<<PLANTILLA_APROBADA...>>>`),
+  prohibe cifras/CTAs nuevos, mensaje del lead como dato no como
+  instruccion, temperatura 0.4, falla cerrado (cadena vacia) ante
+  cualquier error -- el llamador siempre puede caer de vuelta a la
+  plantilla original como si esta funcion no existiera.
+- `verificarAdaptacionObjecion()` (nuevo, `verificador_cumplimiento.js`):
+  reglas G1-G10 existentes + `A1_MUY_LARGO` (tope 900) + `A2_CIFRA_NUEVA`
+  (rechaza cualquier cifra que no estuviera ya en la plantilla original).
+- `objecionPlantillaOriginal` se expone desde `manejarObjecion()`
+  **solo** cuando el mensaje NO lleva el link de agenda -- el LLM nunca
+  toca el CTA de cierre.
+- Flag `ADAPTAR_OBJECIONES_CON_LLM` (`sop_v42_plantillas.js`, con el
+  historial de la decision documentado en el propio comentario) + tag
+  `[LLM-adapto la objecion]` en `p_summary` para poder apagarlo y
+  vigilarlo desde el dashboard sin tocar codigo.
+
+421/421 tests (7 nuevos). Compuerta en verde con smoke RPC real contra
+la base. Desplegado: `286cde39-0fb9-460c-be63-f5d82d970ba4`.
+
+**No se pudo verificar en vivo contra Groq real en esta sesion**: la
+`GROQ_API_KEY` local en `.dev.vars` esta revocada/rotada (401 al probarla
+directo contra la API) y `wrangler dev` local no arranca por un bug de
+tooling ya existente y sin relacion con este cambio (`Incorrect type for
+map entry 'ESQUEMA_SECRETARIA'` -- pendiente investigar aparte, no
+bloquea `wrangler deploy`, que si funciona). La verificacion quedo en:
+tests unitarios exhaustivos de la logica nueva + compuerta + smoke RPC +
+deploy exitoso con los secrets reales de produccion (esos si vigentes,
+confirmados con `wrangler secret list`). **Pendiente real:** primera
+prueba en vivo de esta feature especifica contra una objecion real
+(idealmente ya con un lead de prueba aislado, ver pendiente de abajo).
+
+---
+
 ## Decisiones cerradas (no volver a abrir)
 
 - `calificado` se marca al pasar los 3 filtros, no al enviar el link.
@@ -817,6 +871,7 @@ un tiro al aire.
 - Vincular una reserva **reclama** el lead para el Setter.
 - **"No sé" en M2 es incertidumbre, no la Objeción 6** (5-sep-2026): solo una reticencia explícita ("prefiero no decir") va a la Objeción 6.
 - **`SIN_HORARIOS_ESPERANDO_FRANJA`**: tras "no encuentro horarios" el bot SIEMPRE captura la franja y se despide antes de callar para siempre — nunca deja la pregunta de `P.SIN_HORARIOS` sin respuesta (5-sep-2026).
+- **El LLM puede reformular la copy aprobada de una objeción** (6-sep-2026, decisión explícita de Gaby pese a los 3 riesgos advertidos): solo cuando el turno NO lleva el link de agenda, con `verificarAdaptacionObjecion` (cero cifras nuevas, mismas reglas G1-G10) como compuerta antes de usar el texto generado. Si el LLM falla o la compuerta lo rechaza, se usa la plantilla original tal cual — nunca queda el lead sin respuesta.
 
 ---
 
@@ -844,3 +899,6 @@ Ver `RETOMAR_AQUI.md` para la lista ordenada y el prompt de arranque.
 - Debounce real (KV) solo si el double-texting resulta frecuente.
 - Re-correr `e2e/setter-agendado.spec.ts` con el entorno estable.
 - Comentarle a Javier las 4 inconsistencias del PDF V4.2 y el `"Contame"` (voseo en 3 de sus archivos).
+- 🔴 **Primera prueba en vivo de `ADAPTAR_OBJECIONES_CON_LLM`** (It. 21) contra Groq real -- la `GROQ_API_KEY` de `.dev.vars` esta revocada, hace falta una vigente para probar local o probar directo contra el Worker desplegado.
+- Investigar por que `wrangler dev` local crashea (`Incorrect type for map entry 'ESQUEMA_SECRETARIA'`) -- no bloquea `wrangler deploy`, pero deja sin opcion de probar el Worker completo en local.
+- Refrescar `GROQ_API_KEY`/`SUPABASE_SERVICE_ROLE_KEY` en `.dev.vars` (local, desactualizadas frente a los secrets reales del Worker).
