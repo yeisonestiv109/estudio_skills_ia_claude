@@ -546,28 +546,6 @@ export async function clasificar(env, estado, texto, ctxLLM = null) {
 const CAMPO_RAZONAMIENTO =
   '"analisis_paso_a_paso": string, ';
 
-/**
- * ¿Este mensaje merece razonamiento paso a paso?
- *
- * El CoT es EL grueso de los tokens de salida (~420 de 421 medidos, contra ~60
- * sin el). Y el tope que nos frena es de SALIDA por minuto, asi que pedirlo en
- * un "si" pelado es tirar capacidad a la basura: paga el 85% del costo para no
- * aportar nada.
- *
- * Se pide solo donde de verdad cambia el resultado:
- *  - hay CIFRAS (es el caso que lo motivo: sumar varias fuentes de ingreso),
- *  - o el mensaje es largo/complejo, donde la intencion no es obvia.
- *
- * Un "si", un "dale" o una letra no necesitan que el modelo piense en voz alta.
- */
-export function mereceRazonamiento(texto) {
-  const t = String(texto || '').trim();
-  if (!t) return false;
-  if (/\d/.test(t)) return true;                 // cualquier cifra: puede haber que sumar
-  if (t.split(/\s+/).length > 12) return true;   // mensaje largo: intencion no obvia
-  return false;
-}
-
 const CAMPOS_COMUNES =
   '"objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, '
   + '"crisis": boolean, "hostil": boolean, "ex_cliente": boolean'
@@ -701,14 +679,16 @@ const CONTEXTO_POR_ETAPA = {
 
 async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null, ctxLLM = null) {
   if (!env.GROQ_API_KEY) return {};
-  let esquema = esquemaForzado || ESQUEMA_POR_ETAPA[etapa];
+  const esquema = esquemaForzado || ESQUEMA_POR_ETAPA[etapa];
   if (!esquema) return {};
 
-  // Se recorta el razonamiento cuando no aporta. Ahorra ~85% de los tokens de
-  // salida en los turnos simples, que son la mayoria ("si", "dale", "B").
-  const conRazonamiento = mereceRazonamiento(texto);
-  if (!conRazonamiento) esquema = esquema.replace(CAMPO_RAZONAMIENTO, '');
-
+  // Revertido (5-sep-2026, a pedido explicito): el CoT condicional
+  // (`mereceRazonamiento`) recortaba `analisis_paso_a_paso` en mensajes sin
+  // cifras o cortos, para ahorrar tokens de salida. Se identifico como
+  // regresion de PRECISION semantica: objeciones criticas y cortas ("no me
+  // genera confianza", "lo dudo") perdian el espacio de razonamiento del
+  // modelo. El analisis_paso_a_paso corre ahora en el 100% de los turnos, sin
+  // excepciones -- la prioridad es precision de clasificacion, no tokens.
   const system = `Eres un clasificador para un bot de ventas colombiano. NO escribes el mensaje que ve el lead: solo extraes datos y una frase corta de empatia.
 
 CONTEXTO DEL TURNO: ${CONTEXTO_POR_ETAPA[etapa] || ''}

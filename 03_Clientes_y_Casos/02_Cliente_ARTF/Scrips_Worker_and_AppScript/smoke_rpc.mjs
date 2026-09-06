@@ -84,7 +84,10 @@ r = await rpc('fn_registrar_telemetria_llm', {
   p_resultado: 'ok', p_tokens_salida: 100,
   p_limite_tokens: 8000, p_restantes_tokens: 7900, p_reset_tokens: '480ms',
 });
-if (r.status === 200) {
+if (r.status === 200 || r.status === 204) {
+  // 204 (sin cuerpo) es la respuesta NORMAL de PostgREST para una funcion
+  // `RETURNS void` como esta -- no es un fallo. Bug real 5-sep-2026: el
+  // smoke solo aceptaba 200 y marcaba rojo una llamada que si funciono.
   ok('fn_registrar_telemetria_llm: registra una llamada');
 } else if (r.status === 404 && r.cuerpo.includes('PGRST202')) {
   // Caso visto el 5-sep: la tabla y la funcion EXISTEN y funcionan llamandolas
@@ -105,7 +108,9 @@ r = await rpc('fn_registrar_telemetria_llm', {
   p_proveedor: 'groq', p_modelo: 'smoke-test', p_llave_alias: 'principal',
   p_resultado: 'ok', p_tokens_salida: 50,
 });
-r.status === 200 ? ok('telemetria: segunda llamada aceptada') : malo('telemetria: segunda llamada fallo');
+(r.status === 200 || r.status === 204)
+  ? ok('telemetria: segunda llamada aceptada')
+  : malo(`telemetria: segunda llamada fallo (status ${r.status})`);
 
 // 5. Limpieza: el lead queda en terminal (activity_log es append-only, no se borra)
 await rpc('fn_bot_procesar_turno', {

@@ -40,7 +40,9 @@ const estadoEn = (etapa, extra = {}) => ({
   ...extra,
 });
 
-// ====================================================================describe('parseIngresoCOP — glosario colombiano (★ V4.1)', () => {
+// ====================================================================
+
+describe('parseIngresoCOP — glosario colombiano (★ V4.1)', () => {
   test('EL BUG REAL: "minimo integral" NUNCA se lee como salario minimo', () => {
     const r = parseIngresoCOP('gano el minimo integral');
     assert.equal(r.glosario, 'salario_integral');
@@ -104,7 +106,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Filtros del SOP V4.2', () => {
+// ====================================================================
+
+describe('Filtros del SOP V4.2', () => {
   // Los tests leen de UMBRALES: el fundador ya movio estas cifras dos veces
   // (7M -> 6M el 4-sep) y no tiene sentido que se pongan rojos por eso.
   const MIN = UMBRALES.INGRESO_MINIMO;
@@ -177,7 +181,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Convivencia bot <-> Setter humano', () => {
+// ====================================================================
+
+describe('Convivencia bot <-> Setter humano', () => {
   // AUTO-RECUPERACION (4-sep-2026). Con un handoff RECUPERABLE el bot se deja
   // clasificar el mensaje, pero solo habla si el lead pidio continuar.
   test('handoff NO recuperable: el bot se calla, punto', () => {
@@ -314,7 +320,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Camino feliz completo M1 -> M7', () => {
+// ====================================================================
+
+describe('Camino feliz completo M1 -> M7', () => {
   test('lead nuevo con "CONTROL" recibe la variante CONTROL', () => {
     const p = decidirTurno(null, {}, 'CONTROL');
     assert.equal(p.etapaNueva, 'M1_ENVIADO');
@@ -411,7 +419,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Descalificacion con valor', () => {
+// ====================================================================
+
+describe('Descalificacion con valor', () => {
   test('ingreso bajo -> script 1 + motivo de perdida', () => {
     const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 3_000_000 });
     assert.equal(p.estadoDestino, 'descalificado');
@@ -537,7 +547,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('RetornoLead (★ V4.1) — descartado que se recalifica', () => {
+// ====================================================================
+
+describe('RetornoLead (★ V4.1) — descartado que se recalifica', () => {
   test('da una cifra que si califica -> rectifica y retoma en M2', () => {
     const estado = estadoEn('DESCALIFICADO', { estado_codigo: 'descalificado', es_terminal: true });
     const p = decidirTurno(estado, { ingreso_cop: 22_000_000 }, 'pero yo gano 22 millones');
@@ -579,7 +591,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Objeciones y escalamiento', () => {
+// ====================================================================
+
+describe('Objeciones y escalamiento', () => {
   test('objecion conocida se responde con su script y no avanza la etapa', () => {
     const p = decidirTurno(estadoEn('M5_ENVIADO'), { objecion_num: 3, objecion_conocida: true });
     assert.equal(p.etapaNueva, 'M5_ENVIADO');
@@ -778,7 +792,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Prioridad maxima: crisis y hostilidad', () => {
+// ====================================================================
+
+describe('Prioridad maxima: crisis y hostilidad', () => {
   test('crisis gana sobre cualquier etapa y manda a nutricion', () => {
     const p = decidirTurno(estadoEn('M5_ENVIADO'), { crisis: true, acepta: true });
     assert.equal(p.handoffRazon, 'crisis_emocional');
@@ -796,7 +812,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Detectores deterministas', () => {
+// ====================================================================
+
+describe('Detectores deterministas', () => {
   test('variante de M1 por keyword', () => {
     assert.equal(detectarVarianteM1('CONTROL'), 'M1_CONTROL');
     assert.equal(detectarVarianteM1('quiero claridad'), 'M1_CLARIDAD');
@@ -868,10 +886,13 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// Aprendizajes de produccion incorporados del proyecto original de Javier
+// ====================================================================
+// Aprendizajes de produccion incorporados del proyecto original de Javier
 // (Setter-IA-Claude-Code-Project). Cada uno viene de un caso REAL que ya
 // paso en operacion -- no son casos hipoteticos.
-// ====================================================================describe('Aprendizajes de produccion (proyecto Setter IA de Javier)', () => {
+// ====================================================================
+
+describe('Aprendizajes de produccion (proyecto Setter IA de Javier)', () => {
   test('SOP-05 #2: "me quedan $5M" NO descalifica -- primero se aclara', () => {
     const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 5_000_000 }, 'me quedan como 5 millones libres');
     assert.notEqual(p.estadoDestino, 'descalificado');
@@ -962,7 +983,8 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// ESCALERA DE REPREGUNTAS (4-sep-2026)
+// ====================================================================
+// ESCALERA DE REPREGUNTAS (4-sep-2026)
 //
 // Decision del fundador: el bot escalaba demasiado pronto por ambiguedad. En
 // vez de pasar a un humano al primer "no entendi", reformula UNA vez con una
@@ -972,7 +994,9 @@ const estadoEn = (etapa, extra = {}) => ({
 // que escalaban al primer intento eran M4 y M5. Por eso son 2 peldaños, no 5.
 //
 // Va detras de una perilla porque su copy todavia no lo aprueba el fundador.
-// ====================================================================describe('Escalera de repreguntas antes de escalar', () => {
+// ====================================================================
+
+describe('Escalera de repreguntas antes de escalar', () => {
   const st = (etapa) => ({
     estado_codigo: 'contactado', etapa_bot: etapa, nombre: 'Ana',
     salario_monto: 12_000_000, objeciones_consecutivas: 0,
@@ -1057,13 +1081,16 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// LA BANDA DE TRAMPA $6M–$7M (4-sep-2026)
+// ====================================================================
+// LA BANDA DE TRAMPA $6M–$7M (4-sep-2026)
 //
 // El fundador bajo el Filtro 1 a $6M, pero el copy aprobado sigue preguntando
 // por el rango de $7M. Todo lead que gane entre esas dos cifras CALIFICA y sin
 // embargo contestaria "No" a la pregunta del rango. Este bloque existe para que
 // ninguno de ellos se pierda mientras el copy no se alinee.
-// ====================================================================describe('Banda de trampa entre el umbral y la cifra del copy', () => {
+// ====================================================================
+
+describe('Banda de trampa entre el umbral y la cifra del copy', () => {
   const st = (etapa) => ({
     estado_codigo: 'contactado', etapa_bot: etapa, nombre: 'Ana',
     objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
@@ -1102,7 +1129,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('M3: "todas" (fundador, 4-sep-2026)', () => {
+// ====================================================================
+
+describe('M3: "todas" (fundador, 4-sep-2026)', () => {
   const st = (etapa) => ({
     estado_codigo: 'contactado', etapa_bot: etapa, nombre: 'Ana',
     objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
@@ -1139,14 +1168,17 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// EL CIERRE, EN SU ORDEN NUEVO (fundador, 4-sep-2026)
+// ====================================================================
+// EL CIERRE, EN SU ORDEN NUEVO (fundador, 4-sep-2026)
 //   M5 pitch -> M6 LINK SOLO -> M7 acompañante -> M8 (CIERRE_PRECALL)
 //
 // El orden viejo mandaba la pregunta del acompañante JUNTO al link, y por eso
 // un "emm si" del lead era ambiguo: podia contestar al acompañante o al "¿ya
 // agendaste?". En el QA el LLM lo leyo como agendamiento y salto hasta el
 // cierre, omitiendo el link. Separar los turnos elimina la ambiguedad de raiz.
-// ====================================================================describe('Cierre M5 -> M6 -> M7 -> M8', () => {
+// ====================================================================
+
+describe('Cierre M5 -> M6 -> M7 -> M8', () => {
   const st = (etapa, extra = {}) => ({
     estado_codigo: 'calificado', etapa_bot: etapa, nombre: 'Ana',
     salario_monto: 12_000_000, objeciones_consecutivas: 0,
@@ -1227,7 +1259,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Dolor financiero: raíces de dinero (QA 4-sep-2026)', () => {
+// ====================================================================
+
+describe('Dolor financiero: raíces de dinero (QA 4-sep-2026)', () => {
   // BUG PROPIO: la primera versión escribió las raíces con `\b` AL FINAL
   // (`\bahorr\b`), y `\b` no cierra entre dos letras -- así que `ahorr`,
   // `invers`, `financier` y `econom` no casaban NADA. Por eso una lead que
@@ -1271,7 +1305,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Varias fuentes de ingreso (QA 4-sep-2026)', () => {
+// ====================================================================
+
+describe('Varias fuentes de ingreso (QA 4-sep-2026)', () => {
   // La lead escribió: "en mi trabajo son más o menos 4 millones, de mi negocio
   // familiar son 3 millones, y de un local donde soy socia recibo casi 4
   // millones" = 11M. El parser agarraba la PRIMERA cifra (4M) y, como los
@@ -1315,7 +1351,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Hostilidad: la frustración NO es hostilidad', () => {
+// ====================================================================
+
+describe('Hostilidad: la frustración NO es hostilidad', () => {
   test('el detector determinista no marca quejas', () => {
     // El QA del 4-sep escaló por "no gracias, eso es inaceptable las
     // confusiones". El determinista NO disparó (correcto); fue el LLM, que no
@@ -1337,7 +1375,9 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================describe('Detectores del cierre (QA 4-sep-2026)', () => {
+// ====================================================================
+
+describe('Detectores del cierre (QA 4-sep-2026)', () => {
   // El QA mandó el link a quien escribió "espérame, antes me gustaría tener más
   // claro de que trata el protocolo". `detectarAceptacion` devolvía true porque
   // "claro" casaba dentro de "más claro", y el freno de negación solo miraba
@@ -1403,11 +1443,14 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// PROBLEMA 1 (5-sep-2026): el LLM confundia "no se/no estoy segura"
+// ====================================================================
+// PROBLEMA 1 (5-sep-2026): el LLM confundia "no se/no estoy segura"
 // (incertidumbre) con la Objecion 6 "info sensible" (reticencia). El bot
 // anteponia la plantilla de "dato sensible" y repetia P.M2_P1/P.M2_P2 tal cual
 // en vez de usar M2_NO_SABE, que ya existia para este caso exacto.
-// ====================================================================describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', () => {
+// ====================================================================
+
+describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', () => {
   test('pareceIncertidumbre distingue "no se" de una reticencia real', () => {
     assert.equal(pareceIncertidumbre('no se, la verdad'), true);
     assert.equal(pareceIncertidumbre('no estoy segura de cuanto debo'), true);
@@ -1442,11 +1485,14 @@ const estadoEn = (etapa, extra = {}) => ({
   });
 });
 
-// ====================================================================// PROBLEMA 2 (5-sep-2026): P.SIN_HORARIOS pregunta la franja, pero el turno
+// ====================================================================
+// PROBLEMA 2 (5-sep-2026): P.SIN_HORARIOS pregunta la franja, pero el turno
 // saltaba directo a un HANDOFF no recuperable -- la respuesta del lead a esa
 // misma pregunta caia en silencio total (decidirSiResponder cortaba antes de
 // que el bot volviera a hablar).
-// ====================================================================describe('SIN_HORARIOS ya no deja al lead en visto (bug real 5-sep-2026)', () => {
+// ====================================================================
+
+describe('SIN_HORARIOS ya no deja al lead en visto (bug real 5-sep-2026)', () => {
   test('sin_horarios en M6/M7/M7_ESPERANDO_VINCULO va a un estado intermedio, no directo a HANDOFF', () => {
     for (const etapa of ['M6_ENVIADO', 'M7_ENVIADO', 'M7_ESPERANDO_VINCULO']) {
       const p = decidirTurno(estadoEn(etapa), { sin_horarios: true }, 'no me aparece nada');
@@ -1484,6 +1530,8 @@ const estadoEn = (etapa, extra = {}) => ({
     const estado = estadoEn('HANDOFF', { handoff_razon: 'agendamiento_manual_pendiente' });
     assert.equal(decidirSiResponder(estado).responder, false, 'sin guarda anti-bucle no habria limite');
   });
+});
+
 describe('Calendario de producción (5-sep-2026)', () => {
   test('el link es el de ARTF, NO el personal del fundador', () => {
     // Fue el bloqueante rojo #1 durante toda la construcción: cada lead que
