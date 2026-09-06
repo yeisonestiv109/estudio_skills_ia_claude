@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
-  MAX_TOKENS_LLM, adaptarObjecionConLLM,
+  MAX_TOKENS_LLM, adaptarObjecionConLLM, yaSeDijo, formatearHistorial,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -98,11 +98,22 @@ describe('Validación de la salida del LLM', () => {
   // auto-recuperacion de handoff (It. 17) seguia rota en produccion real pese
   // a tener ya el esquema de LLM correcto. Los tests del router no lo vieron
   // porque pasan `c` directo a `decidirTurno`, saltandose esta funcion.
-  test('BUG REAL: recupera_handoff y es_duda_nueva SI sobreviven la validacion', () => {
+  test('BUG REAL: recupera_handoff SI sobrevive la validacion', () => {
     assert.equal(validarClasificacionLLM({ recupera_handoff: true }).recupera_handoff, true);
     assert.equal(validarClasificacionLLM({ recupera_handoff: false }).recupera_handoff, false);
-    assert.equal(validarClasificacionLLM({ es_duda_nueva: true }).es_duda_nueva, true);
-    assert.equal(validarClasificacionLLM({ es_duda_nueva: false }).es_duda_nueva, false);
+  });
+
+  // `es_duda_nueva` se RETIRO el 6-sep-2026. Le pedia al LLM comparar el
+  // mensaje con "el turno inmediatamente anterior del lead" -- que el modelo
+  // NO PODIA VER, porque solo recibia el ultimo mensaje. Era un campo
+  // imposible de contestar bien. Su papel (contar hacia la escalada) lo tomo
+  // `llm_fallo` en la It. 25, y el contexto real lo da ahora la memoria corta.
+  test('es_duda_nueva ya no se pide ni se acepta: era incontestable sin memoria', () => {
+    assert.ok(!('es_duda_nueva' in validarClasificacionLLM({ es_duda_nueva: false })),
+      'si vuelve a aparecer, alguien lo reintrodujo sin darse cuenta');
+    for (const esquema of Object.values(ESQUEMA_POR_ETAPA)) {
+      assert.ok(!esquema.includes('es_duda_nueva'), 'sigue en un esquema del clasificador');
+    }
   });
 
   test('una respuesta basura no revienta ni inventa datos', () => {
@@ -578,5 +589,67 @@ describe('validarClasificacionLLM: pregunta_libre', () => {
   test('acota el largo: es texto del lead entrando a otro prompt', () => {
     const r = validarClasificacionLLM({ pregunta_libre: 'a'.repeat(5000) });
     assert.ok(r.pregunta_libre.length <= 300, `quedo en ${r.pregunta_libre.length}`);
+  });
+});
+
+// ===========================================================================
+// MEMORIA CORTA (6-sep-2026) — la causa raiz, no un sintoma mas
+//
+// El LLM veia SOLO el ultimo mensaje del lead. De ahi salieron: "los 30
+// minutos" sin haberlos mencionado, "Última pregunta antes de contarte cómo
+// funciona" dos veces en 54 segundos, y repreguntar la urgencia justo despues
+// de explicar "por que ahora". Cada uno se habia parcheado pasandole al modelo
+// un dato calculado a mano; el arreglo de fondo es darle la conversacion.
+//
+// REPARTO DE TRABAJO, que es lo que estos tests fijan:
+//   · Detectar que un texto YA se envio = comparar strings -> CODIGO.
+//     Se probo pedirselo al LLM con el historial delante y contesto MANTENER
+//     sobre una pregunta que estaba ahi arriba, repitiendola igual.
+//   · Decidir si la respuesta ya cubre la pregunta = criterio -> LLM.
+// ===========================================================================
+describe('yaSeDijo: la contabilidad de lo ya dicho la hace el codigo', () => {
+  const filas = [
+    { ultimo_msg_lead: 'si', ultimo_msg_bot: ['Te entiendo perfectamente.', '---', 'Última pregunta antes de contarte cómo funciona: ¿Resolver esto es una prioridad AHORA para ti?'].join('\n') },
+    { ultimo_msg_lead: 'por que ahora?', ultimo_msg_bot: 'Buena pregunta. Lo más caro NO es la plata.' },
+  ];
+
+  test('BUG REAL de marlyy318: reconoce la pregunta que ya se envio', () => {
+    assert.equal(yaSeDijo(filas, 'Última pregunta antes de contarte cómo funciona: ¿Resolver esto es una prioridad AHORA para ti?'), true);
+  });
+
+  test('tolera diferencias de espacios y mayusculas', () => {
+    assert.equal(yaSeDijo(filas, '  ÚLTIMA PREGUNTA ANTES DE   CONTARTE CÓMO FUNCIONA: ¿resolver esto es una prioridad ahora para ti?  '), true);
+  });
+
+  test('no marca lo que nunca se dijo', () => {
+    assert.equal(yaSeDijo(filas, '¿Te sirve que reservemos los 30 minutos de una vez?'), false);
+  });
+
+  test('ignora textos muy cortos: darian falsos positivos', () => {
+    assert.equal(yaSeDijo(filas, 'si'), false);
+    assert.equal(yaSeDijo(filas, '¿Te parece?'), false);
+  });
+
+  test('sin historial no revienta y no inventa repeticiones', () => {
+    assert.equal(yaSeDijo([], 'cualquier cosa suficientemente larga para contar'), false);
+    assert.equal(yaSeDijo(null, 'cualquier cosa suficientemente larga para contar'), false);
+  });
+});
+
+describe('formatearHistorial: barato y legible para el prompt', () => {
+  test('ordena lead/bot y aplana las burbujas', () => {
+    const h = formatearHistorial([{ ultimo_msg_lead: 'hola', ultimo_msg_bot: ['uno', '---', 'dos'].join('\n') }]);
+    assert.match(h, /^LEAD: hola/m);
+    assert.match(h, /^TU: uno \| dos/m);
+  });
+
+  test('trunca lo largo: la memoria no puede costar mas que el prompt', () => {
+    const h = formatearHistorial([{ ultimo_msg_lead: 'x'.repeat(900), ultimo_msg_bot: 'y'.repeat(900) }]);
+    assert.ok(h.length < 500, `quedo en ${h.length} caracteres`);
+  });
+
+  test('vacio cuando no hay nada que recordar', () => {
+    assert.equal(formatearHistorial([]), '');
+    assert.equal(formatearHistorial(null), '');
   });
 });
