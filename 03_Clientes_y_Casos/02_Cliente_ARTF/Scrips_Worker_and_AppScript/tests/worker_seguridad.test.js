@@ -1009,3 +1009,39 @@ describe('En M1-M4 la pregunta del embudo no se omite nunca', () => {
       'se perdio el rescate del turno vacio: volveria a escalar en vez de repreguntar');
   });
 });
+
+// ===========================================================================
+// REGLAS NUEVAS DEL FILTRO 2 EN EL PROMPT (7-sep-2026)
+//
+// El tope de endeudamiento y la verificacion del calculo viven en el router,
+// pero dependen de que el clasificador sepa QUE extraer en la etapa nueva y de
+// que entienda una moneda extranjera. Estos tests fijan las dos cosas dentro
+// del prompt, que es donde se pierden en silencio si alguien lo poda.
+// ===========================================================================
+describe('El prompt sostiene las reglas nuevas del Filtro 2', () => {
+  const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+
+  test('la etapa M2_VERIFICAR_CALCULO tiene esquema propio', () => {
+    // Sin entrada en ESQUEMA_POR_ETAPA el LLM NO corre en esa etapa y se apagan
+    // crisis y hostilidad en silencio. Ya paso tres veces con etapas nuevas.
+    assert.ok(ESQUEMA_POR_ETAPA.M2_VERIFICAR_CALCULO, 'falta el esquema de la etapa nueva');
+    assert.match(ESQUEMA_POR_ETAPA.M2_VERIFICAR_CALCULO, /endeudamiento_pct/);
+    assert.match(ESQUEMA_POR_ETAPA.M2_VERIFICAR_CALCULO, /remanente_cop/);
+    assert.match(ESQUEMA_POR_ETAPA.M2_VERIFICAR_CALCULO, /crisis/, 'las escaladas de seguridad van en TODA etapa');
+    assert.match(ESQUEMA_POR_ETAPA.M2_VERIFICAR_CALCULO, /hostil/);
+  });
+
+  test('el contexto le dice que ratificar la cifra ES un dato, no un vacio', () => {
+    // Si devuelve null al ratificar, el router lo lee como "no dijo nada" y le
+    // vuelve a preguntar lo mismo: el bucle que venimos cerrando toda la semana.
+    assert.match(src, /ratificar es un dato/i);
+  });
+
+  test('la conversion de moneda extranjera esta en el glosario', () => {
+    // Decision del fundador: NO se le pide al lead que convierta (daña la
+    // friccion de la venta). El LLM convierte en silencio con tasa fija.
+    assert.match(src, /MONEDA EXTRANJERA/);
+    assert.match(src, /1 USD = 3\.500 COP/);
+    assert.match(src, /10500000/, 'el ejemplo de 3.000 dolares');
+  });
+});

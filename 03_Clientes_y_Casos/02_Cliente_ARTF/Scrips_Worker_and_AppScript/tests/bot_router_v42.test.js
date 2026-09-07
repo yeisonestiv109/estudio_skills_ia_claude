@@ -18,6 +18,7 @@ import assert from 'node:assert/strict';
 
 import {
   parseIngresoCOP, evaluarIngreso, calcularRemanente, evaluarEndeudamiento,
+  topeEndeudamiento,
   decidirSiResponder, decidirTurno,
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
   detectarUrgencia, detectarDolorLetra, detectarDolorLetras, detectarHostilidad, detectarEndeudamientoPct,
@@ -135,40 +136,62 @@ describe('Filtros del SOP V4.2', () => {
     assert.equal(evaluarEndeudamiento(30, null), 'no_sabe', 'sin ingreso no se decide');
   });
 
-  test(`Filtro 2: el criterio es que le queden $${REM / 1e6}M libres`, () => {
-    // 10M con 70% de deuda -> le quedan 3M -> pasa.
-    assert.equal(evaluarEndeudamiento(70, 10_000_000), 'ok');
-    // 10M con 80% -> le quedan 2M -> no pasa, y la deuda lo explica -> borderline.
-    assert.equal(evaluarEndeudamiento(80, 10_000_000), 'borderline');
-    // El limite exacto pasa.
-    assert.equal(evaluarEndeudamiento(75, 10_000_000), 'ok', '2.5M exactos pasan');
+  // ═══════════════════════════════════════════════════════════════════════
+  // REGLA NUEVA DEL FILTRO 2 (7-sep-2026). Estos tres tests se REESCRIBIERON:
+  // el criterio dejo de ser "cuanta plata le queda" y paso a ser "que
+  // porcentaje de su ingreso se le va en deudas", con un tope que sube con el
+  // ingreso. No se borro ninguno -- cada uno fija ahora la regla nueva.
+  //
+  // Decidido con la medicion delante: contra los 20 leads reales de la base
+  // que tienen ingreso Y endeudamiento, 8 (40%) que pasaban directo ahora van
+  // a la verificacion del calculo. Se eligio el tope estricto a sabiendas.
+  // ═══════════════════════════════════════════════════════════════════════
+  test('Filtro 2: el criterio es el tope de endeudamiento segun el ingreso', () => {
+    // Menos de 9M -> tope 50%.
+    assert.equal(topeEndeudamiento(6_000_000), 50);
+    assert.equal(topeEndeudamiento(8_999_999), 50);
+    // 9M o mas -> tope 60%.
+    assert.equal(topeEndeudamiento(9_000_000), 60);
+    assert.equal(topeEndeudamiento(25_000_000), 60);
+    // El limite exacto pasa: es "hasta el tope", no "por debajo del tope".
+    assert.equal(evaluarEndeudamiento(50, 8_000_000), 'ok');
+    assert.equal(evaluarEndeudamiento(60, 10_000_000), 'ok');
+    // Un punto por encima ya va a verificar el calculo.
+    assert.equal(evaluarEndeudamiento(51, 8_000_000), 'verificar_calculo');
+    assert.equal(evaluarEndeudamiento(61, 10_000_000), 'verificar_calculo');
+  });
+
+  test('por encima del tope NUNCA se descalifica de una: primero se verifica', () => {
+    // Es la regla que evita botar a alguien por una cuenta mal hecha. Ni el
+    // caso mas extremo sale directo a descalificado.
+    assert.equal(evaluarEndeudamiento(99, 30_000_000), 'verificar_calculo');
+    assert.equal(evaluarEndeudamiento(100, 6_000_000), 'verificar_calculo');
+    // `evaluarEndeudamiento` ya no devuelve 'borderline' ni 'descalifica':
+    // esas dos decisiones ahora viven mas adelante en el embudo.
+    const salidas = new Set();
+    for (let ing = 1_000_000; ing <= 30_000_000; ing += 250_000) {
+      for (let d = 0; d <= 100; d += 1) salidas.add(evaluarEndeudamiento(d, ing));
+    }
+    assert.deepEqual([...salidas].sort(), ['ok', 'verificar_calculo']);
   });
 
   test('el mismo % da distinto segun el ingreso: eso es el punto del cambio', () => {
-    // 60% de deuda: a quien gana 6M le quedan 2.4M (no pasa); a quien gana 10M
-    // le quedan 4M (pasa). Con el modelo viejo de tope por %, ambos eran iguales.
-    assert.equal(evaluarEndeudamiento(60, 6_000_000), 'borderline');
+    // 60% de deuda: quien gana 6M esta sobre su tope (50%) y va a verificar;
+    // quien gana 10M esta justo en su tope (60%) y pasa.
+    assert.equal(evaluarEndeudamiento(60, 6_000_000), 'verificar_calculo');
     assert.equal(evaluarEndeudamiento(60, 10_000_000), 'ok');
   });
 
-  test('la rama "deuda baja y sin remanente" es inalcanzable pasando el Filtro 1', () => {
-    // Comprobacion del hallazgo de la auditoria: con ingreso >= MIN y deuda
-    // < 50%, el remanente SIEMPRE supera el minimo. La rama existe para cuando
-    // el ingreso llegue por otra via (el Setter escribiendolo a mano), no por
-    // el embudo. Si alguien baja INGRESO_MINIMO por debajo de 2*REM, deja de
-    // ser inalcanzable -- y este test lo dira.
-    let alcanzada = 0;
-    for (let ing = MIN; ing <= 30_000_000; ing += 250_000) {
-      for (let d = 0; d < 50; d += 1) {
-        if (evaluarEndeudamiento(d, ing) === 'descalifica') alcanzada++;
-      }
-    }
-    assert.equal(alcanzada, 0,
-      'si esto deja de ser 0, revisa que INGRESO_MINIMO siga siendo >= 2 x REMANENTE_MINIMO');
-    assert.ok(MIN >= 2 * REM, 'la relacion entre los dos umbrales cambio: revisa la rama');
-
-    // Y con un ingreso por DEBAJO del filtro (via dashboard) si descalifica.
-    assert.equal(evaluarEndeudamiento(20, 3_000_000), 'descalifica');
+  test('el escalon de los 9M premia al reves en plata, y es intencional', () => {
+    // Efecto medido y aprobado a sabiendas por el fundador: quien gana 8,99M
+    // pasa con 4,50M libres; quien gana 9,00M pasa con 3,60M. El que gana MAS
+    // puede quedar con MENOS plata libre. El filtro es de habito de
+    // endeudamiento, no de liquidez. Si algun dia se quiere lo contrario, hay
+    // que volver a meter el piso de remanente como segunda condicion, y este
+    // test es el que hay que reescribir.
+    assert.equal(evaluarEndeudamiento(50, 8_999_999), 'ok');
+    assert.equal(evaluarEndeudamiento(60, 9_000_000), 'ok');
+    assert.ok(calcularRemanente(9_000_000, 60) < calcularRemanente(8_999_999, 50));
   });
 
   test('la cifra que se asume al confirmar el rango coincide con lo que dice el copy', () => {
@@ -463,10 +486,47 @@ describe('Descalificacion con valor', () => {
   // descalifica de una. Primero se pregunta que TIPO de deuda es, porque la
   // hipotecaria no cuenta igual. Solo se descarta si ademas es deuda de consumo
   // y no le sobra el minimo.
-  test('endeudamiento muy alto -> primero se pregunta el tipo de deuda', () => {
+  //
+  // SEGUNDO CAMBIO (fundador, 7-sep-2026): antes de preguntar el TIPO se
+  // pregunta si la CUENTA esta bien hecha. El error mas comun no es que el
+  // lead este ahogado, es que sumo la deuda total en vez de la cuota mensual,
+  // o metio arriendo/servicios/mercado, que son gastos y no deudas. Este test
+  // se reescribio para fijar el orden nuevo: calculo -> tipo -> descarte.
+  test('endeudamiento muy alto -> primero se verifica el calculo', () => {
     const p = decidirTurno(estadoEn('M2_ENVIADO', { salario_monto: 8_000_000 }), { endeudamiento_pct: 85 });
-    assert.equal(p.etapaNueva, 'M2_BORDERLINE', 'no se descarta sin preguntar');
+    assert.equal(p.etapaNueva, 'M2_VERIFICAR_CALCULO', 'no se descarta sin preguntar');
     assert.equal(p.estadoDestino, 'contactado');
+    assert.match(p.mensajes.join(' '), /pagas al mes en cuotas, o con el total de la deuda/);
+    assert.match(p.mensajes.join(' '), /arriendo, servicios o mercado no son deudas/);
+  });
+
+  test('si ratifica la cifra alta, RECIEN ahi se pregunta el tipo de deuda', () => {
+    // La hipoteca sigue siendo la ultima salida: descalificar aca botaria a
+    // alguien con deuda de vivienda, que el playbook trata distinto a proposito.
+    const p = decidirTurno(estadoEn('M2_VERIFICAR_CALCULO', { salario_monto: 8_000_000 }),
+      { endeudamiento_pct: 85 });
+    assert.equal(p.etapaNueva, 'M2_BORDERLINE');
+    assert.equal(p.estadoDestino, 'contactado');
+  });
+
+  test('si corrige la cifra y entra en su tope, sigue el embudo', () => {
+    // El caso que motiva toda la feature: habia sumado la deuda total.
+    const p = decidirTurno(estadoEn('M2_VERIFICAR_CALCULO', { salario_monto: 8_000_000 }),
+      { endeudamiento_pct: 35 });
+    assert.equal(p.etapaNueva, 'M3_ENVIADO');
+    assert.equal(p.estadoDestino, 'contactado');
+  });
+
+  test('si rectifica en plata y le sobra suficiente, sigue el embudo', () => {
+    const p = decidirTurno(estadoEn('M2_VERIFICAR_CALCULO', { salario_monto: 8_000_000 }),
+      { remanente_cop: 3_000_000 });
+    assert.equal(p.etapaNueva, 'M3_ENVIADO');
+    assert.equal(p.campos.remanente_cop, 3_000_000);
+  });
+
+  test('si no da NADA con que decidir, se le vuelve a preguntar: no se descarta sobre un vacio', () => {
+    const p = decidirTurno(estadoEn('M2_VERIFICAR_CALCULO', { salario_monto: 8_000_000 }), {});
+    assert.notEqual(p.estadoDestino, 'descalificado');
   });
 
   test('deuda alta + deuda de consumo + poco sobrante -> script 2', () => {
@@ -1220,6 +1280,7 @@ describe('Escalera de repreguntas antes de escalar', () => {
     // Una plantilla nueva entra sola a la lista blanca del verificador. Sin
     // esta lista, copy sin aprobar pasaria la compuerta en silencio.
     assert.deepEqual(COPY_PENDIENTE_APROBACION, [
+      'M1_PREGUNTAR_VARIABLES', // rescate por comisiones/bonos antes de descalificar
       'M2_PEDIR_SOBRANTE',    // segundo dato del borderline
       'M4_URGENCIA_REINTENTO',
       'M5_PITCH_REINTENTO',

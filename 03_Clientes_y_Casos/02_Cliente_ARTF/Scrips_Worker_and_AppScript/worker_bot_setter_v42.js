@@ -778,6 +778,8 @@ export const ESQUEMA_POR_ETAPA = {
   M2_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
   M2_NO_SABE:           `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
   M2_BORDERLINE:        `{${CAMPO_RAZONAMIENTO}"deuda_mayoritariamente_buena": boolean, ${CAMPOS_COMUNES}}`,
+  // Verificacion del calculo: se espera la cifra CORREGIDA, en % o en plata.
+  M2_VERIFICAR_CALCULO: `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
   M3_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"dolores": ["A"|"B"|"C"|"D"], "dolor_detalle": string|null, "dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
   M3_RECONDUCIR:        `{${CAMPO_RAZONAMIENTO}"dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
   M4_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, ${CAMPOS_COMUNES}}`,
@@ -823,6 +825,7 @@ const CONTEXTO_POR_ETAPA = {
   M2_ENVIADO: 'Se le pregunto su nivel de endeudamiento en porcentaje (deudas mensuales / ingresos x 100).',
   M2_NO_SABE: 'No sabia su endeudamiento; se le pidio un estimado y si le queda plata despues de pagar deudas.',
   M2_BORDERLINE: 'Se le pregunto que TIPO de deudas son (consumo, hipoteca, tarjetas). "Deuda buena" = vivienda/hipoteca.',
+  M2_VERIFICAR_CALCULO: 'El endeudamiento que dio quedo por encima del tope de su ingreso y se le pregunto si la cuenta esta bien hecha: si sumo las CUOTAS MENSUALES o la DEUDA TOTAL, y se le recordo que arriendo, servicios y mercado son gastos fijos y NO son deudas. Este mensaje es su respuesta. Extrae la cifra CORREGIDA: si rehace la cuenta y da un porcentaje nuevo va en "endeudamiento_pct"; si responde en plata va en "deuda_cop" (lo que paga al mes) o "remanente_cop" (lo que le queda). ⚠️ Si dice que la cuenta estaba bien o repite la MISMA cifra, devuelve esa misma cifra, no null: ratificar es un dato. Si dice que habia metido arriendo/servicios/mercado pero NO da la cifra nueva, deja todo en null para que se le vuelva a preguntar.',
   M3_ENVIADO: 'Se le pidio elegir su mayor frustracion: A) no me alcanza B) no se en que se va C) deberia estar mejor D) otra. PUEDE ELEGIR VARIAS ("C y B") -- devuelve TODAS en el array "dolores". Si dice "todas"/"todas las anteriores", devuelve ["A","B","C","D"]. Si incluye D, pon el texto libre en "dolor_detalle". ⚠️ "dolor_financiero" es TRUE ante CUALQUIER mencion a deudas, pagos, cuotas, tarjetas, creditos, prestamos, intereses, o a que no le alcanza / no le rinde la plata. Ejemplo real que se clasifico MAL: "D, me siento preocupada por la cantidad de deudas que tengo" -> dolor_financiero DEBE ser true. Solo es false si el tema no toca el dinero en absoluto (salud, pareja, trabajo sin componente economico).',
   M3_RECONDUCIR: 'Dijo un dolor no financiero; se le pregunto si su frustracion SI esta conectada con que su dinero no le alcanza. "dolor_financiero" es TRUE ante cualquier mencion a deudas, pagos, cuotas, tarjetas, creditos o a que no le alcanza la plata.',
   M4_ENVIADO: 'Se le pregunto si resolver esto es prioridad AHORA o algo para "cuando tenga mas tiempo/dinero".',
@@ -874,6 +877,7 @@ REGLAS DE EXTRACCION:
   · "salario integral" o "minimo integral" NO es el salario minimo: es un ingreso ALTO (~18-22 millones). Si el lead dice "integral", devuelve null en "ingreso_cop" y NUNCA lo leas como ~1.4 millones.
   · "SMLV" / "salario minimo" (sin "integral") si es el minimo colombiano: ~1.400.000 en 2026.
   · "un palo" = 1 millon. "luca" = mil.
+  · MONEDA EXTRANJERA: si da el ingreso en dolares, euros u otra moneda evidente, conviertelo TU a pesos y devuelve el resultado en "ingreso_cop", sin comentarlo ni pedirle que convierta. Tasa fija: 1 USD = 3.500 COP, 1 EUR = 3.800 COP. Ejemplo: "gano 3.000 dolares" -> 10500000. Si la moneda no es evidente, devuelve null.
 - ⚠️ SUMA LAS FUENTES. Si el lead menciona VARIOS ingresos, "ingreso_cop" es la SUMA, no el primero que aparece:
   · "4 millones del trabajo, 3 del negocio y 4 de un local" -> 11000000
   · "gano 5 millones fijos y unos 3 mas por comisiones"     -> 8000000

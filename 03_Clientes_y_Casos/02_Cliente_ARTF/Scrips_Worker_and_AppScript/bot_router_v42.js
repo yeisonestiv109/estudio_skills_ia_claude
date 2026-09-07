@@ -211,13 +211,21 @@ export function calcularRemanente(ingreso, pct) {
  * el ingreso puede llegar por otras vias (una cifra escrita a mano por el
  * Setter en el dashboard, por ejemplo). Hay un test que fija ambas cosas.
  */
+export function topeEndeudamiento(ingreso) {
+  if (typeof ingreso !== 'number' || !Number.isFinite(ingreso) || ingreso <= 0) return null;
+  return ingreso >= UMBRALES.INGRESO_TOPE_ALTO ? UMBRALES.TOPE_DEUDA_ALTO : UMBRALES.TOPE_DEUDA_BASE;
+}
+
 export function evaluarEndeudamiento(pct, ingreso) {
   if (pct === null || pct === undefined) return 'no_sabe';
-  const remanente = calcularRemanente(ingreso, pct);
-  // Sin ingreso no se puede calcular remanente: no se adivina ni se descarta.
-  if (remanente === null) return 'no_sabe';
-  if (remanente >= UMBRALES.REMANENTE_MINIMO) return 'ok';
-  return pct >= UMBRALES.ENDEUDAMIENTO_PARA_BORDERLINE ? 'borderline' : 'descalifica';
+  const tope = topeEndeudamiento(ingreso);
+  // Sin ingreso no hay tope contra que comparar: no se adivina ni se descarta.
+  if (tope === null) return 'no_sabe';
+  if (pct <= tope) return 'ok';
+  // Por encima del tope NO se descarta: primero se verifica el calculo. Un
+  // endeudamiento absurdo casi siempre es una cuenta mal hecha (deuda total en
+  // vez de cuota mensual, o arriendo/servicios/mercado metidos como deuda).
+  return 'verificar_calculo';
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +452,16 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
       summary: c.pregunta_libre
         ? `Pregunta algo antes de dar la cifra ("${c.pregunta_libre}"). Se le responde y se insiste con el estimado.`
         : 'No sabe su endeudamiento. Se insiste suave con un estimado.',
+    };
+  }
+  if (veredicto === 'verificar_calculo') {
+    return {
+      mensajes: [render(P.M2_VERIFICAR_CALCULO, nombre)],
+      etapaNueva: 'M2_VERIFICAR_CALCULO', estadoDestino: 'contactado',
+      handoffRazon: null, motivoPerdida: null,
+      campos: { endeudamiento_pct: pct },
+      permitirEmpatia: false,
+      summary: `Deuda ${pct}% sobre el tope de ${topeEndeudamiento(ingreso)}% para un ingreso de ${ingreso}. Se verifica el calculo antes de descartar.`,
     };
   }
   if (veredicto === 'borderline') {
@@ -836,6 +854,23 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
             summary: `Ingreso ${ing} bajo el umbral PERO el texto sugiere que es remanente, no ingreso total. Se aclara antes de descalificar.`,
           };
         }
+        // RESCATE POR INGRESOS VARIABLES (7-sep-2026). Antes de cerrarle la
+        // puerta a quien no llega con el fijo, se le pregunta si ademas recibe
+        // comisiones, bonos o extras. Es la misma logica del rescate por
+        // remanente de arriba: una pregunta barata contra un lead quemado.
+        // Solo se hace UNA vez (si ya venimos de M1_INGRESO_AMBIGUO, no se
+        // repite) y solo con la perilla de copy pendiente encendida.
+        if (COPY_PENDIENTE_HABILITADO && etapa !== 'M1_INGRESO_AMBIGUO'
+            && etapa !== 'M1_ACLARAR_REMANENTE') {
+          return {
+            mensajes: [render(P.M1_PREGUNTAR_VARIABLES, nombre)],
+            etapaNueva: 'M1_INGRESO_AMBIGUO', estadoDestino: 'contactado',
+            handoffRazon: null, motivoPerdida: null,
+            campos: { profesion: c.profesion ?? null },
+            permitirEmpatia: false,
+            summary: `Ingreso fijo ${ing} bajo el umbral. Se pregunta por comisiones/bonos antes de descalificar.`,
+          };
+        }
         return {
           mensajes: partirEnBurbujas(render(P.DESC_INGRESO, nombre)),
           etapaNueva: 'DESCALIFICADO',
@@ -863,6 +898,73 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     case 'M2_ENVIADO':
     case 'M2_NO_SABE':
       return evaluarYResponderEndeudamiento(estado, c, nombre, etapa, textoLead);
+
+    // =====================================================================
+    // VERIFICACION DEL CALCULO (7-sep-2026). El lead reporto un endeudamiento
+    // por encima del tope de su ingreso y se le pregunto si la cuenta esta
+    // bien hecha. Este turno es su respuesta.
+    //
+    // Tres salidas:
+    //   1. Corrige a una cifra dentro del tope -> sigue el embudo (M3).
+    //   2. Rectifica en plata y le sobra suficiente -> sigue el embudo.
+    //   3. Ratifica la cifra alta -> M2_BORDERLINE, que es la ULTIMA salida:
+    //      si la mayoria es deuda buena (vivienda/hipoteca) todavia pasa.
+    //      Descalificar aca seria botar a alguien con hipoteca, que el
+    //      playbook trata distinto a proposito.
+    case 'M2_VERIFICAR_CALCULO': {
+      const pctCorregido = c.endeudamiento_pct ?? null;
+      const ingresoConocido = estado?.salario_monto ?? c.ingreso_cop ?? null;
+      const sobrante = c.remanente_cop ?? null;
+      const tope = topeEndeudamiento(ingresoConocido);
+
+      if (c.objecion_num || c.objecion_detectada) {
+        return manejarObjecion(estado, c, nombre, 'Objecion al verificar el calculo del endeudamiento (M2).');
+      }
+
+      // Rectifico en plata: esa cifra manda sobre cualquier porcentaje estimado.
+      if (sobrante !== null && sobrante >= UMBRALES.REMANENTE_MINIMO) {
+        return {
+          mensajes: [render(P.M3, nombre)],
+          etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
+          handoffRazon: null, motivoPerdida: null,
+          campos: { remanente_cop: sobrante },
+          permitirEmpatia: true,
+          summary: `Verificacion del calculo: rectifica que le sobran ${sobrante} al mes. Filtro 2 superado.`,
+        };
+      }
+
+      // Corrigio el porcentaje y ahora si entra en su tope.
+      if (pctCorregido !== null && tope !== null && pctCorregido <= tope) {
+        return {
+          mensajes: [render(P.M3, nombre)],
+          etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
+          handoffRazon: null, motivoPerdida: null,
+          campos: { endeudamiento_pct: pctCorregido },
+          permitirEmpatia: true,
+          summary: `Verificacion del calculo: corrige a ${pctCorregido}%, dentro del tope de ${tope}%. Filtro 2 superado.`,
+        };
+      }
+
+      // No dio NADA con que decidir (ni cifra corregida ni sobrante). Misma
+      // regla de oro del resto del embudo: no se descarta sobre un vacio.
+      if (pctCorregido === null && sobrante === null) {
+        return reencauzar(estado, c, nombre,
+          'Verificacion del calculo sin datos: no corrigio la cifra ni dijo cuanto le sobra.');
+      }
+
+      // Ratifica la cifra alta. Queda UNA salida: que la mayoria sea deuda
+      // buena. Es exactamente el borderline de siempre.
+      return {
+        mensajes: COPY_PENDIENTE_HABILITADO
+          ? [render(P.M2_BORDERLINE, nombre), render(P.M2_PEDIR_SOBRANTE, nombre)]
+          : [render(P.M2_BORDERLINE, nombre)],
+        etapaNueva: 'M2_BORDERLINE', estadoDestino: 'contactado',
+        handoffRazon: null, motivoPerdida: null,
+        campos: pctCorregido !== null ? { endeudamiento_pct: pctCorregido } : {},
+        permitirEmpatia: false,
+        summary: `Verificacion del calculo: ratifica ${pctCorregido ?? 'la cifra'}%, sigue sobre el tope. Puede ser deuda buena: se pregunta antes de descartar.`,
+      };
+    }
 
     // =====================================================================
     case 'M2_BORDERLINE': {

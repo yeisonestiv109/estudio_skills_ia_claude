@@ -64,7 +64,7 @@ r.status >= 400 && /no puede escribir el estado/.test(r.cuerpo)
 // Esta lista tiene que incluir TODA etapa que el router pueda escribir.
 const ETAPAS_QUE_ESCRIBE_EL_ROUTER = [
   'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
-  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
+  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO',
   'M3_ENVIADO', 'M3_RECONDUCIR',
   'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
   'M5_ENVIADO', 'M5_PITCH_REINTENTO',

@@ -253,6 +253,35 @@ export const UMBRALES = {
   // Umbral que separa "le sobra poco porque debe mucho" (se pregunta que tipo
   // de deuda es: la hipotecaria no cuenta igual) de "le sobra poco y punto".
   ENDEUDAMIENTO_PARA_BORDERLINE: 50,
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // TOPE DE ENDEUDAMIENTO SEGUN EL INGRESO (7-sep-2026, decision del fundador)
+  //
+  // Antes el Filtro 2 miraba la PLATA que queda (remanente >= 2,5M). Ahora
+  // mira el HABITO: que porcentaje de su ingreso se le va en deudas, con un
+  // tope que sube con el ingreso porque a mayor ingreso hay mas capacidad de
+  // absorber deuda.
+  //
+  //   gana menos de 9M  -> tolera hasta 50%
+  //   gana 9M o mas     -> tolera hasta 60%
+  //
+  // ⚠️ DOS EFECTOS MEDIDOS, LOS DOS APROBADOS A SABIENDAS:
+  //
+  // 1. El escalon premia al reves en plata absoluta: quien gana 8,99M pasa
+  //    con 4,50M libres, y quien gana 9,00M pasa con 3,60M. El que gana MAS
+  //    puede quedar con MENOS plata libre. Es intencional: el filtro es de
+  //    habito de endeudamiento, no de liquidez.
+  //
+  // 2. Aprieta. Medido contra los 20 leads reales de la base que tienen
+  //    ingreso Y endeudamiento: 8 de 20 (40%) que pasaban directo ahora van a
+  //    la repregunta de calculo. Entre ellos uno de 14,2M al 65% al que le
+  //    quedan 4,97M libres. Se eligio el tope estricto con esa cifra delante.
+  //
+  // Ninguno de los dos se "arregla": son la regla que se pidio.
+  // ─────────────────────────────────────────────────────────────────────────
+  INGRESO_TOPE_ALTO: 9_000_000,
+  TOPE_DEUDA_BASE: 50,
+  TOPE_DEUDA_ALTO: 60,
   SMLV_2026: 1_420_000,
 
   // Escalamiento por resistencia. El SOP V4.2 de Javier dice 2 (misma objecion
@@ -362,6 +391,18 @@ Ejemplo: $1.500.000 en deudas ÷ $7.000.000 de ingresos × 100 = 21%
 P.M2_BORDERLINE = `Entiendo. ¿Qué tipo de deudas son? (créditos de consumo, hipoteca, tarjetas)`;
 
 P.M2_NO_SABE = `Sin presión, dame un estimado. ¿Te queda plata después de pagar deudas o todo se va en eso?`;
+
+/**
+ * REPREGUNTA DE CALCULO (7-sep-2026). Copy OFICIAL, entregado literal por el
+ * fundador -- no se reescribe ni se "mejora".
+ *
+ * POR QUE EXISTE: un endeudamiento por encima del tope casi siempre es un
+ * error de cuentas, no una situacion real. Los dos errores medidos en
+ * conversaciones reales son (1) dar la deuda TOTAL en vez de la cuota mensual,
+ * y (2) meter arriendo, servicios y mercado, que son gastos fijos y NO deudas.
+ * Antes de descalificar a alguien por una cuenta mal hecha, se le pregunta.
+ */
+P.M2_VERIFICAR_CALCULO = `Ok, {nombre}, ese cálculo ¿lo sacaste con lo que pagas al mes en cuotas, o con el total de la deuda? Ten presente que los gastos en arriendo, servicios o mercado no son deudas, NO SE INCLUYEN en el cálculo.`;
 
 // ---------------------------------------------------------------------------
 // MENSAJE 3 — Validacion de Dolor
@@ -493,6 +534,23 @@ Nos vemos en la llamada.`;
 // al dinero que le SOBRA despues de gastos, no a su ingreso total. Descalificar
 // ahi es perder un lead bueno. Copy literal del proyecto de Javier.
 P.M1_ACLARAR_REMANENTE = `Solo para que estemos en la misma página: ¿esos que mencionas son tu ingreso total al mes, o lo que te queda después de cubrir gastos? Te pregunto porque cambia mucho el análisis.`;
+
+/**
+ * RESCATE POR INGRESOS VARIABLES (7-sep-2026, punto 5 del fundador).
+ *
+ * "Se debe validar si existen otras fuentes de ingresos variables (bonus,
+ * comisiones, extras) que puedan elevar la liquidez real."
+ *
+ * Se pregunta SOLO como rescate: cuando el FIJO no alcanza el piso y el lead
+ * iba directo a descalificado. A quien ya califica no se le gasta un turno.
+ *
+ * ⚠️ COPY REDACTADO POR CLAUDE, PENDIENTE DE APROBACION DE JAVIER. Va detras
+ * de COPY_PENDIENTE_HABILITADO: mientras esa perilla siga en false, este texto
+ * NO le llega a ningun lead y el flujo descalifica como siempre. El mecanismo
+ * ya esta probado; lo unico que falta es el visto bueno al texto.
+ */
+P.M1_PREGUNTAR_VARIABLES = `Antes de sacar conclusiones, {nombre}: ¿ese es tu fijo, o además te entran comisiones, bonos o trabajos extra? Te pregunto porque a mucha gente le suma bastante y cambia el análisis.`;
+P.M1_PREGUNTAR_VARIABLES_pendienteAprobacion = true;
 
 
 // ---------------------------------------------------------------------------
@@ -844,7 +902,7 @@ export const PLAYBOOK_OBJECIONES = [
  */
 export const FASE_POR_ETAPA = {
   M1_ENVIADO: 'M1', M1_INGRESO_AMBIGUO: 'M1', M1_RANGO_PREGUNTADO: 'M1', M1_ACLARAR_REMANENTE: 'M1',
-  M2_ENVIADO: 'M2', M2_NO_SABE: 'M2', M2_BORDERLINE: 'M2',
+  M2_ENVIADO: 'M2', M2_NO_SABE: 'M2', M2_BORDERLINE: 'M2', M2_VERIFICAR_CALCULO: 'M2',
   M3_ENVIADO: 'M3', M3_RECONDUCIR: 'M3',
   M4_ENVIADO: 'M4', M4_URGENCIA_REINTENTO: 'M4',
   M5_ENVIADO: 'M5', M5_PITCH_REINTENTO: 'M5',
@@ -1146,7 +1204,7 @@ export const ETAPAS_FILTRO_1 = new Set([
  */
 export const ETAPAS_PRE_PITCH = new Set([
   'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
-  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE',
+  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO',
   'M3_ENVIADO', 'M3_RECONDUCIR',
   'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
 ]);
