@@ -1443,14 +1443,28 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       return {
         mensajes: [cierre],
         etapaNueva: 'HANDOFF', estadoDestino: null,
-        handoffRazon: 'agendamiento_manual_pendiente',
+        // ⚠️ `null` A PROPOSITO, no es un descuido. CASO MARLY (7-sep-2026):
+        // el handoff YA se creo en M6/M7 cuando el lead dijo que no encontraba
+        // horarios (esa fue la Alerta 1). Repetir la razon aca disparaba una
+        // SEGUNDA alerta en Google Chat por el mismo caso, media hora despues,
+        // y le llegaba al Setter como si fuera un lead nuevo.
+        //
+        // Devolver null NO pierde el handoff: `fn_bot_procesar_turno` asigna
+        // `handoff_razon = coalesce(nullif(btrim(p_handoff_razon),''), handoff_razon)`,
+        // asi que null CONSERVA el valor que ya estaba. El lead queda igual de
+        // escalado, en HANDOFF, y el Setter recibe UNA alerta, no dos.
+        //
+        // De paso deja de reaplicarse el tag HANDOFF_AGENDAMIENTO_MANUAL_PENDIENTE
+        // en ManyChat, que era ruido del mismo origen.
+        handoffRazon: null,
         motivoPerdida: null, campos: {},
         permitirEmpatia: false,
         // El Worker usa esto para eximir la burbuja de la lista blanca y para
         // dejar constancia de que fue texto generado (mismo contrato que reencauzar()).
         textoGenerado: generada || null,
         summary: `Franja informada por el lead: "${franja}". Se le confirmo el cierre `
-          + `(${generada ? 'generado por el LLM' : 'plantilla estandar'}) y queda en HANDOFF definitivo.`,
+          + `(${generada ? 'generado por el LLM' : 'plantilla estandar'}) y queda en HANDOFF definitivo. `
+          + 'No se re-notifica: la alerta salio cuando dijo que no encontraba horarios.',
       };
     }
 

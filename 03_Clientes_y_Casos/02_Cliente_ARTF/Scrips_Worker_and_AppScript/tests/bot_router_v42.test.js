@@ -1764,7 +1764,16 @@ describe('SIN_HORARIOS ya no deja al lead en visto (bug real 5-sep-2026)', () =>
     const p = decidirTurno(estado, {}, 'los sábados en la mañana');
     assert.ok(p.mensajes.length > 0, 'no se queda mudo');
     assert.equal(p.etapaNueva, 'HANDOFF', 'y despues si cierra para siempre');
-    assert.equal(p.handoffRazon, 'agendamiento_manual_pendiente');
+    // Ajustado el 7-sep-2026 (caso Marly). Este test es de 5-sep y protege que
+    // el lead NO quede en visto; lo de la razon aqui era incidental. Repetirla
+    // disparaba una SEGUNDA alerta en Google Chat por el mismo caso (la 1ra ya
+    // salio en M6/M7), y al Setter le llegaba como si fuera un lead nuevo.
+    // `null` NO pierde el handoff: fn_bot_procesar_turno hace
+    // coalesce(nullif(btrim(p_handoff_razon),''), handoff_razon) -> conserva el
+    // que ya estaba. El invariante real (sigue escalado) se afirma abajo.
+    assert.equal(p.handoffRazon, null, 'no vuelve a notificar');
+    assert.equal(estado.handoff_razon, 'agendamiento_manual_pendiente',
+      'y el handoff que ya tenia se conserva: el Setter sigue enterado');
     assert.match(p.summary, /sábados en la mañana/, 'la franja queda anotada para el Setter');
   });
 
@@ -2039,5 +2048,51 @@ describe('CONOCIMIENTO_PLAYBOOK: el corpus que ancla las respuestas libres', () 
     // siquiera lo vea.
     assert.ok(!/https?:\/\//.test(CONOCIMIENTO_PLAYBOOK),
       'el corpus de conocimiento no puede contener URLs');
+  });
+});
+
+// ===========================================================================
+describe('Sin horarios: UNA alerta, no dos (caso Marly, 7-sep-2026)', () => {
+  const st = (etapa, extra = {}) => ({
+    estado_codigo: "calificado", etapa_bot: etapa, nombre: "Marly",
+    salario_monto: 9_000_000, objeciones_consecutivas: 0,
+    ultima_objecion_codigo: null, handoff_razon: null, ...extra,
+  });
+
+  test("paso 1: decir que no hay horarios SÍ escala y notifica", () => {
+    const p = decidirTurno(st("M7_ENVIADO"), { sin_horarios: true }, "no me aparece nada");
+    assert.equal(p.handoffRazon, "agendamiento_manual_pendiente");
+    assert.equal(p.etapaNueva, "SIN_HORARIOS_ESPERANDO_FRANJA");
+  });
+
+  test("paso 2: informar la franja NO vuelve a notificar", () => {
+    // El Worker dispara la alerta de Google Chat con `plan.handoffRazon`.
+    // Repetir la razón aquí mandaba una segunda alerta por el MISMO caso, media
+    // hora después, y al Setter le llegaba como si fuera un lead nuevo.
+    const p = decidirTurno(
+      st("SIN_HORARIOS_ESPERANDO_FRANJA", { handoff_razon: "agendamiento_manual_pendiente" }),
+      {}, "los sábados en la mañana",
+    );
+    assert.equal(p.handoffRazon, null, "null = no se dispara una segunda alerta");
+    assert.ok(p.mensajes.length > 0, "pero al lead SÍ se le contesta");
+  });
+
+  test("el lead NO se queda sin escalar: la etapa sigue siendo HANDOFF", () => {
+    // Es lo que hace seguro devolver null. La RPC asigna
+    // `coalesce(nullif(btrim(p_handoff_razon),''), handoff_razon)`, así que null
+    // CONSERVA el handoff que ya estaba: el lead queda igual de escalado.
+    const p = decidirTurno(
+      st("SIN_HORARIOS_ESPERANDO_FRANJA", { handoff_razon: "agendamiento_manual_pendiente" }),
+      {}, "los sábados",
+    );
+    assert.equal(p.etapaNueva, "HANDOFF");
+    assert.notEqual(p.estadoDestino, "agendado");
+  });
+
+  test("y después de eso el bot se calla", () => {
+    const r = decidirSiResponder(
+      st("HANDOFF", { handoff_razon: "agendamiento_manual_pendiente" }),
+    );
+    assert.equal(r.responder, false, "el turno es del Setter, no del bot");
   });
 });
