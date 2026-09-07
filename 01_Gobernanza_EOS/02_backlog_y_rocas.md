@@ -4821,3 +4821,43 @@ Congelar la etapa y reusar `ESQUEMA_POR_ETAPA` significa que un lead nuevo se qu
 
 ### Bug abierto
 Los tags de handoff de ManyChat **no existen** (`Tag does not exist`), así que esa señal al Setter está rota.
+
+---
+
+## 🚀 Sesión 7-sep-2026 — Preparación a producción V4.2
+
+**Compuerta en verde: 522 tests del bot + tsc. Commits `788d634`, `880dbd7` (base de conocimiento) y `4f083d3` (dashboard).**
+
+### Meta 1.1 — La doble alerta (caso Marly) ✅
+Cuando un lead decía que no encontraba horarios, el Setter recibía **dos** alertas en Google Chat por el mismo caso: la primera al momento (M6/M7), y otra media hora después, al contestar el lead con su franja — y esa segunda le llegaba como si fuera un lead nuevo. Causa: `case 'SIN_HORARIOS_ESPERANDO_FRANJA'` volvía a devolver `handoffRazon`, y el Worker dispara la notificación desde ese campo. Ahora devuelve `null`, que **no pierde la escalada**: `fn_bot_procesar_turno` hace `coalesce(nullif(btrim(p_handoff_razon),''), handoff_razon)`, así que null conserva el handoff ya puesto. Cubierto con 4 tests de regresión.
+
+### Meta 1.2 — Calendario ✅ (ya estaba)
+`CALENDAR_LINK` ya era `CALENDAR_ARTF` (`iMW5LBbkcAvorypF9`) desde el 5-sep, y sobrevivió al refactor. Confirmado con el fundador que ese ES el calendario real de producción. No había ningún link de pruebas quemado.
+
+### Meta 2 — El purgado NO se pudo hacer, y está bien que así sea ⚠️→✅
+`activity_log` es **append-only por diseño** (`trg_log_inmutable`, `trg_no_truncate`, `fn_append_only`). El borrado abortó entero — atómico, no tocó nada. Sacar las 1.614 filas de QA exigía desactivar el blindaje de la auditoría de producción, con 23.428 filas reales dentro. **Decisión: se respeta el ledger y se marca el origen.**
+
+- `clientes.es_prueba` + índice parcial (aditivo, reversible).
+- **48 cuentas marcadas por marcador explícito, jamás por nombre.** Buscar `%javier%` o `%qa%` habría destruido ~50 leads REALES apellidados Javier/Suárez, 4 Marly reales y un "Luigi Qao". Se conservan los 51 fixtures `TEST-*` y `QA Javier Suárez (prueba interna)`.
+- Trigger `fn_marcar_es_prueba`: ataca la causa, no el síntoma — el smoke se auto-marca al crear la cuenta, así ninguna corrida futura vuelve a ensuciar. **No marca `TEST-%`/`DEBUG-%`**: los crea Playwright y los necesita visibles (se intentó y se corrigió el mismo día).
+- `vw_pipeline` y `vw_embudo_diario` filtran. **El embudo venía inflado hasta un 23,8%** en días de QA (5-sep: 63 leads reportados, 48 reales).
+
+### ⚠️ Regresión introducida y corregida en la misma sesión
+Al reemplazar `vw_pipeline` se perdió `security_invoker=true` — `CREATE OR REPLACE VIEW` **no conserva reloptions**, y la vista quedó ignorando la RLS. La detectó `get_advisors`. **Es la cuarta vez que el proyecto pisa esta mina** (`20260819153640`, `20260821200444`, `20260828154332`, y esta). La migración ahora lleva el `WITH` y un `ALTER VIEW` de refuerzo. Documentado en memoria.
+
+### Meta 3 — Cabos sueltos y Data Flywheel ✅ (diseño, sin código)
+Ver `03_Clientes_y_Casos/02_Cliente_ARTF/DISENO_DATA_FLYWHEEL_V42.md`.
+
+**Cabos de código: cerrados.** La memoria conversacional y `adaptarObjecionConLLM` con historial ya estaban listos desde el 6-sep; cero `TODO`/`FIXME` reales en el router.
+
+**El bloqueante del Flywheel es uno solo y concreto: no se guarda la decisión del LLM.** `activity_log.payload` solo lleva `sop_version`/`etapa_bot`/`objecion`, y `llm_telemetria` es salud de cuota agregada. Sin ese registro no se puede medir si el modelo mejora. Se arregla enriqueciendo un `payload` que ya se escribe en cada turno (cero llamadas extra). Corpus real hoy: **284 pares lead/bot** — alcanza para evaluar, no para afinar.
+
+### Hallazgo aparte: un test e2e llevaba roto por calendario
+`vincular-reserva-telefono-crudo` fija una reserva del 28-ago y filtra por "Esta semana": se cayó solo al pasar esa semana, tapando regresiones. Ahora el `beforeEach` la reprograma a la semana en curso. **Sin verificar**: el test no llega ahí, se queda antes en "Sincronizando con Google Calendar…" (dependencia de credenciales de Google que no funcionan en local).
+
+### Pendientes que siguen abiertos
+- **Riesgo alto:** techo de Groq (~2 leads/min en plan gratis) contra ráfagas de 55-70 leads/día. Decisión comercial.
+- Abrir el Flow de ManyChat (`V42_EN_PRUEBA`) para que el canary vea tráfico real.
+- Aprobación de Javier: 3 plantillas + umbrales de resistencia.
+- Bumps del SOP de Recuperación (diferido a propósito, necesita Cron Trigger).
+- `git push` de ambos repos.
