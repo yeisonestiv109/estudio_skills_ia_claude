@@ -4861,3 +4861,13 @@ Ver `03_Clientes_y_Casos/02_Cliente_ARTF/DISENO_DATA_FLYWHEEL_V42.md`.
 - Aprobación de Javier: 3 plantillas + umbrales de resistencia.
 - Bumps del SOP de Recuperación (diferido a propósito, necesita Cron Trigger).
 - `git push` de ambos repos.
+
+### 🚀 Despliegue a producción — 9-sep-2026
+**`artf-bot-setter-v42` EN VIVO. Version ID `273cb48d-7412-4ad5-9b5c-64951048be21`.**
+Verificado en caliente: `POST` sin secreto → `401` (la autenticación filtra), `GET` → `405`. Ningún 5xx.
+
+⚠️ **`BOT_ACTIVO = "true"`**: el bot le HABLA a los leads, no está en modo secretaria silenciosa. Lo que entre por el Flow, lo contesta él.
+
+⚠️ **`git push` bloqueado por el clasificador de permisos** (tercera vez en el proyecto). Los 3 commits — `788d634`, `880dbd7`, `836efef` — están en local, en `setup/base-conocimiento`, pero **NO en el remoto**. Lo desplegado en Cloudflare sí corresponde exactamente a `836efef` (árbol limpio al desplegar). Hay que correr el push a mano, o añadir una regla de permiso Bash en settings.
+
+Pendiente para que el canary vea tráfico real: **abrir el Flow de ManyChat (`V42_EN_PRUEBA`)**. Sin eso el Worker está vivo pero no le llega nada.
