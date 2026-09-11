@@ -1,5 +1,5 @@
 {
-  "_lea_esto": "Dataset de etiquetado del Setter experto. Es el fixture de calificacion_dinamica.test.js: si alguien mueve un umbral fuera de la banda admisible, ese test dice exactamente que caso rompio. NO editar a mano -- se regenera etiquetando de nuevo en el artefacto con la misma semilla.",
+  "_lea_esto": "Dataset de etiquetado del Setter experto (50 casos, 6-sep-2026). El modulo calificacion_dinamica.js que lo usaba (piso de ingreso 4,5M) se DESCARTO el 11-sep-2026 por decision del fundador: el Filtro 1 es 6M COP, en UMBRALES de sop_v42_plantillas.js. Se conserva como referencia del criterio experto para futuras evaluaciones. El modulo y su test se recuperan de git (commit anterior al descarte). NO editar los casos a mano.",
   "version": "artf-etiquetado-calificacion-v1",
   "semilla": 20260906,
   "etiquetado_en": "2026-09-06T23:28:11.991Z",
