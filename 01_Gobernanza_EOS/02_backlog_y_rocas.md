@@ -12,17 +12,18 @@
 
 ## Estado en una línea
 
-Worker V4.2 **en producción** (`984cea04`), dashboard en `master` (`67cc463`),
-bot recibiendo leads reales. Hay **1 commit del bot sin desplegar** (`88097dd`).
+Worker V4.2 **en producción** (versión `df08a74e`, código del 9-sep), dashboard
+en `master` (`67cc463`), bot recibiendo leads reales. Hay **1 commit del bot sin
+desplegar** (`88097dd`).
 
 ## 🔴 LO PRIMERO: qué está y qué no
 
 | | |
 |---|---|
 | Bot — último commit | `88097dd` (los 6 fallos del 11-sep) — **NO desplegado** |
-| Bot — desplegado en Cloudflare | `984cea04` |
+| Bot — desplegado en Cloudflare | versión `df08a74e` (11-sep 15:47, *Secret Change* sobre el código de `273cb48d`, 9-sep = commit `788d634`). ⚠️ **NO es `984cea04`**: esa versión es del 6-sep y quedó 3 atrás — un rollback "a lo que estaba" retrocedería cinco días |
 | Dashboard — `master` | `67cc463`, subido, Vercel no se usa (corre local) |
-| Base de datos | sana: pool reciclado, rollbacks detenidos |
+| Base de datos | **sana desde el 11-sep 18:36 UTC**, tras matar los backends envenenados (ver §1) |
 | Suite E2E | 14/14 en corrida serial |
 
 **Para desplegar el bot:** `cd .../Scrips_Worker_and_AppScript && npx wrangler deploy`
@@ -54,6 +55,47 @@ separadas**. Si sube cientos por segundo con `xact_commit` quieto, hay bucle.
 ⚠️ Medirlo con `with a as (...), pg_sleep(10), b as (...)` en UNA transacción da
 **0 siempre** (las vistas de estadísticas se cachean por transacción) — ese error
 nos costó horas.
+
+### 🔁 RECAÍDA — el incidente NO estaba cerrado (11-sep, 18:23 UTC)
+
+Este documento decía "pool reciclado, rollbacks detenidos" y **era falso**.
+Nunca paró: **~358.000 conflictos/hora sin una sola hora en cero** durante las
+24 h siguientes, y el acumulado subió de 769.228.675 a **856.639.391** (+86
+millones). Medido en vivo: **1.617 rollbacks/segundo** contra 0,4 commits/s.
+
+La causa raíz sí estaba arreglada — `fn_reclamar_lead` y
+`fn_calificar_lead_con_datos` releen la fila (verificado con
+`pg_get_functiondef`). Lo que seguía vivo era el **paso 5**: conexiones de
+PostgREST envenenadas reintentando **solas**, con la versión congelada
+(`version enviada 3, version actual 4`) sobre 3 leads sin actividad real desde
+hacía 15 horas. En `edge_logs`: 19 peticiones en 26 minutos, todas del Worker,
+todas 200. **No había ningún cliente HTTP detrás.**
+
+**Lo que lo mató** (el "Restart database" NO bastó — se creyó que sí y costó
+24 h más). Matar quirúrgicamente los backends viejos, desde el **SQL Editor**:
+
+```sql
+select pid, pg_terminate_backend(pid)
+from pg_stat_activity
+where datname = current_database()
+  and application_name like 'PostgREST%'
+  and backend_start < timestamptz '<antes del envenenamiento>'
+  and coalesce(query, '') <> 'LISTEN "pgrst"'   -- esta NO se toca
+  and pid <> pg_backend_pid();
+```
+
+Datar el envenenamiento con `backend_start` (las culpables comparten edad).
+PostgREST reconecta solo. **Resultado: de 1.617/s a 0 en 44 segundos**, commits
+subiendo a ~2/s.
+
+Dos trampas nuevas, las dos nos habrían costado horas otra vez:
+
+- **El log de Postgres viene topado en 6.000 líneas/minuto exactas** (100/s).
+  Con 1.300-1.600 rollbacks/s reales, contar líneas de log da una cifra **13×
+  baja**. `xact_rollback` es el único contador que no miente.
+- **El MCP de Supabase entra como `supabase_read_only_user`** y no tiene
+  `pg_signal_backend`: el `pg_terminate_backend` falla con `42501` y hay que
+  correrlo desde el SQL Editor (que entra como `postgres`).
 
 ## 2. Rendimiento del dashboard: 2 cuellos, los dos medidos
 
