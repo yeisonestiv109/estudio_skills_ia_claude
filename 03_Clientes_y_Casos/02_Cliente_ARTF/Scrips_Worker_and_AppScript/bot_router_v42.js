@@ -443,6 +443,29 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
     // el Worker la responda con el playbook delante y DESPUES insista con el
     // estimado. Si no pregunto nada (o el LLM no logra responder), el turno
     // queda exactamente como antes.
+    // COLETILLA INNECESARIA (bug real, 11-sep-2026). Tras una aclaracion del
+    // Setter humano, el lead contesto "ahh ok" y el bot le pego encima "Sin
+    // presion, dame un estimado..." -- una frase escrita para vencer
+    // RESISTENCIA, delante de alguien que no estaba resistiendo nada. Sobraba y
+    // se notaba.
+    //
+    // Un acuse de recibo no es un "no se". Si el LLM entendio el turno y
+    // redacto una respuesta a la medida de ESTA conversacion, esa vale mas que
+    // la plantilla: manda lo que el modelo escribio y se queda esperando la
+    // cifra, sin insistir de mas.
+    const acuse = CATCHALL_LLM_HABILITADO && typeof c.respuesta_empatica === 'string'
+      ? c.respuesta_empatica.trim()
+      : '';
+    if (acuse && !c.pregunta_libre) {
+      return {
+        mensajes: [acuse],
+        etapaNueva: 'M2_NO_SABE', estadoDestino: 'contactado',
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: `Acusa recibo sin dar cifra. Se responde en contexto ("${acuse.slice(0, 60)}") sin la coletilla de insistencia.`,
+      };
+    }
+
     return {
       mensajes: [render(P.M2_NO_SABE, nombre)],
       etapaNueva: 'M2_NO_SABE', estadoDestino: 'contactado',
@@ -454,6 +477,24 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
         : 'No sabe su endeudamiento. Se insiste suave con un estimado.',
     };
   }
+  // DEUDA TOTAL EN VEZ DE CUOTA MENSUAL (11-sep-2026). Bug real: un lead dio
+  // un monto enorme y el clasificador lo leyo como resistencia a dar el dato
+  // (Objecion 6). No era resistencia: sumo el SALDO de sus creditos en vez de
+  // lo que paga al mes. Si la cifra no cabe como cuota mensual -- es decir, si
+  // se lleva su ingreso entero -- lo que falla es el enunciado, no el lead.
+  // Se aclara ANTES de cualquier veredicto, para que no lo descarte ni lo trate
+  // como si estuviera ocultando algo.
+  if (c.deuda_cop != null && ingreso != null && ingreso > 0
+      && c.deuda_cop >= ingreso && etapaEntrada !== 'M2_DEUDA_TOTAL') {
+    return {
+      mensajes: partirEnBurbujas(render(P.M2_DEUDA_TOTAL_VS_CUOTA, nombre)),
+      etapaNueva: 'M2_DEUDA_TOTAL', estadoDestino: 'contactado',
+      handoffRazon: null, motivoPerdida: null, campos: {},
+      permitirEmpatia: false,
+      summary: `Dio ${c.deuda_cop} de deuda contra un ingreso de ${ingreso}: es el saldo total, no la cuota. Se aclara antes de decidir.`,
+    };
+  }
+
   if (veredicto === 'verificar_calculo') {
     return {
       mensajes: [render(P.M2_VERIFICAR_CALCULO, nombre)],
@@ -672,7 +713,27 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       };
     }
 
-    // Primera vez que vuelve: se le pregunta por el motivo EXACTO del descarte.
+    // ⚠️ RESURRECCION FANTASMA (bug real, 11-sep-2026). Un lead recien
+    // descalificado por endeudamiento dijo "gracias" y el bot le contesto
+    // "¡Hola de nuevo! ... ¿Lograste bajar esa carga?" -- lo trato como un lead
+    // viejo que volvia rehabilitado, treinta segundos despues de descartarlo.
+    //
+    // Un "gracias" u "ok" ahi no es un retorno: es una reaccion al cierre. El
+    // saludo de retorno solo tiene sentido cuando de verdad paso tiempo, asi
+    // que si el lead sigue activo HOY se cierra con calidez y no se reabre el
+    // embudo. `dias_sin_actividad` lo da la propia RPC del estado.
+    if ((estado?.dias_sin_actividad ?? 0) < 1) {
+      return {
+        mensajes: partirEnBurbujas(render(P.CIERRE_POST_DESCALIFICACION, nombre)),
+        etapaNueva: 'DESCALIFICADO', estadoDestino: null,
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Reacciona al cierre el mismo dia en que se le descalifico. Se cierra con calidez, NO se le trata como lead que vuelve.',
+      };
+    }
+
+    // Primera vez que vuelve DE VERDAD (paso al menos un dia): se le pregunta
+    // por el motivo EXACTO del descarte.
     return {
       mensajes: [render(plantillaRetorno(estado?.motivo_perdida), nombre)],
       etapaNueva: 'RETORNO_PREGUNTA', estadoDestino: null,
@@ -897,6 +958,9 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     // =====================================================================
     case 'M2_ENVIADO':
     case 'M2_NO_SABE':
+    // Ya se le aclaro que la cuenta va con la CUOTA mensual, no con el saldo
+    // total: este turno trae la cifra corregida y se evalua igual que M2.
+    case 'M2_DEUDA_TOTAL':
       return evaluarYResponderEndeudamiento(estado, c, nombre, etapa, textoLead);
 
     // =====================================================================
@@ -1272,15 +1336,15 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       // el link lo reenvia el router desde la plantilla aprobada, aislado y de
       // ultimo. El LLM nunca teclea una URL -- un link generado seria a la vez
       // una violacion de la regla del link y un vector de suplantacion.
-      if (c.pide_link) {
-        return {
-          mensajes: [render(P.M6_CONFIRMAME, nombre), P.M6_LINK],
-          etapaNueva: 'M6_ENVIADO', estadoDestino: null,
-          handoffRazon: null, motivoPerdida: null, campos: {},
-          permitirEmpatia: false, // REGLA CRITICA DEL LINK
-          summary: 'Pide el link otra vez. Se reenvia la plantilla aprobada, aislada.',
-        };
-      }
+      // ⚠️ `sin_horarios` SE EVALUA ANTES QUE `pide_link`, y el orden es el
+      // arreglo (11-sep-2026). "No veo espacios disponibles" activa los DOS
+      // campos: el lead esta hablando del calendario, asi que el clasificador
+      // marca `pide_link`, y ademas dice que no hay cupos. Con `pide_link`
+      // primero, el bot le REENVIABA el link que el lead acababa de decir que
+      // no le sirve -- y se quedaba en M6_ENVIADO, asi que cuando el lead
+      // contestaba con su horario ("los viernes por la tarde") el turno caia
+      // en la rama equivocada y le respondia "confirmame cuando te agendes".
+      // Sin cupos NO se reenvia el link: se pide la franja y se escala.
       if (c.sin_horarios) {
         // No se salta directo a HANDOFF: P.SIN_HORARIOS hace una pregunta, y un
         // HANDOFF no recuperable en el mismo turno dejaba la respuesta del lead
@@ -1294,6 +1358,15 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           motivoPerdida: null, campos: {},
           permitirEmpatia: false,
           summary: 'No encuentra horarios. Se le pide la franja y se escala para agendar a mano.',
+        };
+      }
+      if (c.pide_link) {
+        return {
+          mensajes: [render(P.M6_CONFIRMAME, nombre), P.M6_LINK],
+          etapaNueva: 'M6_ENVIADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false, // REGLA CRITICA DEL LINK
+          summary: 'Pide el link otra vez. Se reenvia la plantilla aprobada, aislada.',
         };
       }
       if (c.confirmo_agendo) {

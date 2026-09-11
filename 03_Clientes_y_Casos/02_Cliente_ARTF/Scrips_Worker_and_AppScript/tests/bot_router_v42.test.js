@@ -479,7 +479,41 @@ describe('Descalificacion con valor', () => {
     assert.equal(p.estadoDestino, 'descalificado');
     assert.equal(p.motivoPerdida, `Descalificado - Ingreso bajo (< $${UMBRALES.INGRESO_MINIMO / 1e6}M)`);
     assert.equal(p.campos.califica, false);
-    assert.match(p.mensajes[0], /subir el ingreso primero/);
+    // REESCRITO (11-sep-2026): la razon ya no viaja en la primera burbuja. El
+    // mensaje se parte por parrafos (antes llegaba todo aplastado con el link
+    // pegado al final, bug reportado en vivo), asi que se busca en el turno
+    // completo en vez de en un indice fijo.
+    assert.match(p.mensajes.join('\n'), /subir el ingreso primero/);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ESTRUCTURA DE LAS DESCALIFICACIONES CON RECURSO (11-sep-2026)
+  //
+  // Bug reportado en vivo: "el mensaje de descalificacion por deudas no se
+  // dividio bien al entregar el link de Instagram" -- llegaba todo en una sola
+  // burbuja con el link pegado al final.
+  // ═══════════════════════════════════════════════════════════════════════
+  test('la descalificacion se parte por parrafos y el link viaja SOLO', () => {
+    for (const [etapa, clasif] of [
+      ['M1_ENVIADO', { ingreso_cop: 3_000_000 }],
+      ['M4_ENVIADO', { urgencia: 'algun_dia' }],
+    ]) {
+      const p = decidirTurno(estadoEn(etapa), clasif);
+      assert.ok(p.mensajes.length >= 4,
+        `${etapa}: el turno llego con ${p.mensajes.length} burbuja(s); deberia venir partido por parrafos`);
+
+      const conLink = p.mensajes.filter((m) => /https?:\/\//.test(m));
+      assert.equal(conLink.length, 1, `${etapa}: el link tiene que estar en UNA sola burbuja`);
+      assert.match(conLink[0].trim(), /^https?:\/\/\S+$/,
+        `${etapa}: el link va SOLO, sin texto pegado`);
+      // ⚠️ Y DE ULTIMO. No es estetica: R1_LINK_AISLADO viene de un bug
+      // confirmado en produccion -- si va texto despues del link en el mismo
+      // turno, Instagram los concatena y el link queda invalido.
+      assert.equal(p.mensajes[p.mensajes.length - 1], conLink[0],
+        `${etapa}: hay texto DESPUES del link; Instagram lo rompe`);
+      // Ninguna burbuja puede quedar vacia ni ser un resto de puntuacion.
+      for (const m of p.mensajes) assert.ok(m.trim().length > 1, `${etapa}: burbuja vacia`);
+    }
   });
 
   // CAMBIO DE REGLA (fundador, 4-sep-2026): un endeudamiento alto ya no
@@ -683,14 +717,42 @@ describe('RetornoLead (★ V4.1) — descartado que se recalifica', () => {
     assert.ok(!/bot|sistema|autom[aá]tic|inteligencia artificial/i.test(p.mensajes[0]));
   });
 
-  test('vuelve sin cifra -> se le pregunta por el motivo EXACTO del descarte', () => {
+  // REESCRITO (11-sep-2026): el saludo de retorno ahora exige que de verdad
+  // haya pasado tiempo. El fixture tiene que decir cuantos dias lleva inactivo:
+  // sin eso, un lead activo HOY se trataba como si volviera de un mes.
+  test('vuelve DIAS DESPUES -> se le pregunta por el motivo EXACTO del descarte', () => {
     const estado = estadoEn('DESCALIFICADO', {
       estado_codigo: 'descalificado',
       motivo_perdida: 'Descalificado - Endeudamiento sobre su tope',
+      dias_sin_actividad: 12,
     });
     const p = decidirTurno(estado, { ingreso_cop: null }, 'hola, volvi');
     assert.equal(p.etapaNueva, 'RETORNO_PREGUNTA');
     assert.match(p.mensajes[0], /tus deudas se llevaban buena parte de tu ingreso/);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // RESURRECCION FANTASMA (bug real reportado en vivo, 11-sep-2026)
+  //
+  // Un lead recien descalificado por endeudamiento dijo "gracias" y el bot le
+  // contesto "¡Hola de nuevo! ... ¿Lograste bajar esa carga?" -- lo trato como
+  // un lead viejo que volvia rehabilitado, treinta segundos despues de
+  // descartarlo. Un "gracias" ahi es una reaccion, no un retorno.
+  // ═══════════════════════════════════════════════════════════════════════
+  test('reacciona el MISMO dia -> cierre calido, NO el saludo de retorno', () => {
+    for (const texto of ['gracias', 'ok', 'listo, gracias']) {
+      const estado = estadoEn('DESCALIFICADO', {
+        estado_codigo: 'descalificado',
+        motivo_perdida: 'Descalificado - Endeudamiento sobre su tope',
+        dias_sin_actividad: 0,
+      });
+      const p = decidirTurno(estado, { ingreso_cop: null }, texto);
+      assert.equal(p.etapaNueva, 'DESCALIFICADO', `"${texto}": no debe reabrir el embudo`);
+      const turno = p.mensajes.join('\n');
+      assert.doesNotMatch(turno, /Hola de nuevo/i, `"${texto}": lo saludo como si volviera`);
+      assert.doesNotMatch(turno, /\?/, `"${texto}": un cierre no hace preguntas`);
+      assert.match(turno, /cuando tu situaci[oó]n cambie/i, `"${texto}": falta la puerta abierta`);
+    }
   });
 
   test('retorno: dice que SI cambio -> revalida el filtro que fallo', () => {
@@ -2094,5 +2156,70 @@ describe('Sin horarios: UNA alerta, no dos (caso Marly, 7-sep-2026)', () => {
       st("HANDOFF", { handoff_razon: "agendamiento_manual_pendiente" }),
     );
     assert.equal(r.responder, false, "el turno es del Setter, no del bot");
+  });
+});
+
+// ===========================================================================
+// LOS 6 FALLOS REPORTADOS EN VIVO EL 11-SEP-2026
+//
+// Cada uno viene de leer conversaciones reales con leads, no de una hipotesis.
+// ===========================================================================
+describe('Fallos reportados en vivo (11-sep-2026)', () => {
+  const st = (etapa, extra = {}) => ({ nombre: 'Ana', etapa_bot: etapa, ...extra });
+
+  // --- 1. AGENDA: sin cupos NO se reenvia el link --------------------------
+  test('"no veo espacios" NO reenvia el link, pide la franja y escala', () => {
+    // El clasificador marca los DOS campos: el lead habla del calendario
+    // (pide_link) y ademas dice que no hay cupos. Antes ganaba pide_link y el
+    // bot le reenviaba el link que el lead acababa de decir que no le sirve.
+    for (const etapa of ['M6_ENVIADO', 'M7_ENVIADO']) {
+      const p = decidirTurno(st(etapa), { sin_horarios: true, pide_link: true }, 'no veo espacios disponibles');
+      assert.equal(p.etapaNueva, 'SIN_HORARIOS_ESPERANDO_FRANJA', `${etapa}: debe pedir la franja`);
+      assert.ok(!p.mensajes.some((m) => /https?:\/\//.test(m)),
+        `${etapa}: se reenvio el link a alguien que dijo que no hay cupos`);
+      assert.equal(p.handoffRazon, 'agendamiento_manual_pendiente',
+        `${etapa}: debe escalar al Setter para agendar a mano`);
+    }
+  });
+
+  test('pedir el link SIN decir que no hay cupos lo sigue reenviando', () => {
+    // La guarda de arriba no puede romper el caso legitimo: "no me llego".
+    const p = decidirTurno(st('M6_ENVIADO'), { pide_link: true }, 'no me llego el link');
+    assert.equal(p.etapaNueva, 'M6_ENVIADO');
+    assert.ok(p.mensajes.some((m) => /https?:\/\//.test(m)));
+  });
+
+  // --- 2. DEUDA TOTAL vs CUOTA MENSUAL -------------------------------------
+  test('una deuda del tamaño del ingreso se aclara, NO se lee como resistencia', () => {
+    // Bug real: el lead dio un monto enorme y se clasifico como Objecion 6
+    // ("no quiere dar el dato"). Habia sumado el SALDO de sus creditos.
+    const p = decidirTurno(
+      st('M2_ENVIADO', { salario_monto: 8_000_000 }),
+      { deuda_cop: 90_000_000 },
+      'debo como 90 millones',
+    );
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+    assert.notEqual(p.estadoDestino, 'descalificado', 'no se descarta por una cuenta mal entendida');
+    const turno = p.mensajes.join('\n');
+    assert.match(turno, /cuotas mensuales/i);
+    assert.match(turno, /no con la deuda total/i);
+  });
+
+  test('la aclaracion se hace UNA vez: la cifra corregida se evalua normal', () => {
+    const p = decidirTurno(
+      st('M2_DEUDA_TOTAL', { salario_monto: 8_000_000 }),
+      { deuda_cop: 2_000_000 },
+      'ah, pago como 2 millones al mes',
+    );
+    assert.notEqual(p.etapaNueva, 'M2_DEUDA_TOTAL', 'no puede quedarse en bucle aclarando');
+  });
+
+  test('una cuota mensual plausible NO dispara la aclaracion', () => {
+    const p = decidirTurno(
+      st('M2_ENVIADO', { salario_monto: 10_000_000 }),
+      { deuda_cop: 3_000_000 },
+      'pago 3 millones al mes',
+    );
+    assert.notEqual(p.etapaNueva, 'M2_DEUDA_TOTAL');
   });
 });

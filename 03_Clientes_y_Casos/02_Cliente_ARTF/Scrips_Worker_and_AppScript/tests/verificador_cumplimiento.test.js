@@ -21,7 +21,7 @@ import {
 import {
   PLANTILLAS as P, CALENDAR_LINK, render, OBJECIONES_CON_PREGUNTA_PROPIA,
   PLAYBOOK_OBJECIONES, OBJECIONES, OBJECIONES_HABILITADAS, OBJECIONES_PRE_PITCH,
-  DISPARADORES_OBJECIONES, UMBRALES,
+  DISPARADORES_OBJECIONES, UMBRALES, sanearNombre,
 } from '../sop_v42_plantillas.js';
 import { decidirTurno, reencauzar } from '../bot_router_v42.js';
 
@@ -812,5 +812,56 @@ describe('verificarRespuestaLibre: solo cifras que el playbook ya diga', () => {
   test('sigue aplicando las reglas de voz: voseo fuera', () => {
     const fallas = verificarRespuestaLibre(CONOCIMIENTO, 'Vos tenés que sumar solo las deudas.');
     assert.ok(fallas.some((f) => f.regla === 'G5_VOSEO_O_REGIONALISMO'), JSON.stringify(fallas));
+  });
+});
+
+// ===========================================================================
+// SANITIZACION DEL NOMBRE (11-sep-2026)
+//
+// Casos REALES vistos en produccion: "Hola LAURA", "Hola Erik." y
+// "Hola TecnologiaSAS". El nombre viene del perfil de Instagram via ManyChat y
+// ahi cabe cualquier cosa. Escribirlo crudo en el primer mensaje que ve el lead
+// delata al bot en la primera linea.
+// ===========================================================================
+describe('sanearNombre: el saludo no puede sonar a robot', () => {
+  test('capitalizacion: LAURA y laura -> Laura', () => {
+    assert.equal(sanearNombre('LAURA'), 'Laura');
+    assert.equal(sanearNombre('laura'), 'Laura');
+    assert.equal(sanearNombre('JOSÉ'), 'José');
+    assert.equal(sanearNombre('ana-maria'), 'Ana-Maria');
+  });
+
+  test('puntuacion y basura: "Erik." -> Erik', () => {
+    assert.equal(sanearNombre('Erik.'), 'Erik');
+    assert.equal(sanearNombre('  Marly  '), 'Marly');
+    assert.equal(sanearNombre('María José'), 'María', 'solo el primer nombre');
+  });
+
+  test('OMITE lo que no parece un nombre humano', () => {
+    // La regla mas importante: ante la duda, omitir. "¡Hola! Te entiendo..."
+    // es impecable; "Hola TecnologiaSAS" no.
+    for (const raro of ['TecnologiaSAS', 'ARX', 'MTB', 'juan123', 'ConstructoraLTDA',
+      'MarketingDigital', 'Lead 12345', 'user', '', '   ', '🙂']) {
+      assert.equal(sanearNombre(raro), '', `"${raro}" deberia omitirse`);
+    }
+  });
+
+  test('NO se come nombres cortos reales', () => {
+    // El filtro de siglas no puede llevarse por delante a Luz, Sol o Paz.
+    for (const real of ['Luz', 'Sol', 'Paz', 'Ana', 'Beatriz', 'Ander', 'Yeisiton']) {
+      assert.notEqual(sanearNombre(real), '', `"${real}" es un nombre real`);
+    }
+  });
+
+  test('sin nombre usable, el saludo queda bien formado igual', () => {
+    const saludo = render(P.M1_GENERAL, 'TecnologiaSAS');
+    assert.doesNotMatch(saludo, /TecnologiaSAS/);
+    assert.doesNotMatch(saludo, /\{nombre\}/);
+    assert.doesNotMatch(saludo, /Hola\s+[!¡,]/, 'quedo un saludo roto tipo "¡Hola !"');
+    assert.doesNotMatch(saludo, /  /, 'quedo un doble espacio');
+  });
+
+  test('con nombre usable, el saludo lo lleva capitalizado', () => {
+    assert.match(render(P.M1_GENERAL, 'LAURA'), /Laura/);
   });
 });

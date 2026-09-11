@@ -725,6 +725,27 @@ Y la trampa empeora con el tiempo, porque los hábitos se cementan.
 // Las 3 reordenadas igual que la Objecion 3 (aprobado por el fundador,
 // 2-sep-2026): la frase que presenta el recurso queda de ultima, pegada al
 // link, para que no quede anunciando algo que todavia no llega.
+// ---------------------------------------------------------------------------
+// ESTRUCTURA DE LAS DESCALIFICACIONES (11-sep-2026, regla del fundador)
+// ---------------------------------------------------------------------------
+// Se REORDENARON, no se reescribieron: son las mismas frases ya aprobadas, en
+// el orden que pidió el fundador tras leer conversaciones reales.
+//
+//   Burbuja 1 · Agradecimiento
+//   Burbuja 2 · La razón del descarte
+//   Burbuja 3 · Transición y cierre ("Igual, no quiero que te vayas sin nada...")
+//   Burbuja 4 · Presentación del recurso
+//   Burbuja 5 · EL LINK, SOLO Y DE ÚLTIMO
+//
+// El bug reportado era que el mensaje "no se dividió bien al entregar el link":
+// llegaba TODO aplastado en una sola burbuja con el link pegado al final. Ahora
+// cada párrafo es su propia burbuja y el link viaja solo, que es lo que se pidió.
+//
+// ⚠️ EL CIERRE VA ANTES DEL LINK, NO DESPUÉS, Y NO ES UN DESCUIDO. Se pidió
+// ponerlo después, pero R1_LINK_AISLADO del verificador lo prohíbe por un bug
+// CONFIRMADO EN PRODUCCIÓN (proyecto de Javier): si va texto después del link
+// en el mismo turno, Instagram los concatena y el link queda inválido
+// ("Dynamic Link Not Found"). Un cierre bonito no vale un recurso roto.
 P.DESC_INGRESO = `Gracias por la sinceridad, {nombre}.
 
 Con lo que me cuentas, creo que mi programa todavía no es el mejor fit para ti porque está diseñado para personas que ya están ganando más de $7M al mes — el método funciona ahí. Por debajo, la prioridad es subir el ingreso primero.
@@ -751,6 +772,33 @@ Igual, no quiero que te vayas sin nada. Cuando estés listo para tomar acción, 
 
 Te recomiendo este recurso:
 ${REELS.ingresos_bajos}`;
+
+/**
+ * CIERRE TRAS UNA DESCALIFICACIÓN RECIENTE (11-sep-2026).
+ *
+ * BUG REAL, "resurrección fantasma": un lead recién descalificado por
+ * endeudamiento dijo simplemente "gracias" y el bot le contestó "¡Hola de
+ * nuevo! ... ¿Lograste bajar esa carga?" -- lo trató como un lead viejo que
+ * volvía rehabilitado, treinta segundos después de descartarlo.
+ *
+ * Un "gracias" o un "ok" ahí no es un retorno: es una reacción. Cierra con
+ * calidez y no vuelve a abrir el embudo.
+ */
+P.CIERRE_POST_DESCALIFICACION = `Con gusto, {nombre}. Ojalá te sirva 🙌
+
+Cuando tu situación cambie, escríbeme sin pena y lo miramos de nuevo. Mientras tanto, mucho éxito con lo que viene 💪`;
+
+/**
+ * DEUDA TOTAL vs CUOTA MENSUAL (11-sep-2026). Copy del fundador, literal.
+ *
+ * BUG REAL: un lead dio un monto de deuda enorme y el clasificador lo leyó
+ * como resistencia a dar el dato (Objeción 6). No era resistencia: había
+ * entendido la pregunta al revés y sumó el SALDO TOTAL de sus créditos en vez
+ * de la cuota que paga al mes. Es el error de cuentas más común del embudo.
+ */
+P.M2_DEUDA_TOTAL_VS_CUOTA = `Entiendo, {nombre}. Recuerda que la operación se hace solo con las cuotas mensuales de tus deudas, no con la deuda total.
+
+Con eso en mente, ¿cuánto pagas al mes entre todas tus cuotas?`;
 
 // ---------------------------------------------------------------------------
 // SOP DE RECUPERACION (bumps) — se disparan por tiempo, no por webhook.
@@ -903,6 +951,7 @@ export const PLAYBOOK_OBJECIONES = [
 export const FASE_POR_ETAPA = {
   M1_ENVIADO: 'M1', M1_INGRESO_AMBIGUO: 'M1', M1_RANGO_PREGUNTADO: 'M1', M1_ACLARAR_REMANENTE: 'M1',
   M2_ENVIADO: 'M2', M2_NO_SABE: 'M2', M2_BORDERLINE: 'M2', M2_VERIFICAR_CALCULO: 'M2',
+  M2_DEUDA_TOTAL: 'M2',
   M3_ENVIADO: 'M3', M3_RECONDUCIR: 'M3',
   M4_ENVIADO: 'M4', M4_URGENCIA_REINTENTO: 'M4',
   M5_ENVIADO: 'M5', M5_PITCH_REINTENTO: 'M5',
@@ -1119,16 +1168,42 @@ export function partirEnBurbujas(plantilla) {
   if (!urls || urls.length === 0) return [texto];
 
   const link = urls[urls.length - 1];
-  const sinLink = texto
-    .split(/https?:\/\/\S+/)
-    .join(' ')
+  const corte = texto.lastIndexOf(link);
+
+  // ⚠️ SE PARTE POR LA POSICION DEL LINK, NO SE APLASTA TODO (11-sep-2026).
+  //
+  // Antes esto juntaba TODO el texto en una burbuja y pegaba el link al final.
+  // En las descalificaciones el resultado se leia mal: tres parrafos con
+  // intenciones distintas -- el motivo, la transicion al recurso y el cierre --
+  // llegaban como un ladrillo, y el cierre ("Te va a dar un mapa claro...
+  // ¡Exitos!") quedaba ANTES del link, hablando de algo que el lead todavia no
+  // habia visto.
+  //
+  // Ahora cada parrafo es su propia burbuja y el LINK VIAJA SOLO, que es como
+  // se manda un recurso por DM. Lo que venga despues del link se conserva y
+  // sale detras, en su propia burbuja.
+  const antes = limpiarTrozo(texto.slice(0, corte));
+  const despues = limpiarTrozo(texto.slice(corte + link.length));
+
+  return [...parrafos(antes), link, ...parrafos(despues)];
+}
+
+/** Normaliza espacios de un trozo suelto sin tocar los saltos de parrafo. */
+function limpiarTrozo(t) {
+  return String(t || '')
     .replace(/[ \t]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/\s+([,.:;!?])/g, '$1')
     .trim();
+}
 
-  return sinLink ? [sinLink, link] : [link];
+/** Un parrafo (separado por linea en blanco) = una burbuja. */
+function parrafos(t) {
+  return String(t || '')
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -1204,7 +1279,7 @@ export const ETAPAS_FILTRO_1 = new Set([
  */
 export const ETAPAS_PRE_PITCH = new Set([
   'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
-  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO',
+  'M2_ENVIADO', 'M2_BORDERLINE', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO', 'M2_DEUDA_TOTAL',
   'M3_ENVIADO', 'M3_RECONDUCIR',
   'M4_ENVIADO', 'M4_URGENCIA_REINTENTO',
 ]);
@@ -1215,11 +1290,76 @@ export const ETAPAS_PRE_PITCH = new Set([
  * Si no hay nombre usable cae a un saludo neutro en vez de dejar "{nombre}"
  * o un "Hola undefined" visible para el lead.
  */
+/**
+ * SANITIZACION DEL NOMBRE (11-sep-2026). Casos REALES vistos en produccion:
+ * "Hola LAURA", "Hola Erik." y "Hola TecnologiaSAS".
+ *
+ * El nombre viene del perfil de Instagram via ManyChat, y ahi cabe cualquier
+ * cosa: mayusculas de teclado bloqueado, puntos decorativos, nombres de marca,
+ * emojis, handles con numeros. Escribirlo tal cual en el primer mensaje que ve
+ * el lead se siente robotico, que es exactamente lo contrario de lo que este
+ * saludo intenta.
+ *
+ * La regla mas importante es la tercera: ante la duda, OMITIR. Un "¡Hola! Te
+ * entiendo..." es impecable; un "Hola TecnologiaSAS" delata al bot en la
+ * primera linea. `render` ya sabe dejar la frase bien formada sin nombre.
+ *
+ * @returns {string} el nombre listo para saludar, o '' si no parece humano.
+ */
+export function sanearNombre(nombre) {
+  const crudo = String(nombre ?? '').trim();
+  if (!crudo) return '';
+
+  // Solo el primer token: "Laura Gomez Perez" -> "Laura".
+  let n = crudo.split(/\s+/)[0] || '';
+
+  // Fuera lo que no es letra: emojis, comillas, puntos finales ("Erik." ->
+  // "Erik"), guiones bajos de handle. Se conservan tildes, ñ y el guion
+  // interno de los nombres compuestos ("Ana-Maria").
+  n = n.replace(/[^\p{L}\p{M}'-]/gu, '');
+  n = n.replace(/^[-']+|[-']+$/g, '');
+  if (!n) return '';
+
+  // ── Reglas de OMISION: si no parece un nombre propio humano, no se usa ──
+  const bajo = n.toLowerCase();
+
+  // Basura que genera la propia base o el propio ManyChat.
+  if (/^(lead|user|usuario|cliente|test|prueba|null|undefined|na)$/.test(bajo)) return '';
+
+  // Muy corto o absurdamente largo para ser un nombre de pila.
+  if (n.length < 2 || n.length > 20) return '';
+
+  // El nombre original traia digitos ("juan123", "ARX2024"): es un handle.
+  if (/\d/.test(crudo.split(/\s+/)[0])) return '';
+
+  // Sufijos de razon social: "TecnologiaSAS", "ConstructoraLTDA", "XyzSAS".
+  if (/(sas|s\.a\.s|ltda|s\.a|inc|corp|llc|group|studio|oficial)$/i.test(bajo)) return '';
+
+  // CamelCase interno = marca pegada, no un nombre ("TecnologiaSAS",
+  // "MarketingDigital"). Una mayuscula suelta al inicio es normal.
+  if (/[a-z\u00e0-\u00ff][A-Z\u00c0-\u00dd]/.test(n)) return '';
+
+  // Sin una sola vocal no es pronunciable como nombre ("MTB", "XLS").
+  if (!/[aeiou\u00e1\u00e9\u00ed\u00f3\u00fa]/i.test(bajo)) return '';
+
+  // Siglas: en español un nombre propio termina en vocal o en UNA consonante
+  // de las que admite la lengua (n, s, r, l, z, d, y). Dos consonantes al
+  // final delatan una sigla -- "ARX", "MTB", "SGX" -- mientras deja pasar
+  // "Luz", "Sol", "Paz", "Beatriz" o "Ander", que son nombres reales cortos.
+  if (/[^aeiou\u00e1\u00e9\u00ed\u00f3\u00fa][^aeiou\u00e1\u00e9\u00ed\u00f3\u00fanszrldy]$/i.test(bajo)) return '';
+
+  // ── Capitalizacion: "LAURA" y "laura" -> "Laura"; "ana-maria" -> "Ana-Maria"
+  return bajo
+    .split(/([-'])/)
+    .map((parte) => (/^[-']$/.test(parte)
+      ? parte
+      : parte.charAt(0).toUpperCase() + parte.slice(1)))
+    .join('');
+}
+
 export function render(plantilla, nombre) {
   if (!plantilla) return '';
-  const limpio = (nombre || '').trim().split(/\s+/)[0] || '';
-  // Evita nombres basura tipo "Lead 12345" que genera la propia base.
-  const usable = /^lead$/i.test(limpio) || /^\d+$/.test(limpio) ? '' : limpio;
+  const usable = sanearNombre(nombre);
 
   let salida = plantilla
     .replaceAll(', {nombre}', usable ? `, ${usable}` : '')
