@@ -222,12 +222,14 @@ export const UMBRALES = {
   // umbral en 6M, la banda 6M-7M es zona de trampa: el lead califica pero
   // contesta NO al rango porque el texto le pregunta por otra cifra.
   //
-  // Por eso un "No" al rango NO descalifica: se le pide la cifra y se decide
-  // sobre el numero real (ver el case M1_RANGO_PREGUNTADO). Descalificar sobre
-  // un "No" que es ambiguo respecto al umbral violaria la regla dura V4.1.
+  // Un "No" al rango DESCALIFICA DIRECTO. Decision comercial del fundador
+  // (4-sep-2026), ratificada el 11-sep-2026: se asume a proposito la perdida
+  // de quien gana entre $6M y $7M y contesta que no, antes que gastar un turno
+  // mas pidiendo la cifra. Ver el case M1_RANGO_PREGUNTADO y el test "Banda de
+  // trampa entre el umbral y la cifra del copy".
   //
-  // El copy con 6M ya esta escrito y espera aprobacion de Javier
-  // (COPY_PENDIENTE_APROBACION). Al aprobarse, ese "No" ya sera inequivoco.
+  // No confundir con NO QUERER dar el dato ("prefiero no decirlo"): eso es la
+  // Objecion 6 y no descalifica. Y quien SI da su cifra se evalua contra $6M.
   // ───────────────────────────────────────────────────────────────────────
   INGRESO_MINIMO: 6_000_000,
   INGRESO_BORDERLINE_BAJO: 4_000_000,

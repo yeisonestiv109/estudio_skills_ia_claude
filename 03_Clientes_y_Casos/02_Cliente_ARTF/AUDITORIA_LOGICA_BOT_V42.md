@@ -107,7 +107,7 @@ En este código los comentarios hacen de documentación, y en cinco sitios dicen
 
 Quien lea el comentario y no el código tomará decisiones equivocadas.
 
-**Estado 11-sep:** corregidos el 2 (`evaluarIngreso` ahora dice ≥ $6M) y los tres del Filtro 2 (4 y 5 dejan de aplicar porque el tope por % se retiró; el 3 se reescribió con la regla nueva). **El 1 sigue pendiente**: depende de si se mantiene o no el descarte directo por un "No" al rango.
+**Estado 11-sep:** corregidos el 2 (`evaluarIngreso` ahora dice ≥ $6M) y los tres del Filtro 2 (4 y 5 dejan de aplicar porque el tope por % se retiró; el 3 se reescribió con la regla nueva). Corregido también el 1: se **ratificó** el descarte directo por un "No" al rango, y el comentario ahora lo dice. **Los 5 quedan resueltos.**
 
 ### 🟠 H4 — Código muerto: parece vivo y no se ejecuta nunca
 
@@ -140,6 +140,7 @@ El criterio volvió a ser **lo que le queda al lead después de pagar sus cuotas
 
 - **Es más permisiva que el tope:** quien gana $6M pasa con hasta ~58% de deuda; quien gana $10M, con hasta 75%.
 - **Si el lead da la cifra en plata**, se decide sobre esa cifra exacta, no sobre el % redondeado (que en el límite podía mover el resultado unos miles de pesos).
+- **La excepción de la hipoteca se mantiene** (ratificado el 11-sep): si la mayor parte de la deuda es de vivienda, pasa a M3 aunque le queden menos de $2,5M.
 - **Bug corregido de paso:** en `M2_VERIFICAR_CALCULO`, si el lead corregía diciendo lo que *paga* al mes ("pago 3 millones"), el router ignoraba esa cifra y le volvía a preguntar.
 
 ### 🟠 H5 — `decidirTurno` es una sola función de 1.017 líneas
