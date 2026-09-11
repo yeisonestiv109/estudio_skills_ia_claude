@@ -61,12 +61,12 @@
       └─ no dio cifra → "¿estás entre $7M y $15M?"
             ├─ Sí → pasa (se registra $7M, ingreso_confirmado=false)
             └─ No → DESCALIFICADO   ⚠️ corte real: $7M, no $6M
- M2  Filtro 2 — ENDEUDAMIENTO (% del ingreso que se va en cuotas)
-      ├─ ≤ tope (50% si gana < $9M · 60% si gana ≥ $9M) ... pasa
-      ├─ dio el SALDO total en vez de la cuota ......... M2_DEUDA_TOTAL (aclara)
-      └─ > tope → M2_VERIFICAR_CALCULO ("¿seguro? revisemos la cuenta")
-            ├─ corrige y entra en su tope ................ pasa
-            ├─ le sobran ≥ $2,5M al mes ................. pasa (rescate)
+ M2  Filtro 2 — LO QUE LE QUEDA (ingreso − cuotas de deuda)   [regla del 11-sep]
+      ├─ le quedan ≥ $2,5M al mes ........................ pasa
+      ├─ dio el SALDO total en vez de la cuota .......... M2_DEUDA_TOTAL (aclara)
+      └─ le quedan < $2,5M → M2_VERIFICAR_CALCULO ("¿seguro? revisemos la cuenta")
+            ├─ corrige (en % o en cuota) y le quedan ≥ $2,5M ... pasa
+            ├─ dice que le sobran ≥ $2,5M ....................... pasa
             └─ ratifica → M2_BORDERLINE
                   ├─ la mayoría es deuda buena (vivienda) o sobran ≥ $2,5M ... pasa
                   └─ si no ......................................... DESCALIFICADO
@@ -107,6 +107,8 @@ En este código los comentarios hacen de documentación, y en cinco sitios dicen
 
 Quien lea el comentario y no el código tomará decisiones equivocadas.
 
+**Estado 11-sep:** corregidos el 2 (`evaluarIngreso` ahora dice ≥ $6M) y los tres del Filtro 2 (4 y 5 dejan de aplicar porque el tope por % se retiró; el 3 se reescribió con la regla nueva). **El 1 sigue pendiente**: depende de si se mantiene o no el descarte directo por un "No" al rango.
+
 ### 🟠 H4 — Código muerto: parece vivo y no se ejecuta nunca
 
 **(a) Dos ramas del Filtro 2** — `bot_router_v42.js:509-534`, dentro de `evaluarYResponderEndeudamiento`.
@@ -131,6 +133,14 @@ Quien lea el comentario y no el código tomará decisiones equivocadas.
 | `pareceRemanente` | 2087–2091 | |
 
 **Sobre los dólares:** en producción el único que convierte es el LLM, con **1 USD = 3.500 COP y 1 EUR = 3.800 COP** (prompt de `clasificarConLLM`, `worker_bot_setter_v42.js:884`, con un test que lo fija). El `×4.000` de `parseIngresoCOP` no corre. Si alguien lo leyera sin saberlo, creería que el bot usa dos tasas.
+
+### ✅ Cambio del Filtro 2 — 11-sep
+
+El criterio volvió a ser **lo que le queda al lead después de pagar sus cuotas: al menos $2.500.000 al mes** (`UMBRALES.REMANENTE_MINIMO`). Se retiró el tope por porcentaje del 7-sep (50% / 60% según el ingreso) y sus tres constantes. Por debajo de $2,5M nunca se descalifica de una: primero se verifica la cuenta.
+
+- **Es más permisiva que el tope:** quien gana $6M pasa con hasta ~58% de deuda; quien gana $10M, con hasta 75%.
+- **Si el lead da la cifra en plata**, se decide sobre esa cifra exacta, no sobre el % redondeado (que en el límite podía mover el resultado unos miles de pesos).
+- **Bug corregido de paso:** en `M2_VERIFICAR_CALCULO`, si el lead corregía diciendo lo que *paga* al mes ("pago 3 millones"), el router ignoraba esa cifra y le volvía a preguntar.
 
 ### 🟠 H5 — `decidirTurno` es una sola función de 1.017 líneas
 

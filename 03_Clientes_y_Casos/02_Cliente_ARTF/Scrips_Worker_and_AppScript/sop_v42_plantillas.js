@@ -12,7 +12,8 @@
  *  - Se reordena el cierre: M6 = cierre + link, M7 = pregunta de asistencia
  *    (antes era al reves).
  *  - Tope de endeudamiento condicional al ingreso (<=50% si gana ~$7M,
- *    hasta 60% si gana >$9M).
+ *    hasta 60% si gana >$9M). ⚠️ El bot NO aplica este tope: usa
+ *    UMBRALES.REMANENTE_MINIMO (le tienen que quedar >= $2.5M libres al mes).
  *  - Regla anti-descarte por ingreso ambiguo + glosario colombiano (V4.1).
  *  - RetornoLead: si un lead descartado se recalifica, se rectifica solo.
  *
@@ -254,34 +255,11 @@ export const UMBRALES = {
   // de deuda es: la hipotecaria no cuenta igual) de "le sobra poco y punto".
   ENDEUDAMIENTO_PARA_BORDERLINE: 50,
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // TOPE DE ENDEUDAMIENTO SEGUN EL INGRESO (7-sep-2026, decision del fundador)
-  //
-  // Antes el Filtro 2 miraba la PLATA que queda (remanente >= 2,5M). Ahora
-  // mira el HABITO: que porcentaje de su ingreso se le va en deudas, con un
-  // tope que sube con el ingreso porque a mayor ingreso hay mas capacidad de
-  // absorber deuda.
-  //
-  //   gana menos de 9M  -> tolera hasta 50%
-  //   gana 9M o mas     -> tolera hasta 60%
-  //
-  // ⚠️ DOS EFECTOS MEDIDOS, LOS DOS APROBADOS A SABIENDAS:
-  //
-  // 1. El escalon premia al reves en plata absoluta: quien gana 8,99M pasa
-  //    con 4,50M libres, y quien gana 9,00M pasa con 3,60M. El que gana MAS
-  //    puede quedar con MENOS plata libre. Es intencional: el filtro es de
-  //    habito de endeudamiento, no de liquidez.
-  //
-  // 2. Aprieta. Medido contra los 20 leads reales de la base que tienen
-  //    ingreso Y endeudamiento: 8 de 20 (40%) que pasaban directo ahora van a
-  //    la repregunta de calculo. Entre ellos uno de 14,2M al 65% al que le
-  //    quedan 4,97M libres. Se eligio el tope estricto con esa cifra delante.
-  //
-  // Ninguno de los dos se "arregla": son la regla que se pidio.
-  // ─────────────────────────────────────────────────────────────────────────
-  INGRESO_TOPE_ALTO: 9_000_000,
-  TOPE_DEUDA_BASE: 50,
-  TOPE_DEUDA_ALTO: 60,
+  // Nota de historia (11-sep-2026): del 7 al 11-sep el Filtro 2 uso un tope
+  // de PORCENTAJE segun el ingreso (50% por debajo de $9M, 60% desde $9M). Se
+  // retiro: el criterio vuelve a ser REMANENTE_MINIMO, la plata que le queda.
+  // Es mas permisiva que el tope: quien gana $6M pasa con hasta ~58% de deuda,
+  // quien gana $10M con hasta 75%.
   SMLV_2026: 1_420_000,
 
   // Escalamiento por resistencia. El SOP V4.2 de Javier dice 2 (misma objecion
@@ -396,7 +374,7 @@ P.M2_NO_SABE = `Sin presión, dame un estimado. ¿Te queda plata después de pag
  * REPREGUNTA DE CALCULO (7-sep-2026). Copy OFICIAL, entregado literal por el
  * fundador -- no se reescribe ni se "mejora".
  *
- * POR QUE EXISTE: un endeudamiento por encima del tope casi siempre es un
+ * POR QUE EXISTE: un endeudamiento que deja menos de $2.5M libres casi siempre es un
  * error de cuentas, no una situacion real. Los dos errores medidos en
  * conversaciones reales son (1) dar la deuda TOTAL en vez de la cuota mensual,
  * y (2) meter arriendo, servicios y mercado, que son gastos fijos y NO deudas.

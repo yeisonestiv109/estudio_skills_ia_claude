@@ -167,16 +167,12 @@ function normalizarNumero(s) {
 // ---------------------------------------------------------------------------
 // 2. Los 3 filtros del SOP V4.2
 // ---------------------------------------------------------------------------
-/** Filtro 1: ingreso >= $7M COP/mes. */
+/** Filtro 1: ingreso >= $6M COP/mes (UMBRALES.INGRESO_MINIMO). */
 export function evaluarIngreso(monto) {
   if (monto === null || monto === undefined) return 'ambiguo';
   return monto >= UMBRALES.INGRESO_MINIMO ? 'califica' : 'descalifica';
 }
 
-/**
- * Filtro 2 — el tope depende del ingreso (V4.0/V4.2):
- * gana ~$7M -> tope 50% ; gana >$9M -> tope 60%.
- */
 /**
  * Lo que le queda al lead cada mes despues de pagar deudas.
  *
@@ -194,38 +190,35 @@ export function calcularRemanente(ingreso, pct) {
 }
 
 /**
- * Filtro 2 — 'ok' | 'borderline' | 'descalifica' | 'no_sabe'
+ * Filtro 2 — 'ok' | 'verificar_calculo' | 'no_sabe'
  *
- * La regla del fundador (4-sep-2026):
- *   remanente >= 2.5M                    -> ok
- *   remanente <  2.5M  y deuda >= 50%    -> borderline: puede ser deuda BUENA
- *                                           (hipoteca), se pregunta antes de
- *                                           descartar
- *   remanente <  2.5M  y deuda <  50%    -> descalifica (le sobra poco y no es
- *                                           por las deudas: el ingreso no da)
+ * REGLA (11-sep-2026): despues de pagar sus deudas, al lead le tienen que
+ * quedar libres al menos UMBRALES.REMANENTE_MINIMO ($2.500.000) al mes.
  *
- * ⚠️ NOTA MATEMATICA, comprobada sobre todo el espacio 6M-30M: la ultima rama
- * es INALCANZABLE para quien paso el Filtro 1. Con ingreso >= 6M y deuda < 50%,
- * el remanente siempre supera 2.5M. Se deja escrita igual porque deja de ser
- * inalcanzable si el fundador baja el ingreso minimo por debajo de 5M, y porque
- * el ingreso puede llegar por otras vias (una cifra escrita a mano por el
- * Setter en el dashboard, por ejemplo). Hay un test que fija ambas cosas.
+ *   remanente = ingreso - cuota mensual de deudas   ( = ingreso x (1 - deuda%) )
+ *
+ *   remanente >= $2.5M  -> ok
+ *   remanente <  $2.5M  -> verificar_calculo. NUNCA se descalifica de una: un
+ *                          remanente bajo casi siempre es una cuenta mal hecha
+ *                          (el saldo total en vez de la cuota, o arriendo y
+ *                          servicios metidos como deuda). La decision final la
+ *                          toman M2_VERIFICAR_CALCULO y M2_BORDERLINE.
+ *
+ * HISTORIA: el 7-sep se probo un tope de porcentaje segun el ingreso (50% por
+ * debajo de $9M, 60% desde $9M). El 11-sep se volvio al remanente: lo que
+ * importa es la plata que le queda para trabajar, no el porcentaje.
+ *
+ * `remanenteDeclarado`: si el lead dio la cifra en plata (lo que paga al mes o
+ * lo que le queda), se usa esa directamente. Pasar por el porcentaje redondeado
+ * puede mover el resultado unos miles de pesos justo en el limite.
  */
-export function topeEndeudamiento(ingreso) {
-  if (typeof ingreso !== 'number' || !Number.isFinite(ingreso) || ingreso <= 0) return null;
-  return ingreso >= UMBRALES.INGRESO_TOPE_ALTO ? UMBRALES.TOPE_DEUDA_ALTO : UMBRALES.TOPE_DEUDA_BASE;
-}
-
-export function evaluarEndeudamiento(pct, ingreso) {
-  if (pct === null || pct === undefined) return 'no_sabe';
-  const tope = topeEndeudamiento(ingreso);
-  // Sin ingreso no hay tope contra que comparar: no se adivina ni se descarta.
-  if (tope === null) return 'no_sabe';
-  if (pct <= tope) return 'ok';
-  // Por encima del tope NO se descarta: primero se verifica el calculo. Un
-  // endeudamiento absurdo casi siempre es una cuenta mal hecha (deuda total en
-  // vez de cuota mensual, o arriendo/servicios/mercado metidos como deuda).
-  return 'verificar_calculo';
+export function evaluarEndeudamiento(pct, ingreso, remanenteDeclarado = null) {
+  const remanente = (typeof remanenteDeclarado === 'number' && Number.isFinite(remanenteDeclarado))
+    ? remanenteDeclarado
+    : calcularRemanente(ingreso, pct);
+  // Sin los dos datos no hay cuenta que hacer: no se adivina ni se descarta.
+  if (remanente === null) return 'no_sabe';
+  return remanente >= UMBRALES.REMANENTE_MINIMO ? 'ok' : 'verificar_calculo';
 }
 
 // ---------------------------------------------------------------------------
@@ -388,17 +381,22 @@ const HANDOFF = (razon, estado, extra = {}) => ({
 function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLead) {
   const ingreso = estado?.salario_monto ?? c.ingreso_cop ?? null;
   let pct = c.endeudamiento_pct ?? null;
+  // Si lo dijo en plata, esa cifra es la exacta: el % se deriva solo para
+  // guardarlo, y la decision se toma sobre la plata.
+  let remanenteDeclarado = null;
 
   if (pct === null && ingreso !== null && ingreso > 0) {
     if (c.deuda_cop != null) {
       pct = Math.round((c.deuda_cop / ingreso) * 100);
+      remanenteDeclarado = ingreso - c.deuda_cop;
     } else if (c.remanente_cop != null) {
       const gastado = Math.max(0, ingreso - c.remanente_cop);
       pct = Math.round((gastado / ingreso) * 100);
+      remanenteDeclarado = c.remanente_cop;
     }
   }
 
-  const veredicto = evaluarEndeudamiento(pct, ingreso);
+  const veredicto = evaluarEndeudamiento(pct, ingreso, remanenteDeclarado);
 
   // BUG REAL (5-sep-2026): el LLM confunde "no se/no estoy segura" (INCERTIDUMBRE)
   // con la Objecion 6 "es un dato sensible" (RETICENCIA) -- son intenciones
@@ -502,7 +500,7 @@ function evaluarYResponderEndeudamiento(estado, c, nombre, etapaEntrada, textoLe
       handoffRazon: null, motivoPerdida: null,
       campos: { endeudamiento_pct: pct },
       permitirEmpatia: false,
-      summary: `Deuda ${pct}% sobre el tope de ${topeEndeudamiento(ingreso)}% para un ingreso de ${ingreso}. Se verifica el calculo antes de descartar.`,
+      summary: `Deuda ${pct}% sobre un ingreso de ${ingreso}: le quedarian ${remanenteDeclarado ?? calcularRemanente(ingreso, pct)} libres (< ${UMBRALES.REMANENTE_MINIMO}). Se verifica el calculo antes de descartar.`,
     };
   }
   if (veredicto === 'borderline') {
@@ -979,7 +977,16 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       const pctCorregido = c.endeudamiento_pct ?? null;
       const ingresoConocido = estado?.salario_monto ?? c.ingreso_cop ?? null;
       const sobrante = c.remanente_cop ?? null;
-      const tope = topeEndeudamiento(ingresoConocido);
+      // BUG CORREGIDO (11-sep-2026): si el lead corregia diciendo lo que PAGA al
+      // mes ("pago 3 millones"), el prompt de esta etapa le pide al LLM ponerlo
+      // en `deuda_cop`, pero aqui no se leia: el bot concluia "no dio nada" y
+      // volvia a preguntar lo mismo. Ahora esa cifra cuenta.
+      const cuotaCorregida = (c.deuda_cop != null && ingresoConocido > 0) ? c.deuda_cop : null;
+      const pctFinal = pctCorregido
+        ?? (cuotaCorregida !== null ? Math.round((cuotaCorregida / ingresoConocido) * 100) : null);
+      const remanenteCorregido = (pctCorregido === null && cuotaCorregida !== null)
+        ? ingresoConocido - cuotaCorregida
+        : calcularRemanente(ingresoConocido, pctCorregido);
 
       if (c.objecion_num || c.objecion_detectada) {
         return manejarObjecion(estado, c, nombre, 'Objecion al verificar el calculo del endeudamiento (M2).');
@@ -997,21 +1004,21 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
         };
       }
 
-      // Corrigio el porcentaje y ahora si entra en su tope.
-      if (pctCorregido !== null && tope !== null && pctCorregido <= tope) {
+      // Corrigio la cuenta (en % o en cuota) y ahora si le quedan los $2.5M.
+      if (remanenteCorregido !== null && remanenteCorregido >= UMBRALES.REMANENTE_MINIMO) {
         return {
           mensajes: [render(P.M3, nombre)],
           etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
           handoffRazon: null, motivoPerdida: null,
-          campos: { endeudamiento_pct: pctCorregido },
+          campos: { endeudamiento_pct: pctFinal },
           permitirEmpatia: true,
-          summary: `Verificacion del calculo: corrige a ${pctCorregido}%, dentro del tope de ${tope}%. Filtro 2 superado.`,
+          summary: `Verificacion del calculo: corrige a ${pctFinal}% y le quedan ${remanenteCorregido} libres. Filtro 2 superado.`,
         };
       }
 
       // No dio NADA con que decidir (ni cifra corregida ni sobrante). Misma
       // regla de oro del resto del embudo: no se descarta sobre un vacio.
-      if (pctCorregido === null && sobrante === null) {
+      if (pctFinal === null && sobrante === null) {
         return reencauzar(estado, c, nombre,
           'Verificacion del calculo sin datos: no corrigio la cifra ni dijo cuanto le sobra.');
       }
@@ -1024,9 +1031,9 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           : [render(P.M2_BORDERLINE, nombre)],
         etapaNueva: 'M2_BORDERLINE', estadoDestino: 'contactado',
         handoffRazon: null, motivoPerdida: null,
-        campos: pctCorregido !== null ? { endeudamiento_pct: pctCorregido } : {},
+        campos: pctFinal !== null ? { endeudamiento_pct: pctFinal } : {},
         permitirEmpatia: false,
-        summary: `Verificacion del calculo: ratifica ${pctCorregido ?? 'la cifra'}%, sigue sobre el tope. Puede ser deuda buena: se pregunta antes de descartar.`,
+        summary: `Verificacion del calculo: ratifica ${pctFinal ?? 'la cifra'}%, le siguen quedando menos de ${UMBRALES.REMANENTE_MINIMO} libres. Puede ser deuda buena: se pregunta antes de descartar.`,
       };
     }
 

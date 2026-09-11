@@ -1013,7 +1013,7 @@ describe('En M1-M4 la pregunta del embudo no se omite nunca', () => {
 // ===========================================================================
 // REGLAS NUEVAS DEL FILTRO 2 EN EL PROMPT (7-sep-2026)
 //
-// El tope de endeudamiento y la verificacion del calculo viven en el router,
+// El piso de remanente y la verificacion del calculo viven en el router,
 // pero dependen de que el clasificador sepa QUE extraer en la etapa nueva y de
 // que entienda una moneda extranjera. Estos tests fijan las dos cosas dentro
 // del prompt, que es donde se pierden en silencio si alguien lo poda.
