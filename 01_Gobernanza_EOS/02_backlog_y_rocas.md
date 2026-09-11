@@ -12,19 +12,20 @@
 
 ## Estado en una línea
 
-Worker V4.2 **en producción** (versión `df08a74e`, código del 9-sep), dashboard
-en `master` (`67cc463`), bot recibiendo leads reales. Hay **1 commit del bot sin
-desplegar** (`88097dd`).
+Worker V4.2 **en producción con `88097dd`** (versión `6236373f`, desplegada el
+11-sep 18:49 UTC), dashboard en `master` (`67cc463`), bot recibiendo leads
+reales. **No queda código del bot sin desplegar.**
 
 ## 🔴 LO PRIMERO: qué está y qué no
 
 | | |
 |---|---|
-| Bot — último commit | `88097dd` (los 6 fallos del 11-sep) — **NO desplegado** |
-| Bot — desplegado en Cloudflare | versión `df08a74e` (11-sep 15:47, *Secret Change* sobre el código de `273cb48d`, 9-sep = commit `788d634`). ⚠️ **NO es `984cea04`**: esa versión es del 6-sep y quedó 3 atrás — un rollback "a lo que estaba" retrocedería cinco días |
+| Bot — último commit | `88097dd` (los 6 fallos del 11-sep) — ✅ **desplegado** |
+| Bot — desplegado en Cloudflare | versión `6236373f` (11-sep 18:49). La anterior era `df08a74e`, que es el código del 9-sep (`273cb48d` = commit `788d634`). ⚠️ **`984cea04` es del 6-sep y quedó 4 versiones atrás** — un rollback "a lo que estaba" retrocedería cinco días |
 | Dashboard — `master` | `67cc463`, subido, Vercel no se usa (corre local) |
 | Base de datos | **sana desde el 11-sep 18:36 UTC**, tras matar los backends envenenados (ver §1) |
 | Suite E2E | 14/14 en corrida serial |
+| Compuerta | 5/5 pasos ejecutados de verdad el 11-sep 19:00 (ver "Cierre de la tarde") |
 
 **Para desplegar el bot:** `cd .../Scrips_Worker_and_AppScript && npx wrangler deploy`
 (wrangler ya está autenticado con la cuenta de ARTF).
@@ -154,9 +155,60 @@ como "no encontré nada"; tope de endeudamiento por ingreso (<$9M → 50%, ≥$9
 - `wrangler dev` local no arranca (`Incorrect type for map entry
   'ESQUEMA_SECRETARIA'`). No bloquea `wrangler deploy`.
 
+## 🌆 Cierre de la tarde del 11-sep (sesión con Yeisiton)
+
+**Lo que se hizo:** se mató el bucle (ver §1), se desplegó `88097dd` y se corrió
+la compuerta **completa por primera vez**: 535/535 tests, tsc limpio, las 21
+etapas contra la base real y el smoke HTTP del Worker (401 sin secreto, 200 con
+secreto). Se añadió `WEBHOOK_SECRET` a `.dev.vars` — sin él, el paso 5 se
+omitía en silencio en cada sesión.
+
+**El arreglo de agenda quedó verificado en vivo.** Prueba real del lead
+`813370090`: "No me sirve, no hay disponibilidad" → el bot pidió la franja y
+escaló, **sin reenviar el link**. Era el fallo #1 del 11-sep.
+
+**Tres reportes de Yeisiton, dos no se sostuvieron contra la evidencia:**
+
+1. *"No entiende números sueltos como 75, quiere 75%"* — **no reproducido**. En
+   3 h no hay un solo mensaje que sea un número suelto en la base
+   (`ultimo_msg_lead ~ '^\s*\d{1,3}\s*$'` → 0 filas). Y el código va al revés:
+   `detectarEndeudamientoPct` SÍ maneja sueltos, pero **ya no la usa el bot**
+   (solo `simulador.js`): quien extrae el % es el LLM.
+2. *"Responde Sí al agendamiento y no entiende"* — **no reproducido**. El único
+   "Si" suelto del día lo entendió: `Filtro 3 superado. Lead CALIFICADO`. No
+   hay regex de "agendemos"; es `if (c.acepta)`, que decide el LLM — y el regex
+   que había **se quitó a propósito** el 6-sep porque leía "sí, ahora tengo más
+   claro que NO quiero" como aceptación.
+3. *"Debe admitir de 6M y no descartar hasta remanente < 2,5M"* — **ya es así**.
+   `INGRESO_MINIMO` = 6M, y `evaluarEndeudamiento` sobre el tope **nunca
+   descarta**: va a `verificar_calculo`, y luego el borderline tampoco descarta.
+   Verificado en vivo: 22,5M con 75% de deuda → no lo descartó, repreguntó, y
+   con "me quedan 3 millones" registró `Filtro 2 superado`.
+
+**HIPÓTESIS VIVA de (1) y (2): no era comprensión, era silencio.** Dos causas
+posibles, las dos medidas: el **429 de Groq** (61 rechazos de 394 llamadas;
+techo de 7.000 tokens/minuto e input de ~3.400 por turno, o sea 2 turnos por
+minuto), o un **handoff activo** — con `handoff_razon` puesto el bot deja de
+responder por diseño, y en la prueba de las 18:08 el handoff entró a las
+18:12:58, así que todo lo escrito después caía en un bot mudo. Desde el chat
+ambas cosas se ven idénticas a "no me entendió", y llevan a reescribir el
+mensaje en formato exacto.
+
+**DECISIÓN CERRADA (Yeisiton, 11-sep):** el Filtro 2 **se queda como está**. Se
+evaluó que el remanente mandara solo y se descartó: con ingresos altos casi
+cualquier porcentaje pasaría (22,5M al 88% da 2,7M de remanente y entraría sin
+que nadie verifique ese 88%). Se respeta la regla del fundador del 7-sep.
+
+**PENDIENTE INMEDIATO — la prueba con `wrangler tail`.** Quedó acordado
+repetir los dos casos con el tail abierto para ver si el mensaje llega al
+Worker, qué devuelve el clasificador y si hay 429. ⚠️ **No sirve probar desde
+`813370090`**: quedó con `handoff_razon = 'agendamiento_manual_pendiente'` y el
+bot no le responderá. Hay que usar otra cuenta o liberar el handoff a mano.
+
 ## Pendientes concretos
 
-1. **Desplegar `88097dd`** y probar los 6 arreglos con leads reales.
+1. ~~Desplegar `88097dd`~~ ✅ hecho el 11-sep (versión `6236373f`). Queda
+   **probar los casos de "75" y "Si" con `wrangler tail` abierto** (ver arriba).
 2. **Copy sin aprobar de Javier**: `P.M1_PREGUNTAR_VARIABLES` (rescate por
    comisiones/bonos) está implementado pero **apagado** tras
    `COPY_PENDIENTE_HABILITADO = false`.
