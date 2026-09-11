@@ -42,7 +42,7 @@
 | **Alertas** | `notificador_google_chat.js` | Mensaje al Setter en cada handoff | 169 líneas | 18 |
 | **Base** | `fn_bot_procesar_turno`, `fn_etapa_bot_valida` | Guarda el estado y **rechaza etapas que no conoce** | SQL | — |
 
-**Total: 535 tests, compuerta `./verificar.sh`.**
+**Total: 519 tests (eran 535; se fueron los 16 del módulo de 4,5M), compuerta `./verificar.sh`.**
 
 ### La división del trabajo (y por qué está bien)
 
@@ -81,11 +81,9 @@
 
 ## 3. Hallazgos
 
-### 🔴 H1 — Dos umbrales de ingreso, y el que parece activo no lo está
+### ✅ H1 — Dos umbrales de ingreso — RESUELTO 11-sep (`761c8cb`)
 
-`calificacion_dinamica.js` dice `INGRESO_MINIMO: 4_500_000` con `activo: true`. **Nadie lo importa**: solo su propio test. El que manda es `UMBRALES.INGRESO_MINIMO = 6_000_000` en `sop_v42_plantillas.js`.
-
-**Riesgo:** alguien cambia el 4,5M creyendo que cambia el bot (no pasa nada), o lo "conecta" pensando que es una mejora y baja el piso a 4,5M sin que nadie lo haya decidido. El modelo sale de los 50 casos del experto y dice que 6M está *fuera* de la banda admisible: es una recomendación válida, pero no está aplicada. **Hay que decidir:** se conecta (y se baja el piso, con OK del fundador) o se marca claramente como experimento no conectado.
+`calificacion_dinamica.js` decía `INGRESO_MINIMO: 4_500_000` con `activo: true`, pero no lo importaba nadie. **Decisión del fundador: se descarta.** Se eliminaron el módulo y su test. El Filtro 1 es **6M COP** y vive en un solo lugar: `UMBRALES.INGRESO_MINIMO` en `sop_v42_plantillas.js`. El dataset de 50 casos del experto se conserva como referencia.
 
 ### 🔴 H2 — "Solo 6M en adelante" es verdad a medias
 
@@ -97,21 +95,42 @@ Esto es una **decisión comercial del 4-sep** (preferir perder la franja 6–7M 
 
 ### 🟠 H3 — Los comentarios mienten sobre las reglas más importantes
 
-En este código los comentarios hacen de documentación, y en tres sitios dicen lo contrario de lo que hace el código:
+En este código los comentarios hacen de documentación, y en cinco sitios dicen lo contrario de lo que hace el código:
 
 | Dónde | Qué dice | Qué hace |
 |---|---|---|
 | `sop_v42_plantillas.js:217-229` (UMBRALES) | "un 'No' al rango NO descalifica: se le pide la cifra" | Descalifica directo (decisión del 4-sep) |
 | `bot_router_v42.js:170` (`evaluarIngreso`) | "Filtro 1: ingreso >= $7M" | Compara contra $6M |
 | `bot_router_v42.js:196-212` (docstring del Filtro 2) | Regla del remanente ≥ $2,5M / 50% | Tope por ingreso 50% / 60% |
+| `bot_router_v42.js:176-179` (comentario huérfano sobre el Filtro 2) | "gana ~$7M → tope 50%; gana >$9M → tope 60%" | Tope 50% por debajo de $9M y 60% desde $9M exactos; el piso de ingreso es $6M |
+| `sop_v42_plantillas.js:14-15` (cabecera del archivo) | "≤50% si gana ~$7M, hasta 60% si gana >$9M" | Lo mismo: el corte es ≥ $9M y el piso es $6M |
 
 Quien lea el comentario y no el código tomará decisiones equivocadas.
 
-### 🟠 H4 — Código muerto en el Filtro 2
+### 🟠 H4 — Código muerto: parece vivo y no se ejecuta nunca
 
-`evaluarEndeudamiento` solo devuelve `ok`, `verificar_calculo` o `no_sabe` desde el 7-sep. Pero `evaluarYResponderEndeudamiento` (`bot_router_v42.js` ~508-535) conserva ramas para `'borderline'` y `'descalifica'` que **ya no se ejecutan**. Hoy no rompen nada; confunden porque parece que el Filtro 2 descalifica en el primer paso, y no lo hace.
+**(a) Dos ramas del Filtro 2** — `bot_router_v42.js:509-534`, dentro de `evaluarYResponderEndeudamiento`.
+`evaluarEndeudamiento` solo devuelve `ok`, `verificar_calculo` o `no_sabe` desde el 7-sep, así que los bloques `if (veredicto === 'borderline')` y `if (veredicto === 'descalifica')` no se alcanzan nunca. Hacen creer que el Filtro 2 descalifica en el primer paso, y no lo hace. (La regla del remanente de $2,5M sigue viva, pero más adelante: como rescate en `M2_VERIFICAR_CALCULO` y `M2_BORDERLINE`.)
 
-(La regla del remanente de $2,5M **sigue viva**: es la vía de rescate en `M2_VERIFICAR_CALCULO` y `M2_BORDERLINE`.)
+**(b) La capa de regex retirada el 6-sep: 13 funciones, ~257 de las 2.179 líneas del router.** Ninguna la llama el Worker ni el router. Solo las usan sus propios tests, y el simulador las importa sin usarlas:
+
+| Función | Líneas | Qué hacía |
+|---|---|---|
+| `parseIngresoCOP` | 38–142 | Sacaba el ingreso del texto. **Convierte dólares a 4.000** |
+| `detectarDolorLetras` | 1919–1956 | Letras A/B/C/D del dolor |
+| `detectarEndeudamientoPct` | 2145–2172 | % de deuda del texto |
+| `detectarUrgencia` | 1888–1906 | Urgencia |
+| `detectarAcompanante` | 1865–1878 | Si va acompañado a la llamada |
+| `detectarCompromiso` | 2115–2125 | *(no la usa ni un test)* |
+| `pareceIncertidumbre` | 2099–2106 | "no sé" |
+| `detectarSiNo` | 357–363 | Sí / no |
+| `detectarAgradecimiento` | 2108–2113 | *(no la usa ni un test)* |
+| `pareceDolorFinanciero` | 1970–1975 | |
+| `detectarHostilidad` | 2139–2143 | Retirada por un falso positivo con un lead real |
+| `detectarSinHorarios` | 2133–2137 | |
+| `pareceRemanente` | 2087–2091 | |
+
+**Sobre los dólares:** en producción el único que convierte es el LLM, con **1 USD = 3.500 COP y 1 EUR = 3.800 COP** (prompt de `clasificarConLLM`, `worker_bot_setter_v42.js:884`, con un test que lo fija). El `×4.000` de `parseIngresoCOP` no corre. Si alguien lo leyera sin saberlo, creería que el bot usa dos tasas.
 
 ### 🟠 H5 — `decidirTurno` es una sola función de 1.017 líneas
 
@@ -168,7 +187,7 @@ Hay que tocar **estas piezas juntas**, porque están encadenadas y un test vigil
 | 2 | Cifra asumida: `7_000_000` → `6_000_000` | `UMBRALES.INGRESO_ASUMIDO_POR_RANGO` | Va atada al texto del rango: es "el piso de lo que el lead dijo". Un test exige que no quede por debajo del mínimo |
 | 3 | Mensaje de descarte: "más de $7M" → "$6M" | `P.DESC_INGRESO` (`sop_v42_plantillas.js:749`) | Si no, al lead de $5M se le dice una cifra que no es la real. **También necesita OK de Javier** |
 | 4 | Actualizar el test "Banda de trampa" | `tests/bot_router_v42.test.js` ~1362-1400 | Hoy fija a propósito el desalineamiento. Cambia porque se cambia la regla a propósito, que es la única excepción a "no se reescriben tests" |
-| 5 | Decidir qué pasa con `calificacion_dinamica.js` | ese archivo | Ver H1: sigue diciendo 4,5M |
+| 5 | ~~Decidir qué pasa con `calificacion_dinamica.js`~~ | — | Resuelto: se descartó el 11-sep |
 | 6 | Arreglar el comentario de `UMBRALES` y el de `evaluarIngreso` | ver H3 | Para que el próximo que lea no se confunda |
 | 7 | `./verificar.sh` → commit → deploy | — | — |
 
