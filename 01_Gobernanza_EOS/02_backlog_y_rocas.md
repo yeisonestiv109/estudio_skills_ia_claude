@@ -5,111 +5,145 @@
 
 ---
 
-# ⏭️ RETOMAR AQUÍ — bot ARTF V4.2 (cierre del 6-sep-2026)
+# ⏭️ RETOMAR AQUÍ — bot ARTF V4.2 + dashboard (cierre del 11-sep-2026)
 
 > Inyección de memoria para la sesión siguiente. Leer esto **antes** que nada.
-> Detalle largo de cada iteración → `03_Clientes_y_Casos/02_Cliente_ARTF/PROGRESS.md`
-> (It. 24–25) y `auditoria_arquitectura_bot_v42.md` → **Anexo B**.
+> Incidente completo de concurrencia → `artf-pipeline-app/.claude/INCIDENTE_BUCLE_CONCURRENCIA.md`
 
-## 🔴 LO PRIMERO: git y producción están DESINCRONIZADOS
+## Estado en una línea
+
+Worker V4.2 **en producción** (`984cea04`), dashboard en `master` (`67cc463`),
+bot recibiendo leads reales. Hay **1 commit del bot sin desplegar** (`88097dd`).
+
+## 🔴 LO PRIMERO: qué está y qué no
 
 | | |
 |---|---|
-| Último commit | `dd98d33` (rama `setup/base-conocimiento`, árbol limpio) |
-| **Desplegado en Cloudflare** | **`962818e1`** — versión ANTERIOR al refactor |
-| Sin desplegar | `f666c84` (elimina el regex) + `dd98d33` (arregla el eval) |
+| Bot — último commit | `88097dd` (los 6 fallos del 11-sep) — **NO desplegado** |
+| Bot — desplegado en Cloudflare | `984cea04` |
+| Dashboard — `master` | `67cc463`, subido, Vercel no se usa (corre local) |
+| Base de datos | sana: pool reciclado, rollbacks detenidos |
+| Suite E2E | 14/14 en corrida serial |
 
-**Se dejó así a propósito**, no por olvido: el refactor quita la capa de regex y
-deja al LLM como única autoridad de comprensión. No se despliega hasta tener la
-nota del eval. **No desplegar sin correr el eval primero.**
+**Para desplegar el bot:** `cd .../Scrips_Worker_and_AppScript && npx wrangler deploy`
+(wrangler ya está autenticado con la cuenta de ARTF).
 
-## Logros de la sesión
+---
 
-1. **Bugs históricos ya cerrados y en producción** (iteraciones previas):
-   incertidumbre vs. Objeción 6 en el loop de endeudamiento, y
-   `SIN_HORARIOS_ESPERANDO_FRANJA` agregado al CHECK de la BD para que el lead
-   sin cupos no quede en visto.
+## 1. El incidente grande: 3 días de CPU al 100%
 
-2. **Auditoría B** (`auditoria_arquitectura_bot_v42.md`): el LLM veía SOLO el
-   último mensaje. Se le dio memoria corta (últimos 6 turnos desde
-   `activity_log`, sin migración) y `CONOCIMIENTO_PLAYBOOK` como anclaje.
+Lo más importante de estas sesiones. **769.228.675 transacciones abortadas**,
+1.488 rollbacks/segundo, CPU clavada 3 días, créditos de burst del `t4g.nano`
+agotados. Sobre una base de 128 MB sin tráfico real.
 
-3. **Política de escalamiento: de 13 puntos a 5.** Solo escalan seguridad
-   (crisis/hostil/ex-cliente), sin cupos en el calendario, y que el LLM esté
-   caído. Un lead confuso NUNCA escala.
+**Causa raíz (estaba en la BD, no en React):** `fn_reclamar_lead` devolvía la
+versión con `UPDATE ... RETURNING *`, pero **`RETURNING` no ve los triggers
+AFTER**. Había una cadena (`trg_gl_log` → `activity_log` →
+`trg_al_actualiza_actividad_lead` → otro `UPDATE gestion_leads` → `trg_touch`)
+que subía la versión una segunda vez. Devolvía v3 con la fila ya en v4 → el
+**primer guardado de todo lead no reclamado fallaba siempre** → la UI
+reintentaba con la misma versión vieja → bucle infinito → el pool de PostgREST
+quedó envenenado y siguió solo incluso con Next.js muerto.
 
-4. **Se eliminó la capa de regex de negocio** (`f666c84`). Tres bugs verificados
-   en vivo, todos por `const fusion = {...c, ...llm, ...det}` (el regex ganaba):
-   - `"4 millones del trabajo, 3 del negocio y 4 de un local"` → LLM 11M, regex 4M → **descalificado**
-   - `"gano 5 millones fijos y unos 3 más por comisiones"` → LLM 8M, regex 5M → **descalificado**
-   - `"sí, ahora tengo más claro que NO quiero seguir"` → regex vio "claro" → **le mandó el link**
+**Se arregló con:** releer la fila después del UPDATE; guardarraíl
+`versionQuemada()`/`marcarVersionQuemada()` en `src/lib/concurrencia.ts` cableado
+en los 8 sitios; y un "Restart database" que recicló el pool.
 
-5. **`evals.mjs`** (nuevo): corre el clasificador REAL contra las 8
-   conversaciones del corpus. Cada `pista` es la etiqueta esperada. Umbral 95%.
+**Cómo detectarlo si vuelve:** dos lecturas de `xact_rollback` **en consultas
+separadas**. Si sube cientos por segundo con `xact_commit` quieto, hay bucle.
+⚠️ Medirlo con `with a as (...), pg_sleep(10), b as (...)` en UNA transacción da
+**0 siempre** (las vistas de estadísticas se cachean por transacción) — ese error
+nos costó horas.
+
+## 2. Rendimiento del dashboard: 2 cuellos, los dos medidos
+
+- **Conteos del header**: 14 `count:"exact"` sobre `vw_pipeline` por carga →
+  ~15.100 ms y ~403.000 buffers. Ahora una sola consulta a `vw_pipeline_conteos`:
+  **49 ms, 570 buffers** (308× menos).
+- **`getPipelineLeads`**: bucle de 14 consultas con `ORDER BY + LIMIT 300`; el
+  ORDER BY obligaba a materializar las 7.115 filas con su `LEFT JOIN LATERAL`.
+  Ahora `fn_pipeline_top_por_estado` resuelve los 14 estados en **100 ms**.
+- **`auditoria_cambios`** guarda el delta, no la fila completa: **−87%** medido.
+
+**La alerta de "Disk IO" era un diagnóstico equivocado**: el linter no reportaba
+ni un índice faltante (sí 34 sin usar), las lecturas tenían 0,000% de fallo de
+caché y el disco movía 11 IOPS de 3.000. Crear índices habría empeorado.
+
+## 3. Bot V4.2: lo que se arregló
+
+**6-9 sep** — JSON Mode en `decidirRepregunta` (un byte 0x08 invisible la tenía
+rota: `omitir` era inalcanzable); poda de −466 tokens/turno sin borrar reglas;
+eval del clasificador **62/62 = 100%**; un 200 de Groq con cuerpo roto se leía
+como "no encontré nada"; tope de endeudamiento por ingreso (<$9M → 50%, ≥$9M →
+60%) + verificación de cálculo; conversión de moneda extranjera.
+
+**11-sep** — los 6 fallos vistos con leads reales:
+1. "No veo espacios" ya no reenvía el link (el orden `sin_horarios` vs
+   `pide_link` era la causa de los DOS síntomas reportados).
+2. Deuda del tamaño del ingreso = saldo total, no resistencia → etapa nueva
+   `M2_DEUDA_TOTAL`.
+3. Se quitó la coletilla "Sin presión, dame un estimado" ante un acuse de recibo.
+4. "Resurrección fantasma": el saludo de retorno ahora exige
+   `dias_sin_actividad >= 1`.
+5. Las descalificaciones se parten por párrafos y el link viaja solo.
+6. `sanearNombre()`: LAURA→Laura, "Erik."→Erik, omite TecnologiaSAS/ARX/juan123.
 
 ## Decisiones cerradas (no volver a abrir)
 
-- **Consolidar las 4 llamadas en 1: DESCARTADO, con datos.** De 184 turnos
-  reales, **163 (88,6%) solo hacen 1 llamada**. Meter el playbook en todas para
-  ahorrar 3 llamadas que casi nunca ocurren cuesta **+65%** (~2.356 → ~3.900
-  tokens/turno). Las 4 llamadas se ven mal en un diagrama; el diseño ya paga el
-  playbook solo cuando hace falta.
-- **JSON Mode ya está activo** en el clasificador (`response_format:
-  json_object`), con campos separados y tipados. Falta **solo** en
-  `decidirRepregunta`, que devuelve texto libre (`"OMITIR"` / `"REFORMULAR: …"`)
-  y se parsea con regex → migrar a JSON.
+- **`RETURNING` no es fuente de verdad para `version`** en este esquema. Toda
+  función que devuelva una versión para que el cliente la reuse debe releer.
+- **Un conflicto 40001 nunca se reintenta con los mismos datos.** Es un bucle por
+  construcción.
+- **El link SIEMPRE va solo y de ÚLTIMO.** Se pidió el cierre después del link y
+  NO se hizo: `R1_LINK_AISLADO` lo prohíbe por un bug confirmado en producción
+  (Instagram concatena y el link queda inválido).
+- **Consolidar las 4 llamadas del LLM en 1: descartado con datos** (+65% de
+  tokens; 163 de 184 turnos reales hacen 1 sola llamada).
 - **Sin LLM no se adivina**: Groq caído → `error_tecnico` → humano.
-- El código duro se queda ÚNICAMENTE con: aritmética de los 3 filtros,
-  transiciones de etapa, la regla del link y las escaladas de seguridad.
+- Los fixtures E2E se limpian **al final** (`afterEach` marca `es_prueba`), nunca
+  en el INSERT — intentarlo en el trigger rompió 5 specs.
 
-## ⚠️ Restricción operativa descubierta
+## ⚠️ Restricciones operativas vivas
 
-**Groq tiene tope diario: 200.000 tokens/día por llave** (no solo el de 8.000
-por minuto). A ~2.200 tokens por turno ≈ **90 mensajes de lead al día por
-llave**. La llave del 6-sep se agotó con las pruebas. Gaby dejó una llave nueva
-en `artf-pipeline-app/.env.local` (las viejas quedaron comentadas, ella las
-borra) y está sincronizada en `.dev.vars`.
-
-## Plan exacto para la próxima sesión
-
-1. **JSON Mode en `decidirRepregunta`** (`worker_bot_setter_v42.js`): que
-   devuelva `{"accion":"omitir"|"mantener"|"reformular","texto":"…"}` en vez de
-   texto libre. Ante cualquier fallo, sigue cayendo en `mantener`.
-2. **Correr el eval base**: `node evals.mjs` (~21 min, 45 llamadas espaciadas
-   28s). Anotar el número. Sin esta nota, lo de abajo es a ciegas.
-3. **Podar ~30% las `REGLAS DE EXTRACCION`** del prompt del clasificador: son
-   **1.930 de sus 2.955 tokens**, se pagan en el 100% de los turnos, y varios
-   párrafos protegen contra errores del regex que ya no existe. Ahorra ~580
-   tokens/turno y sube el techo diario de ~90 a ~120 mensajes.
-4. **Re-correr el eval y exigir ≥95%.** Si baja, devolver lo podado.
-5. **Recién ahí desplegar** (`npx wrangler deploy`) y probar en vivo con
-   `marlyy318` (`manychat_id` 1269883784).
-
-## Pendientes de fondo (no bloquean lo de arriba)
-
-- `adaptarObjecionConLLM` todavía recibe `llamadaYaMencionada` calculado a mano:
-  con memoria debería deducirlo solo. Es el último parche de ese tipo.
-- Detector automático de síntomas sobre `activity_log` (mensajes repetidos,
-  preguntas sin responder, conversaciones muertas). Gaby rechazó — con razón —
-  etiquetar casos a mano; medir síntomas no necesita etiquetas.
-- Aumentar cupo de Groq: más llaves de **organizaciones distintas** (el límite
-  es por organización) o pasar a tier de pago.
-- 🔴 El link del calendario sigue siendo el personal de Yeison → cambiar a
-  `CALENDAR_ARTF` antes de producción real.
+- **Groq: 200.000 tokens/día por organización.** Un eval completo gasta ~113K.
+  La llave en `.dev.vars` es de una org con cuota fresca; la vieja quedó anotada.
+- **El link del calendario sigue siendo el personal de Yeison** → cambiar a
+  `CALENDAR_ARTF` antes de producción real. **Sigue pendiente.**
 - `wrangler dev` local no arranca (`Incorrect type for map entry
   'ESQUEMA_SECRETARIA'`). No bloquea `wrangler deploy`.
+
+## Pendientes concretos
+
+1. **Desplegar `88097dd`** y probar los 6 arreglos con leads reales.
+2. **Copy sin aprobar de Javier**: `P.M1_PREGUNTAR_VARIABLES` (rescate por
+   comisiones/bonos) está implementado pero **apagado** tras
+   `COPY_PENDIENTE_HABILITADO = false`.
+3. **Flakiness E2E preexistente**: los specs de reservas son interdependientes
+   (uno consume la reserva flotante que otro necesita). Pasan aislados; según el
+   orden, uno puede caer. No se resolvió.
+4. **WIP de Gaby sin commitear** en `artf-pipeline-app` rama `gaby`: 4
+   componentes, 44 inserciones / 22 borrados — normaliza el espacio U+202F de
+   "a. m."/"p. m." que causa hydration mismatch. Le faltan dos cosas antes de
+   mergear: `SetterPipelineBoard.tsx` usa caracteres invisibles crudos en el
+   regex en vez de escapes, y no hay test de regresión.
+5. El módulo `calificacion_dinamica.js` (frontera derivada de 50 casos
+   etiquetados) está **commiteado y desconectado de todo**, a la espera de datos
+   reales. No lo usa el bot.
 
 ## Cómo verificar que no rompiste nada
 
 ```bash
 cd 03_Clientes_y_Casos/02_Cliente_ARTF
-bash verificar.sh          # 476 tests + type-check + smoke RPC real
-cd Scrips_Worker_and_AppScript && node evals.mjs   # el clasificador contra el corpus
+bash verificar.sh          # 535 tests + type-check + smoke RPC real (21 etapas)
+cd Scrips_Worker_and_AppScript && node evals.mjs   # ~21 min, gasta ~113K tokens de Groq
+
+cd ../../../artf-pipeline-app
+npx playwright test        # necesita `npm run dev` corriendo
 ```
 
 **Si un test se pone rojo: arreglar el código, no el test.** La excepción es
 cuando una decisión de negocio cambió — ahí se reescribe el test para fijar la
-regla NUEVA (así se hicieron los 19 de esta sesión), nunca se borra.
+regla NUEVA, nunca se borra.
 
 ---
 
