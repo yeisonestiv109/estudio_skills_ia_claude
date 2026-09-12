@@ -4945,3 +4945,33 @@ Lo que sí cambia en la fase 3: al romper una guarda ya no se descarta en silenc
 - **Fase 2:** system prompt en XML con definiciones semánticas de intención y few-shot de casos límite (`prompt_engineering_guide.md`).
 - **Fase 3:** libertad de redacción del LLM, detrás de perilla y con canario, midiendo con la telemetría recién construida.
 - Desplegar el Worker instrumentado (no se ha hecho: la telemetría no llega a la base hasta que se despliegue).
+
+## 🧠 Sesión 11-sep-2026 (noche) — Fases 2 y 3: cognición del bot
+
+**558 tests en verde.** Fase 1 desplegada (`fb8ac80f`); fases 2 y 3 desplegadas después.
+
+### Fase 2 — System prompt reescrito en XML
+
+Aplicada la metodología de `prompt_engineering_guide.md`. El problema de fondo que resuelve es el **sobreajuste**: decirle al modelo que "acepta" significa literalmente *"sí, agendemos"* lo convertía en un buscador de palabras y perdía un "de una", un "obvio", un "listo".
+
+Ahora el prompt tiene bloques `<rol_y_contexto>`, `<reglas_de_oro>`, `<definicion_de_intenciones>` (semánticas, con casos positivos **y negativos**), `<ejemplos>` few-shot de 6 casos límite reales, `<seguridad>` y `<formato_de_salida>` con el razonamiento obligatorio y primero.
+
+**Se conservaron palabra por palabra** todas las reglas que vienen de leads reales perdidos (glosario del "integral", `SUMA LAS FUENTES`, `INCERTIDUMBRE vs OBJECION 6`, `FRUSTRACION NO ES HOSTILIDAD`, la tasa del dólar). Hay tests que las fijan; el prompt no se puede podar para ahorrar tokens.
+
+**Bug 1 corregido — la empatía nunca se enviaba.** El Worker leía `oracion_empatia` pero el esquema solo declaraba `respuesta_empatica`: ese campo no se le pedía nunca al modelo. Llegaba siempre `undefined`. Verificado contra 20 mensajes reales del 11-sep: ninguno llevaba apertura, con `EMPATIA_HABILITADA = true`. Son dos campos distintos y ahora conviven.
+
+**Bug 2 corregido (hasta donde se puede) — ceguera al Setter humano.** La memoria filtraba solo `mensaje_bot`. Los mensajes que escribe un humano por Instagram **no se registran en ningún lado** (comprobado: en 10 días, cero eventos `nota` y `handoff` de leads reales), así que no se pueden recuperar. Lo que sí se hizo: incluir los eventos del equipo como líneas `[EQUIPO: ...]` y **decírselo al modelo en el prompt**, para que no asuma que el último mensaje que leyó el lead lo escribió él.
+
+### Fase 3 — Corrección guiada en vez de censura
+
+`generarConCorreccion()`: cuando el texto del LLM rompe una guarda, ya no se descarta en silencio. Se le dice **qué regla rompió y por qué** y se le pide que replantee guiado por el Playbook. Un solo reintento; si vuelve a fallar, sale la plantilla aprobada.
+
+⚠️ **Las 5 guardas conservan su rigidez**, como decidió el fundador. Nada que las rompa sale jamás hacia el lead. Hay un test dedicado a protegerlo: si alguien "mejora" el reintento dejando pasar texto prohibido, se pone rojo.
+
+El reintento **solo ocurre cuando ya hubo violación**, que es raro: el camino feliz no gasta llamadas de más, que es lo que importa con el techo de Groq.
+
+### Pendiente
+
+- **`verificarMensajes` sigue sin llamarse en producción** (bug 3 de la auditoría, sin cerrar). La compuerta global de copy solo la usan el simulador y los tests.
+- Mirar la telemetría con tráfico real y confirmar que la apertura empática ya sale.
+- Capturar de verdad los mensajes del Setter exige tocar ManyChat.

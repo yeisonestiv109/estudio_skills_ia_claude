@@ -150,6 +150,35 @@ export const CATCHALL_LLM_HABILITADO = true;
 
 /**
  * ===========================================================================
+ * CORRECCION GUIADA EN VEZ DE CENSURA (11-sep-2026, decision del fundador)
+ * ===========================================================================
+ * QUE CAMBIA: hasta hoy, cuando el LLM redactaba algo que rompia una guarda,
+ * el texto se DESCARTABA en silencio y al lead le llegaba la plantilla seca.
+ * El modelo nunca se enteraba de que habia fallado ni por que.
+ *
+ * Ahora se le devuelve el motivo exacto ("rompiste A2_CIFRA_NUEVA: dijiste 30%
+ * y la plantilla no lo dice") y se le pide que REPLANTEE guiado por el
+ * Playbook. Un solo reintento. Si vuelve a fallar, ahi si sale la plantilla.
+ *
+ * ⚠️ ESTO NO ABLANDA NINGUNA GUARDA. Las cinco reglas duras siguen siendo
+ * absolutas -- nada que las rompa sale jamas hacia el lead:
+ *   1. el link va SOLO (bug real de Instagram: con texto pegado, el lead NO
+ *      puede agendar),
+ *   2. jamas revelar que es una IA,
+ *   3. jamas inventar precios, promesas ni plazos,
+ *   4. tuteo colombiano y primera persona como Andres,
+ *   5. la aritmetica de los filtros la decide el codigo, no el modelo.
+ * Lo unico que cambia es COMO se recupera de una violacion: corrigiendo en vez
+ * de amordazar.
+ *
+ * COSTO: el reintento solo ocurre cuando YA hubo una violacion, que es raro.
+ * No agrega llamadas al camino feliz, que es lo que importa con el techo de
+ * Groq (~2 leads/min en el plan gratuito).
+ */
+export const CORRECCION_LLM_HABILITADA = true;
+
+/**
+ * ===========================================================================
  * AUTO-RECUPERACION DE HANDOFF (fundador, 4-sep-2026)
  * ===========================================================================
  * QA real: el bot escalo a la lead y 40 segundos despues ella escribio "pero
