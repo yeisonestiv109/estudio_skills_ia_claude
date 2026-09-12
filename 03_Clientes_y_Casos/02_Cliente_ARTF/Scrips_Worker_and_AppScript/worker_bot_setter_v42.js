@@ -276,6 +276,30 @@ async function manejar(request, env, ctx) {
     return json({ ok: true, responder: false, motivo: puerta.razon, etapa: estado?.etapa_bot ?? null, bot_activo: env.BOT_ACTIVO === "true" });
   }
 
+  // -------------------------------------------------------------------------------
+  // 2.b CORTACORRIENTE: Solo Registro (Leads sin etiqueta V42) lo puse manualmente
+  // -------------------------------------------------------------------------------
+  if (payload.solo_registro === true) {
+    tz.evento(NODOS.ROUTER, 'OK', { 'router.decision': 'solo_registro_sin_ia' });
+    
+    await escribirTurno(env, {
+      p_manychat_id: subId,
+      p_nombre: nombre,
+      p_ig_handle: sanitize(payload.ig_username),
+      p_ultimo_msg_lead: lastText,
+      p_summary: 'Solo registro: el bot no intervino (falta etiqueta V42).',
+    }).catch((e) => console.error('Fallo en solo_registro:', e?.message));
+
+    tz.enviar();
+    return json({ 
+      ok: true, 
+      responder: false, 
+      motivo: 'solo_registro', 
+      etapa: estado?.etapa_bot ?? null, 
+      bot_activo: env.BOT_ACTIVO === "true" 
+    });
+  }
+
   // -------------------------------------------------------------------------
   // 3. Clasificacion (deterministas primero; el LLM solo donde aporta)
   // -------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import {
   secretoValido, sanearEmpatia, validarClasificacionLLM, conPrefijo, clasificar,
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, enModoSecretaria, camposDesdeClasificacion,
   MAX_TOKENS_LLM, adaptarObjecionConLLM, yaSeDijo, formatearHistorial, decidirRepregunta,
+  responderPreguntaConLLM,
 } from '../worker_bot_setter_v42.js';
 import { LIMPIAR_HANDOFF, FASE_POR_ETAPA } from '../sop_v42_plantillas.js';
 import { decidirTurno } from '../bot_router_v42.js';
@@ -562,6 +563,54 @@ describe('clasificar: marca llm_fallo cuando Groq revienta de verdad', () => {
     const estado = { etapa_bot: 'M2_NO_SABE', estado_codigo: 'contactado', salario_monto: 8_000_000 };
     const c = await clasificar({}, estado, 'creo que si queda');
     assert.equal(c.llm_fallo, undefined);
+  });
+});
+
+// ===========================================================================
+// MINA LATENTE (12-sep-2026): las cuatro funciones que llaman al LLM tenian
+// `if (!env.GROQ_API_KEY) return ...`. El pool (`llavesDeGroq`) lee
+// GROQ_API_KEYS y solo cae a la singular si esa esta vacia. Si alguien borraba
+// la singular dejando solo el pool, el LLM dejaba de correr del todo -- con
+// tres llaves cargadas -- y en silencio: las cuatro devuelven su "no hay LLM".
+// ===========================================================================
+describe('las guardas del LLM respetan el pool GROQ_API_KEYS', () => {
+  const SOLO_POOL = { GROQ_API_KEYS: 'k1,k2' };
+
+  async function contarLlamadas(fn) {
+    const original = globalThis.fetch;
+    let llamadas = 0;
+    globalThis.fetch = () => {
+      llamadas += 1;
+      return Promise.resolve({
+        ok: true, headers: new Map(),
+        json: () => Promise.resolve({ choices: [{ message: { content: '{}' } }] }),
+      });
+    };
+    try { await fn(); } finally { globalThis.fetch = original; }
+    return llamadas;
+  }
+
+  test('clasificar llama a Groq con solo GROQ_API_KEYS', async () => {
+    const estado = { etapa_bot: 'M2_NO_SABE', estado_codigo: 'contactado', salario_monto: 8_000_000 };
+    assert.ok(await contarLlamadas(() => clasificar(SOLO_POOL, estado, 'creo que si queda')) > 0);
+  });
+
+  test('adaptarObjecionConLLM llama a Groq con solo GROQ_API_KEYS', async () => {
+    assert.ok(await contarLlamadas(() => adaptarObjecionConLLM(SOLO_POOL, 'Buena pregunta.\n\n¿Agendamos?', 'ok')) > 0);
+  });
+
+  test('responderPreguntaConLLM llama a Groq con solo GROQ_API_KEYS', async () => {
+    assert.ok(await contarLlamadas(() => responderPreguntaConLLM(SOLO_POOL, '¿cuanto cuesta?', 'cuanto cuesta', '')) > 0);
+  });
+
+  test('decidirRepregunta llama a Groq con solo GROQ_API_KEYS', async () => {
+    assert.ok(await contarLlamadas(() => decidirRepregunta(SOLO_POOL, 'algo', '¿Cuanto ganas?', '', 'ok')) > 0);
+  });
+
+  test('ninguna guarda del Worker vuelve a mirar la llave singular', () => {
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(fuente, /!\s*env\.GROQ_API_KEY\b/,
+      'usar llavesDeGroq(env).length: la singular es solo el respaldo del pool');
   });
 });
 
