@@ -21,148 +21,27 @@ import {
   render, partirEnBurbujas,
 } from './sop_v42_plantillas.js';
 
-// ---------------------------------------------------------------------------
-// 1. Glosario de ingreso colombiano (★ NUEVO V4.1)
-// ---------------------------------------------------------------------------
-/**
- * Convierte una expresion de ingreso en pesos colombianos al mes.
- *
- * Esta funcion existe por un caso real: se descarto a una lead que ganaba
- * $22M porque respondio "gano el minimo integral" y el bot leyo "minimo".
- * Por eso "integral" se evalua ANTES que "minimo", y ante cualquier duda
- * devuelve ambiguo:true -- que en el router NUNCA descalifica, solo pide la
- * cifra exacta (regla de descarte en 2 pasos del playbook).
- *
- * @returns {{monto: number|null, ambiguo: boolean, glosario: string|null, aproximado: boolean}}
- */
-export function parseIngresoCOP(textoRaw) {
-  const texto = String(textoRaw || '').toLowerCase().trim();
-  if (!texto) return { monto: null, ambiguo: true, glosario: null, aproximado: false };
 
-  const amb = (glosario) => ({ monto: null, ambiguo: true, glosario, aproximado: false });
 
-  // ⚠️ VARIAS FUENTES DE INGRESO -> este parser SE ABSTIENE.
-  //
-  // QA del 4-sep-2026, y costo una descalificacion injusta: la lead escribio
-  // "en mi trabajo son mas o menos 4 millones, de mi negocio familiar son 3
-  // millones, y de un local donde soy socia recibo casi 4 millones" (11M). Este
-  // parser agarraba la PRIMERA cifra -- 4M -- y como los deterministas GANAN
-  // sobre el LLM, tapaba la suma correcta del modelo. La descalifico, y la lead
-  // tuvo que reclamar ("pero eso suma mas de 7m, porque me descartas").
-  //
-  // Sumar aca seria adivinar: no se sabe si las cifras se suman (varias
-  // fuentes), se restan (ingreso menos gastos) o son alternativas ("entre 4 y 6
-  // millones"). Eso es comprension de lenguaje, y es trabajo del LLM. Aca se
-  // aplica la misma regla que ya salvo al detector de endeudamiento:
-  // ABSTENERSE ES MEJOR QUE ADIVINAR.
-  if (cuentaCifrasDeDinero(texto) > 1) return amb('varias_fuentes');
 
-  // (a) "integral" SIEMPRE primero. "minimo integral"/"salario integral" es un
-  //     ingreso ALTO (~$18-22M+), jamas el salario minimo. No se asume la
-  //     cifra: se pide, que es lo que manda el playbook. Lo importante es que
-  //     este camino NUNCA puede terminar en descalificacion.
-  if (/\bintegral\b/.test(texto)) return amb('salario_integral');
-
-  // (b) Terminos que por definicion no traen cifra -> pedir el numero.
-  if (/\b(comisi[oó]n|comisiones|variable|depende|var[ií]a|no\s+s[eé]|nose|depende\s+del\s+mes)\b/.test(texto)
-      && !/\d/.test(texto)) {
-    return amb('ingreso_variable');
-  }
-
-  const porQuincena = /\b(quincen|cada\s*15|por\s*15\s*d[ií]as)/.test(texto);
-  const multQuincena = porQuincena ? 2 : 1;
-
-  // (c) "X SMLV" / "X salarios minimos" / "X minimos"
-  const smlv = texto.match(/(\d+(?:[.,]\d+)?)\s*(?:smlv|smmlv|salarios?\s*m[ií]nimos?|m[ií]nimos)\b/);
-  if (smlv) {
-    const n = parseFloat(smlv[1].replace(',', '.'));
-    return { monto: Math.round(n * UMBRALES.SMLV_2026 * multQuincena), ambiguo: false, glosario: 'smlv', aproximado: true };
-  }
-
-  // (d) "el minimo" / "salario minimo" a secas (ya descartamos "integral")
-  if (/\b(salario\s*m[ií]nimo|el\s*m[ií]nimo|m[ií]nimo\b)/.test(texto) && !/\d/.test(texto)) {
-    return { monto: UMBRALES.SMLV_2026 * multQuincena, ambiguo: false, glosario: 'salario_minimo', aproximado: true };
-  }
-
-  // (e) "un palo" = $1M ; "X palos" = X millones
-  const palos = texto.match(/(\d+(?:[.,]\d+)?|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s*palos?\b/);
-  if (palos) {
-    const palabras = { un: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10 };
-    const n = palabras[palos[1]] ?? parseFloat(palos[1].replace(',', '.'));
-    if (Number.isFinite(n)) {
-      return { monto: Math.round(n * 1_000_000 * multQuincena), ambiguo: false, glosario: 'palos', aproximado: false };
-    }
-  }
-
-  // (f) Moneda extranjera -> se convierte, marcado como aproximado.
-  const usd = texto.match(/(?:us\$?|usd|d[oó]lares?)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(?:us\$?|usd|d[oó]lares?)/);
-  if (usd) {
-    const n = normalizarNumero(usd[1] || usd[2]);
-    if (n) return { monto: Math.round(n * 4000 * multQuincena), ambiguo: false, glosario: 'usd', aproximado: true };
-  }
-  const eur = texto.match(/(?:eur|euros?|€)\s*(\d[\d.,]*)|(\d[\d.,]*)\s*(?:eur|euros?|€)/);
-  if (eur) {
-    const n = normalizarNumero(eur[1] || eur[2]);
-    if (n) return { monto: Math.round(n * 4400 * multQuincena), ambiguo: false, glosario: 'eur', aproximado: true };
-  }
-
-  // (g) "X millones (y medio)" / "X millon" / "XM"
-  const millones = texto.match(/(\d+(?:[.,]\d+)?)\s*(?:millones?|mill[oó]n|mill\b|m\b|'?millones)/);
-  if (millones) {
-    let n = parseFloat(millones[1].replace(',', '.'));
-    if (/y\s*medio/.test(texto)) n += 0.5;
-    if (Number.isFinite(n)) {
-      return { monto: Math.round(n * 1_000_000 * multQuincena), ambiguo: false, glosario: 'millones', aproximado: false };
-    }
-  }
-
-  // (h) Cifra escrita completa: 12.000.000 / 12'500.000 / 12,000,000 / 12500000
-  const crudo = texto.match(/\d[\d.,'\s]{2,}\d|\d{4,}/);
-  if (crudo) {
-    const n = normalizarNumero(crudo[0]);
-    if (n && n >= 1000) {
-      return { monto: Math.round(n * multQuincena), ambiguo: false, glosario: 'cifra', aproximado: false };
-    }
-  }
-
-  // (i) Numero suelto sin unidad: "gano 12". En Colombia casi siempre son
-  //     millones, pero a partir de ~50 deja de ser obvio y entre 100 y 999
-  //     puede ser "800 mil". Solo se asume millones en el rango seguro.
-  const suelto = texto.match(/(?:^|\s)(\d{1,3})(?:\s|$)/);
-  if (suelto) {
-    const n = parseInt(suelto[1], 10);
-    if (n >= 1 && n <= 50) {
-      return { monto: n * 1_000_000 * multQuincena, ambiguo: false, glosario: 'numero_suelto_millones', aproximado: true };
-    }
-    return amb('numero_sin_unidad');
-  }
-
-  return amb('sin_cifra');
-}
-
-/**
- * Cuantas cifras de dinero DISTINTAS menciona el texto.
- *
- * Sirve para saber cuando el parser determinista tiene que callarse y dejarle
- * la interpretacion al LLM. No intenta sumar ni entender: solo contar.
- */
-export function cuentaCifrasDeDinero(textoRaw) {
-  const t = String(textoRaw || '').toLowerCase();
-  if (!t.trim()) return 0;
-  // Un rango ("entre 4 y 6 millones") es UNA sola idea de ingreso, no dos
-  // fuentes: se neutraliza antes de contar para no abstenerse de mas.
-  const sinRangos = t.replace(/\b(entre|de)\s+\d[\d.,]*\s*(?:y|a|-)\s*\d/g, ' RANGO ');
-  const conUnidad = sinRangos.match(/\d[\d.,]*\s*(?:millones?|mill[oó]n|mill\b|m\b|palos?|lucas?|mil\b|k\b)/g) || [];
-  const escritas = sinRangos.match(/\d[\d.,']{5,}/g) || [];
-  return conUnidad.length + escritas.length;
-}
-
-function normalizarNumero(s) {
-  if (!s) return null;
-  const limpio = String(s).replace(/[\s.'’,]/g, '');
-  const n = parseInt(limpio, 10);
-  return Number.isFinite(n) ? n : null;
-}
+// ═══════════════════════════════════════════════════════════════════════════
+// AQUI VIVIA LA CAPA DE REGEX DE COMPRENSION. Se elimino el 12-sep-2026.
+//
+// Se habia dejado de usar el 6-sep (entender lenguaje es del LLM), pero las 12
+// funciones seguian exportadas y con tests, como si estuvieran vivas. El costo
+// no fue teorico: cuando el bot no reconocio un "70" suelto, la primera
+// sospecha del fundador fue "hay un regex por ahi". No lo habia -- el mensaje
+// ni siquiera llego al Worker (lo probo la telemetria) -- pero el codigo muerto
+// hizo perder el tiempo buscando donde no era.
+//
+// Lo que se fue: parseIngresoCOP, detectarUrgencia, detectarSiNo,
+// detectarHostilidad, detectarEndeudamientoPct, detectarDolorLetras,
+// detectarAcompanante, detectarSinHorarios, detectarCompromiso,
+// pareceRemanente, pareceIncertidumbre, pareceDolorFinanciero.
+//
+// Si alguna hiciera falta otra vez, esta en el historial de git. Pero la
+// respuesta correcta casi siempre es una regla en el prompt, no un regex.
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ---------------------------------------------------------------------------
 // 2. Los 3 filtros del SOP V4.2
@@ -372,13 +251,6 @@ export function plantillaRetorno(motivoPerdida) {
   return P.RETORNO_GENERICO;
 }
 
-/** Si/no simple, para la respuesta a la pregunta de retorno. */
-export function detectarSiNo(texto) {
-  const t = String(texto || '').toLowerCase();
-  if (/\b(no|nada|igual|lo\s*mismo|todav[ií]a\s*no|a[uú]n\s*no|sigue\s*igual)\b/.test(t)) return false;
-  if (/\b(s[ií]|claro|ya|mejor[oó]|subi[oó]|baj[oó]|cambi[oó]|ahora\s*s[ií]|por\s*supuesto|dale)\b/.test(t)) return true;
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // 4. Router principal
@@ -1937,117 +1809,9 @@ export function detectarConfirmacionAgenda(texto) {
   return /\b(ya\s*(me\s*)?(agend|reserv|separ)|list[oa]\s*(ya)?\s*(agend|qued)|qued[eéoó]\s*(agendad|separad|list)|(?:agend|reserv)[eé](?![a-záéíóúñ])|agendad[oa]|ya\s*qued[eéoó])/.test(t);
 }
 
-/** "solo" vs "acompañado" en la pregunta M7. */
-export function detectarAcompanante(texto) {
-  const t = String(texto || '').toLowerCase();
-  // "voy solo" gana sobre cualquier mencion de persona: "voy solo, mi esposa
-  // trabaja" es un NO, y si se evaluara primero el "esposa" se leeria al reves.
-  if (/\b(sol[oa]|yo\s*sol[oa]|nadie\s*m[aá]s|solamente\s*yo|no,?\s*sol[oa]|voy\s*sol[oa])\b/.test(t)) return false;
 
-  // La forma con "con..." era la unica que se detectaba, y el QA mostro que la
-  // gente contesta nombrando a la persona sin preposicion: "va mi esposa",
-  // "estaria mi socio", "mi pareja tambien".
-  const PERSONA = '(esposa|esposo|pareja|novi[ao]|mam[aá]|pap[aá]|socia?|hermana?|hij[ao]|marido|mujer|familia|c[oó]nyuge)';
-  if (new RegExp(`\\b(con\\s*(mi|alguien|un[ao])|${PERSONA}|acompañad|vamos\\s*(los\\s*)?dos|s[ií],?\\s*con)`).test(t)) return true;
-  return null;
-}
 
-/**
- * Urgencia: mecanico en la mayoria de casos.
- *
- * BUG REAL (5-sep-2026): "¿cuál es la diferencia si lo hago ahora o después?"
- * es la Objecion 9 en otras palabras (sin decir "por que"), pero contiene la
- * palabra "ahora" -- y el determinista, que le gana al LLM, la leia como
- * afirmacion de urgencia y mandaba directo al pitch de M5, ignorando la
- * pregunta del lead por completo.
- */
-export function detectarUrgencia(texto) {
-  const t = String(texto || '').toLowerCase();
-  if (/\b(por\s*qu[eé]|porqu[eé])\b.*\b(ahora|ya|urgen|importante)\b/.test(t)
-      || /\b(por\s*qu[eé]|porqu[eé])\s*(es\s*)?(tan\s*)?(importante|urgente)/.test(t)
-      || /\b(cu[aá]l\s*es\s*la\s*diferencia|qu[eé]\s*diferencia\s*hay|qu[eé]\s*gano\s*si|qu[eé]\s*pasa\s*si\s*(lo\s*)?(dejo|espero|hago\s*despu[eé]s))\b/.test(t)) {
-    return 'pregunta_por_que';
-  }
-  // "Ahora" solo cuenta como AFIRMACION de urgencia, nunca dentro de una
-  // pregunta -- sin este freno, "¿ahora o después?" se leia como "ahora".
-  const esPregunta = /\?|^(cu[aá]l|qu[eé]|c[oó]mo)\b/.test(t);
-  if (!esPregunta && /\b(ahora|ya|prioridad|urgente|lo\s*antes\s*posible|cuanto\s*antes|s[ií]\s*es\s*urgente|inmediato)\b/.test(t)) {
-    return 'ahora';
-  }
-  if (/\b(m[aá]s\s*adelante|despu[eé]s|alg[uú]n\s*d[ií]a|cuando\s*tenga|no\s*es\s*urgente|el\s*otro\s*a[ñn]o|luego)\b/.test(t)) {
-    return 'algun_dia';
-  }
-  return null;
-}
 
-/**
- * Dolor A/B/C/D.
- *
- * Ampliado con lenguaje real del corpus: en las conversaciones modelo el lead
- * no responde "B" a secas, responde "B sin duda. Siento que me llega la plata
- * y a los 15 dias ya no se en que se fue". La version anterior solo reconocia
- * la letra aislada y mandaba ese turno al LLM sin necesidad.
- *
- * OJO con la "a": en español es preposicion ("a mi me pasa que..."), asi que
- * solo se acepta aislada o seguida de puntuacion. La b/c/d no son palabras, asi
- * que ahi si se acepta la letra al inicio seguida de texto.
- */
-export function detectarDolorLetras(texto) {
-  const t = String(texto || '').trim().toLowerCase();
-  if (!t) return [];
-
-  // Se trabaja por tokens: "la B y la C" tiene palabras entre las letras, asi
-  // que una regex de "letra separador letra" se pierde la segunda.
-  const tokens = t.replace(/[()]/g, ' ').split(/[\s,.;:/+&]+/).filter(Boolean);
-  const letras = new Set();
-
-  // "todas" / "todas las anteriores" / "me pasan todas" (fundador, 4-sep-2026).
-  // Cuenta como A+B+C+D. La consecuencia importante es que arrastra A, B y C,
-  // asi que el lead califica emocionalmente y el detalle de la D se ignora --
-  // que es exactamente la excepcion que pidio el fundador: a quien le pasan
-  // todas no hay que preguntarle "¿cual es esa otra?".
-  if (/\btodas?\b|\btodo\s+lo\s+anterior\b|\blas\s+cuatro\b/.test(t)) {
-    for (const c of ['a', 'b', 'c', 'd']) letras.add(c);
-  }
-
-  // Letras pegadas: "AB", "BCD". ManyChat ya dispara con esas combinaciones.
-  for (const tok of tokens) {
-    if (/^[abcd]{2,4}$/.test(tok)) for (const c of tok) letras.add(c);
-  }
-
-  // b/c/d aisladas cuentan siempre: no son palabras en español.
-  for (const tok of tokens) if (/^[bcd]$/.test(tok)) letras.add(tok);
-
-  // La "a" es preposicion ("a mi me pasa que..."), asi que solo cuenta si es
-  // el mensaje entero o si ya hay otra letra de respuesta ("a y b").
-  const hayA = tokens.includes('a');
-  if (hayA && (tokens.length === 1 || letras.size > 0)) letras.add('a');
-
-  if (letras.size === 0) {
-    const una = detectarDolorLetra(texto);
-    if (una) letras.add(una.toLowerCase());
-  }
-  return [...letras].map((x) => x.toUpperCase()).sort();
-}
-
-/**
- * ¿El texto libre de la opcion D habla de dinero?
- *
- * QA en vivo (4-sep-2026): la lead escribio "D, me siento preocupada por la
- * cantidad de deudas que tengo" y el LLM devolvio `dolor_financiero: false`, asi
- * que el bot la saco por M3_RECONDUCIR -- le dijo "puede que no seamos el mejor
- * fit" a alguien cuyo dolor es LITERALMENTE deudas.
- *
- * Se arreglo en los dos lados. El prompt ahora lo dice explicito, pero eso solo
- * no basta: el LLM ya habia fallado con un caso obvio. Este detector es la red
- * determinista, y GANA sobre el LLM -- si el texto menciona dinero, es dolor
- * financiero y no hay nada que interpretar.
- */
-export function pareceDolorFinanciero(texto) {
-  const t = String(texto || '').toLowerCase();
-  if (!t.trim()) return false;
-  return RAICES_DE_DINERO.test(t);
-}
 
 /**
  * Vocabulario de dinero, en RAICES.
@@ -2151,34 +1915,7 @@ export function detectarAceptacion(texto) {
   return /\bclaro\b/.test(t) && !/\b(m[aá]s|tener|dejar|ver|saber|entender|quede|queda)\s+(lo\s+)?claro/.test(t);
 }
 
-/**
- * ¿La cifra que dio el lead suena a "lo que me queda" y no a su ingreso total?
- *
- * Aprendizaje de produccion del equipo de Javier (SOP-05 #2): descalificar a
- * alguien que dijo "me quedan $5M" sin aclarar es perder un lead que puede
- * estar ganando $12M brutos. Solo dispara la aclaracion cuando el texto trae
- * una marca explicita de remanente -- no en cualquier ingreso bajo, para no
- * agregarle friccion al lead que de verdad no califica.
- */
-export function pareceRemanente(texto) {
-  const t = String(texto || '').toLowerCase();
-  return /\b(me\s*qued|queda[nr]?\b|me\s*sobra|sobran|libre[s]?\b|despu[eé]s\s*de\s*(gastos|pagar)|neto|limpio|disponible|para\s*gastar|menos\s*de)\b/.test(t);
-}
 
-/**
- * ¿El lead dice que NO SABE el dato (incertidumbre), y no que se niega a
- * darlo (reticencia = Objecion 6)? Mismo vocabulario que ya usa
- * `detectarEndeudamientoPct` para no inventar un %, exportado aparte porque el
- * LLM confundia las dos intenciones (bug real 5-sep-2026, ver el guard en el
- * case M2_ENVIADO/M2_NO_SABE).
- */
-export function pareceIncertidumbre(texto) {
-  const t = String(texto || '').toLowerCase();
-  // ⚠️ MISMA TRAMPA YA DOCUMENTADA: `\b` no cierra entre dos letras. Un `\b`
-  // final tras "segur" no casaria "segura"/"segure". El final queda abierto a
-  // proposito (igual que las raices de RAICES_DE_DINERO); solo `\b` al inicio.
-  return /\b(no\s*s[eé]\b|ni\s*idea|no\s*estoy\s*segur|no\s*tengo\s*idea|no\s*lo\s*s[eé]\b|no\s*sabr[ií]a\s*decir)/.test(t);
-}
 
 /** Agradecimiento tras el cierre -> dispara el blindaje del show-up. */
 export function detectarAgradecimiento(texto) {
@@ -2187,64 +1924,9 @@ export function detectarAgradecimiento(texto) {
       || /^\s*(🙏|👍|🙌|💪|😊)+\s*$/u.test(String(texto || '').trim());
 }
 
-/** Respuesta a la pregunta de blindaje: 'firme' | 'dudoso' | null. */
-export function detectarCompromiso(texto) {
-  const t = String(texto || '').toLowerCase();
-  if (/\b(puede\s*(que|pasar)|tal\s*vez|quiz[aá]s?|no\s*estoy\s*segur|depende|capaz|probablemente\s*no|creo\s*que\s*no|no\s*podr[ií]a)\b/.test(t)) {
-    return 'dudoso';
-  }
-  if (/\b(firme|firmes|s[ií]\s*firme|segur[oa]|100|ah[ií]\s*estar[eé]|claro\s*que\s*s[ií]|por\s*supuesto|confirmad|ah[ií]\s*nos\s*vemos|nada\s*(me\s*)?lo\s*impide|todo\s*bien)\b/.test(t)) {
-    return 'firme';
-  }
-  return null;
-}
 
-/**
- * El lead dice que no encuentra horarios disponibles.
- *
- * SOP-05 #5 del proyecto de Javier: "NO confirmes que si hay espacio" --
- * hay que escalar para agendar a mano. Es senal de calendario sin cupos, un
- * dato que al Setter le sirve tanto como el lead mismo.
- */
-export function detectarSinHorarios(texto) {
-  const t = String(texto || '').toLowerCase();
-  return /\b(no\s*(me\s*)?(aparece|hay|encuentro|veo|sale|deja|carga|figura)|sin\s*(cupos?|espacios?|horarios?)|no\s*(hay|tengo|queda)\s*(espacio|cupo|horario|nada)|no\s*me\s*(cuadra|cuadran|sirve|sirven|queda|quedan)|est[aá]\s*(lleno|bloqueado)|no\s*me\s*deja\s*agendar|no\s*pude\s*agendar)\b/.test(t);
-}
 
-/** Hostilidad -- red deterministas basica, el LLM afina. */
-export function detectarHostilidad(texto) {
-  const t = String(texto || '').toLowerCase();
-  return /\b(hp\b|hijueputa|gonorrea|estafa|estafador|ladr[oó]n|rat[aeo]s?\b|malparid|est[uú]pid|imb[eé]cil|idiota|vete\s*a|no\s*jodas|d[eé]jame\s*en\s*paz|no\s*me\s*escrib)/.test(t);
-}
 
-/** Porcentaje de endeudamiento escrito directo ("35%", "el 35"). */
-export function detectarEndeudamientoPct(texto) {
-  const t = String(texto || '').toLowerCase();
-  const conPct = t.match(/(\d{1,3}(?:[.,]\d+)?)\s*%/);
-  if (conPct) {
-    const n = parseFloat(conPct[1].replace(',', '.'));
-    if (n >= 0 && n <= 100) return n;
-  }
-  if (/\b(no\s*s[eé]|ni\s*idea|no\s*estoy\s*segur|no\s*tengo\s*idea|no\s*lo\s*s[eé])\b/.test(t)) return null;
-
-  // El lead contesto con PLATA, no con un porcentaje ("pago 2 millones al mes",
-  // "me quedan 500 mil"). Sin este freno, el fallback de "numero suelto" de
-  // abajo agarra el 2 y lo reporta como 2% -- y 2% es un endeudamiento
-  // EXCELENTE, asi que el lead pasaba el Filtro 2 con un dato inventado. No es
-  // que escalara a un humano: es peor, calificaba en silencio.
-  //
-  // Cuando hay marca de plata se devuelve null a proposito: el LLM extrae
-  // `deuda_cop`/`remanente_cop` y el router los convierte a % contra el
-  // ingreso ya conocido (caso M2_ENVIADO). Aqui adivinar es peor que abstenerse.
-  if (MARCA_DE_PLATA.test(t)) return null;
-
-  const suelto = t.match(/(?:^|\s)(\d{1,3}(?:[.,]\d+)?)(?:\s|$)/);
-  if (suelto) {
-    const n = parseFloat(suelto[1].replace(',', '.'));
-    if (n >= 0 && n <= 100) return n;
-  }
-  return null;
-}
 
 /**
  * Vocabulario de plata colombiano, el mismo que entiende `parseIngresoCOP`.

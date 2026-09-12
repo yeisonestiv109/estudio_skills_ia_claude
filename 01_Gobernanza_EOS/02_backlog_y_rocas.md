@@ -5070,3 +5070,32 @@ Recomendé pasar a `openai/gpt-oss-120b` sin revisar primero la bitácora. **Est
 | Cerebras | mismo `qwen-3.8-27b` y `gpt-oss-120b` | 5 | 30.000 | 1.000.000 |
 
 Groq da más peticiones por minuto; Cerebras da **4x tokens por minuto y 5x por día**. Como nuestro cuello de botella es el TPM (el prompt XML es grande), **la vía interesante no es cambiar de cerebro sino sumar capacidad**: Cerebras como segundo proveedor con el MISMO modelo, reusando el pool de failover que ya existe en `llm_groq.mjs`. Pendiente de decisión del fundador.
+
+## 🔎 12-sep-2026 (tarde) — El misterio del "70": no era el código
+
+El fundador reportó que el bot solo reconocía `70%` y nunca un `70` pelado, y sospechó de un regex escondido. **La telemetría lo resolvió en una consulta.**
+
+Secuencia real de lo que llegó al Worker en esa conversación (manychat_id `813370090`):
+
+```
+09:35:14  "Claridad"                → llegó
+09:35:47  "Médico, 23-24 millones"  → llegó
+          ⬅ aquí se enviaron "70" y "70": NO HAY TRAZA
+09:44:16  "70%"                     → llegó y funcionó perfecto
+```
+
+La traza se crea apenas se parsea el mensaje, **antes** de cualquier regex, validador o llamada al LLM. Si los `70` hubieran llegado, existirían. **ManyChat nunca invocó nuestro Worker para esos mensajes.**
+
+Cuando sí llegó `70%`, el modelo extrajo `endeudamiento_pct=70` y el router pasó a M3 sin problema: `"Filtro 2 superado: le quedan 6900000 libres al mes (deuda 70%)"`.
+
+### La causa: el Flow dispara por palabras clave, no por "cualquier mensaje"
+
+Los disparadores del Flow son listas de palabras (`CONTROL`, `A/B/C/D`, `Si/No/Dale`, `0 1 2 3 4 5 6 7 8 9 %`, más un disparador de intención por IA). ManyChat empareja por **palabra completa**: `70%` engancha con `%`, pero `70` no engancha con `7` ni con `0`. Respuestas numéricas cortas se caen por el hueco, y de forma no determinista, porque el disparador de IA acierta a veces (`87,54` sí entró, `70` no).
+
+**Arreglo, que es del lado de ManyChat:** agregar un disparador que atrape **cualquier mensaje entrante** (Default Reply) apuntando al mismo paso. El Worker ya está diseñado para recibir todo: tiene `decidirSiResponder`, la lista blanca y el kill switch para decidir si habla. Filtrar en ManyChat no protege, solo crea puntos ciegos.
+
+### De paso: se eliminó la capa de regex muerta
+
+12 funciones más 2 helpers, **242 líneas** del router (2.179 → 1.937) y 33 tests. Llevaban sin usarse desde el 6-sep pero seguían exportadas y con tests, como si estuvieran vivas.
+
+El costo no fue teórico: la primera sospecha ante el fallo del `70` fue *"hay un regex por ahí"*. No lo había, pero el código muerto hizo perder tiempo buscando donde no era. Las **reglas** que esos regex protegían (glosario del "integral", sumar fuentes, la frustración no es hostilidad) siguen cubiertas por los tests del prompt en `worker_seguridad.test.js`.

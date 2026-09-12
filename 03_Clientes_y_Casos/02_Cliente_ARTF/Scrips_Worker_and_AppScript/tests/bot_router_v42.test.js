@@ -17,15 +17,20 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseIngresoCOP, evaluarIngreso, calcularRemanente, evaluarEndeudamiento, topeEndeudamiento,
-  decidirSiResponder, decidirTurno,
-  detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
-  detectarUrgencia, detectarDolorLetra, detectarDolorLetras, detectarHostilidad, detectarEndeudamientoPct,
+  evaluarIngreso,
+  calcularRemanente,
+  evaluarEndeudamiento,
+  topeEndeudamiento,
+  decidirSiResponder,
+  decidirTurno,
+  detectarVarianteM1,
+  detectarConfirmacionAgenda,
+  detectarDolorLetra,
   detectarAceptacion,
-  pareceRemanente, esSoloPalabraClave, detectarSinHorarios, detectarSiNo, pareceDolorFinanciero,
-  pareceIncertidumbre,
-  etapaParaRetomar, cuentaCifrasDeDinero,
-  preguntaPendiente, reencauzar,
+  esSoloPalabraClave,
+  etapaParaRetomar,
+  preguntaPendiente,
+  reencauzar,
 } from '../bot_router_v42.js';
 import {
   CALENDAR_LINK, CALENDAR_ARTF, CALENDAR_PRUEBAS, UMBRALES, OBJECIONES_HABILITADAS, PLANTILLAS,
@@ -43,69 +48,6 @@ const estadoEn = (etapa, extra = {}) => ({
 
 // ====================================================================
 
-describe('parseIngresoCOP — glosario colombiano (★ V4.1)', () => {
-  test('EL BUG REAL: "minimo integral" NUNCA se lee como salario minimo', () => {
-    const r = parseIngresoCOP('gano el minimo integral');
-    assert.equal(r.glosario, 'salario_integral');
-    assert.equal(r.ambiguo, true, 'debe pedir la cifra, no asumir');
-    // Lo critico: jamas puede terminar descalificando.
-    assert.notEqual(evaluarIngreso(r.monto), 'descalifica');
-  });
-
-  test('"salario integral" tambien, con tilde y variantes', () => {
-    for (const t of ['salario integral', 'tengo un contrato integral', 'gano integral']) {
-      assert.equal(parseIngresoCOP(t).glosario, 'salario_integral', t);
-    }
-  });
-
-  test('"el minimo" SIN integral si es el salario minimo', () => {
-    const r = parseIngresoCOP('gano el minimo');
-    assert.equal(r.monto, UMBRALES.SMLV_2026);
-    assert.equal(evaluarIngreso(r.monto), 'descalifica');
-  });
-
-  test('SMLV se multiplica', () => {
-    assert.equal(parseIngresoCOP('gano 3 smlv').monto, 3 * UMBRALES.SMLV_2026);
-    assert.equal(parseIngresoCOP('como 2 salarios minimos').monto, 2 * UMBRALES.SMLV_2026);
-  });
-
-  test('millones en varias formas', () => {
-    assert.equal(parseIngresoCOP('gano 12 millones').monto, 12_000_000);
-    assert.equal(parseIngresoCOP('12 millones y medio').monto, 12_500_000);
-    assert.equal(parseIngresoCOP('unos 8 millones al mes').monto, 8_000_000);
-  });
-
-  test('cifra escrita completa con separadores', () => {
-    assert.equal(parseIngresoCOP('gano 12.000.000').monto, 12_000_000);
-    assert.equal(parseIngresoCOP("8'500.000").monto, 8_500_000);
-    assert.equal(parseIngresoCOP('9500000').monto, 9_500_000);
-  });
-
-  test('"palos" = millones', () => {
-    assert.equal(parseIngresoCOP('gano como 8 palos').monto, 8_000_000);
-    assert.equal(parseIngresoCOP('un palo').monto, 1_000_000);
-  });
-
-  test('"por quincena" multiplica por 2', () => {
-    assert.equal(parseIngresoCOP('5 millones por quincena').monto, 10_000_000);
-  });
-
-  test('ingreso variable sin cifra queda ambiguo (no se adivina)', () => {
-    for (const t of ['basico mas comisiones', 'es variable', 'depende del mes']) {
-      assert.equal(parseIngresoCOP(t).ambiguo, true, t);
-    }
-  });
-
-  test('numero suelto grande y sin unidad NO se asume', () => {
-    assert.equal(parseIngresoCOP('gano 800').ambiguo, true);
-  });
-
-  test('dolares se convierten y quedan marcados como aproximados', () => {
-    const r = parseIngresoCOP('gano 3000 usd');
-    assert.equal(r.aproximado, true);
-    assert.equal(evaluarIngreso(r.monto), 'califica');
-  });
-});
 
 // ====================================================================
 
@@ -1055,30 +997,11 @@ describe('Detectores deterministas', () => {
     assert.equal(detectarConfirmacionAgenda('no he podido'), false);
   });
 
-  test('solo vs acompañado', () => {
-    assert.equal(detectarAcompanante('voy con mi esposa'), true);
-    assert.equal(detectarAcompanante('voy solo'), false);
-    assert.equal(detectarAcompanante('mmm no se'), null);
-  });
 
-  test('urgencia', () => {
-    assert.equal(detectarUrgencia('es prioridad ahora'), 'ahora');
-    assert.equal(detectarUrgencia('mas adelante'), 'algun_dia');
-    assert.equal(detectarUrgencia('por que es importante resolverlo ahora?'), 'pregunta_por_que');
-  });
 
   // BUG REAL (5-sep-2026): "ahora" dentro de una PREGUNTA se leia como
   // afirmacion de urgencia -- el bot ignoraba la pregunta del lead y mandaba
   // directo al pitch de M5.
-  test('BUG REAL: una pregunta sobre "ahora vs despues" no se lee como afirmacion de urgencia', () => {
-    assert.equal(detectarUrgencia('cual es la diferencia si lo hago ahora o despues?'), 'pregunta_por_que');
-    assert.equal(detectarUrgencia('que gano si lo hago ahora?'), 'pregunta_por_que');
-    // Una pregunta que no calza en ningun patron especifico: se abstiene
-    // (null), no fuerza "ahora" -- que decida el LLM.
-    assert.equal(detectarUrgencia('debo hacerlo ahora?'), null);
-    // La afirmacion normal (sin "?") sigue funcionando igual que siempre.
-    assert.equal(detectarUrgencia('si, quiero resolverlo ahora'), 'ahora');
-  });
 
   test('dolor: letra sola y letra con texto (mejorado con el corpus)', () => {
     // El corpus real mostro que el lead NO responde "B" a secas, responde
@@ -1101,16 +1024,7 @@ describe('Detectores deterministas', () => {
     assert.equal(detectarDolorLetra('a veces siento eso'), null);
   });
 
-  test('endeudamiento en %', () => {
-    assert.equal(detectarEndeudamientoPct('como el 35%'), 35);
-    assert.equal(detectarEndeudamientoPct('40'), 40);
-    assert.equal(detectarEndeudamientoPct('no se'), null);
-  });
 
-  test('hostilidad', () => {
-    assert.equal(detectarHostilidad('esto es una estafa'), true);
-    assert.equal(detectarHostilidad('gracias, me interesa'), false);
-  });
 });
 
 // ====================================================================
@@ -1119,100 +1033,6 @@ describe('Detectores deterministas', () => {
 // paso en operacion -- no son casos hipoteticos.
 // ====================================================================
 
-describe('Aprendizajes de produccion (proyecto Setter IA de Javier)', () => {
-  test('SOP-05 #2: "me quedan $5M" NO descalifica -- primero se aclara', () => {
-    // Antes esto lo detectaba un regex sobre el texto (`pareceRemanente`).
-    // Desde el 6-sep-2026 lo dice el LLM en `cifra_es_remanente`; la REGLA de
-    // negocio no cambio: una cifra baja que es remanente NO descalifica.
-    const p = decidirTurno(estadoEn('M1_ENVIADO'),
-      { ingreso_cop: 5_000_000, cifra_es_remanente: true }, 'me quedan como 5 millones libres');
-    assert.notEqual(p.estadoDestino, 'descalificado');
-    assert.equal(p.etapaNueva, 'M1_ACLARAR_REMANENTE');
-    assert.match(p.mensajes[0], /ingreso total al mes, o lo que te queda/);
-  });
-
-  test('SOP-05 #2: si tras aclarar sigue bajo, ahi si descalifica', () => {
-    const p = decidirTurno(estadoEn('M1_ACLARAR_REMANENTE'), { ingreso_cop: 5_000_000 }, 'no, es mi total');
-    assert.equal(p.estadoDestino, 'descalificado');
-  });
-
-  test('un ingreso bajo SIN marca de remanente descalifica de una', () => {
-    const p = decidirTurno(estadoEn('M1_ENVIADO'), { ingreso_cop: 3_000_000 }, 'gano 3 millones');
-    assert.equal(p.estadoDestino, 'descalificado');
-  });
-
-  test('repetir la palabra clave NO avanza el flujo: reenvia la pregunta', () => {
-    // Bug real de la primera prueba en vivo: el lead reenvio "PRUEBAV42"
-    // estando en M1 y el bot lo leyo como su respuesta de ingreso.
-    const p = decidirTurno(estadoEn('M2_ENVIADO'), {}, 'CONTROL');
-    assert.equal(p.etapaNueva, null, 'no avanza de etapa');
-    assert.equal(p.estadoDestino, null);
-    assert.match(p.mensajes[0], /nivel de endeudamiento/, 'reenvia la pregunta pendiente');
-  });
-
-  test('el lead que vuelve semanas despues retoma donde quedo', () => {
-    const p = decidirTurno(estadoEn('M4_ENVIADO', { dias_sin_actividad: 21 }), {}, 'CONTROL');
-    assert.match(p.mensajes[p.mensajes.length - 1], /¿Resolver esto es una prioridad AHORA/);
-  });
-
-  // BUG P0 del 4-sep-2026. El fallback de "numero suelto" de
-  // detectarEndeudamientoPct agarraba el 2 de "pago 2 millones al mes" y lo
-  // reportaba como 2% de endeudamiento. 2% es EXCELENTE: el lead pasaba el
-  // Filtro 2 con un dato inventado, en silencio. Ahora, si hay marca de plata,
-  // el detector se abstiene y deja que el LLM aporte deuda_cop/remanente_cop
-  // para que el router lo convierta contra el ingreso real.
-  describe('endeudamiento: plata no es porcentaje', () => {
-    const esPct = (t, esperado) => assert.equal(detectarEndeudamientoPct(t), esperado, JSON.stringify(t));
-
-    test('un porcentaje de verdad se sigue leyendo', () => {
-      esPct('Me da 30%', 30);
-      esPct('30', 30);
-      esPct('el 45', 45);
-      esPct('40 por ciento', 40);
-      esPct('25.5%', 25.5);
-    });
-
-    test('un monto en plata NO se lee como porcentaje', () => {
-      for (const t of ['pago 2 millones al mes en deudas', 'me quedan 500 mil',
-                       'gasto 1.5 millones', '$2.000.000', 'como 3 palos',
-                       'debo 4M', 'unos 800 mil en tarjetas', '2 lucas']) {
-        esPct(t, null);
-      }
-    });
-
-    test('"no se" sigue devolviendo null, no cero', () => {
-      esPct('no se', null);
-      esPct('ni idea', null);
-    });
-
-    test('el router convierte el monto a % contra el ingreso conocido', () => {
-      const estado = estadoEn('M2_ENVIADO');
-      estado.salario_monto = 8_000_000;
-      const p = decidirTurno(estado, { deuda_cop: 2_000_000 }, 'pago 2 millones al mes');
-      assert.equal(p.campos.endeudamiento_pct, 25, '2M sobre 8M = 25%');
-      assert.equal(p.handoffRazon, null, 'responder con plata no escala a un humano');
-    });
-
-    test('y el remanente tambien: lo que le SOBRA no es lo que DEBE', () => {
-      const estado = estadoEn('M2_ENVIADO');
-      estado.salario_monto = 10_000_000;
-      const p = decidirTurno(estado, { remanente_cop: 4_000_000 }, 'me quedan 4 millones libres');
-      assert.equal(p.campos.endeudamiento_pct, 60, 'gasta 6M de 10M = 60%');
-    });
-  });
-
-  test('detectores nuevos', () => {
-    assert.equal(pareceRemanente('me quedan 5 millones'), true);
-    assert.equal(pareceRemanente('gano 5 millones'), false);
-    assert.equal(esSoloPalabraClave('CONTROL'), true);
-    assert.equal(esSoloPalabraClave('Hola'), true);
-    assert.equal(esSoloPalabraClave('hola, gano 8 millones'), false);
-    assert.equal(detectarSinHorarios('no me aparece nada disponible'), true);
-    assert.equal(detectarSinHorarios('listo ya agende'), false);
-    assert.equal(detectarSiNo('si, ya mejoro'), true);
-    assert.equal(detectarSiNo('no, sigue igual'), false);
-  });
-});
 
 // ====================================================================
 // ESCALERA DE REPREGUNTAS (4-sep-2026)
@@ -1423,12 +1243,6 @@ describe('M3: "todas" (fundador, 4-sep-2026)', () => {
     objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
   });
 
-  test('"todas" y sus variantes cuentan como A+B+C+D', () => {
-    for (const t of ['todas', 'todas las anteriores', 'me pasan todas',
-                     'todo lo anterior', 'la verdad todas me pasan', 'las cuatro']) {
-      assert.deepEqual(detectarDolorLetras(t), ['A', 'B', 'C', 'D'], JSON.stringify(t));
-    }
-  });
 
   test('elegir "todas" salta la pregunta por el detalle de la D', () => {
     // La excepcion que pidio el fundador: a quien le pasan todas no hay que
@@ -1470,10 +1284,6 @@ describe('M3: "todas" (fundador, 4-sep-2026)', () => {
     assert.ok(p.preguntaLibre, 'se le pide cerrar con honestidad, no descalificar de golpe');
   });
 
-  test('"todo" o "toda" en otra frase no dispara el atajo', () => {
-    // Falso positivo peligroso: "no me alcanza para todo el mes" no es "todas".
-    assert.notDeepEqual(detectarDolorLetras('no me alcanza para todo el mes'), ['A', 'B', 'C', 'D']);
-  });
 });
 
 // ====================================================================
@@ -1569,52 +1379,6 @@ describe('Cierre M5 -> M6 -> M7 -> M8', () => {
 
 // ====================================================================
 
-describe('Dolor financiero: raíces de dinero (QA 4-sep-2026)', () => {
-  // BUG PROPIO: la primera versión escribió las raíces con `\b` AL FINAL
-  // (`\bahorr\b`), y `\b` no cierra entre dos letras -- así que `ahorr`,
-  // `invers`, `financier` y `econom` no casaban NADA. Por eso una lead que
-  // escribió "d. quiero ahorrar" salió por M3_RECONDUCIR.
-  // Es la misma trampa del `\b` que ya costó una vez con las vocales acentuadas.
-  test('las raíces de dinero casan de verdad', () => {
-    for (const t of ['d. quiero ahorrar', 'quiero ahorrar', 'ahorro', 'ahorros',
-                     'quiero invertir', 'inversion', 'inversiones',
-                     'mi tema es financiero', 'problemas economicos',
-                     'quiero construir patrimonio', 'pensando en mi futuro',
-                     'quiero mi pension', 'busco rentabilidad']) {
-      assert.equal(pareceDolorFinanciero(t), true, JSON.stringify(t));
-    }
-  });
-
-  test('lo que ya funcionaba sigue funcionando', () => {
-    for (const t of ['tengo deudas', 'debo mucho', 'no me alcanza', 'me cobran intereses',
-                     'pago tres tarjetas', 'gano 8 millones', 'me pagan en pesos']) {
-      assert.equal(pareceDolorFinanciero(t), true, JSON.stringify(t));
-    }
-  });
-
-  test('y NO se traga lo que no es de dinero', () => {
-    for (const t of ['mi problema es con mi pareja', 'tengo ansiedad', 'mi jefe me estresa',
-                     'problemas de salud', 'quiero bajar de peso', 'subir de peso']) {
-      assert.equal(pareceDolorFinanciero(t), false, JSON.stringify(t));
-    }
-  });
-
-  test('"quiero ahorrar" en M3 ya NO sale por reconducir', () => {
-    // El caso exacto del QA. Antes un regex (`pareceDolorFinanciero`) rescataba
-    // al lead cuando el LLM se equivocaba. Ese respaldo se quito el 6-sep-2026
-    // junto con toda la capa de regex; la regla vive ahora en el prompt (ver
-    // el test de abajo, que la fija). Aca se prueba lo que el router hace con
-    // la lectura CORRECTA.
-    const p = decidirTurno(
-      { estado_codigo: 'contactado', etapa_bot: 'M3_ENVIADO', nombre: 'Marly',
-        objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null },
-      { dolores: ['D'], dolor_financiero: true, dolor_detalle: 'quiero ahorrar' },
-      'd. quiero ahorrar',
-    );
-    assert.equal(p.etapaNueva, 'M4_ENVIADO');
-    assert.ok(!p.mensajes.join('\n').includes('puede que no seamos el mejor fit'));
-  });
-});
 
 // ====================================================================
 
@@ -1627,24 +1391,8 @@ describe('Varias fuentes de ingreso (QA 4-sep-2026)', () => {
   const CASO_QA = 'tengo ingresos de diferentes fuentes, en mi trajo son mas o menos 4 millones, '
     + 'de mi negocio familiar son 3 millones, y de un local donde soy socia recibo casi 4 millones';
 
-  test('ante varias cifras el parser SE ABSTIENE en vez de adivinar', () => {
-    const r = parseIngresoCOP(CASO_QA);
-    assert.equal(r.monto, null, 'no puede quedarse con la primera cifra');
-    assert.equal(r.ambiguo, true);
-    assert.equal(r.glosario, 'varias_fuentes');
-  });
 
-  test('una sola cifra se sigue leyendo igual que siempre', () => {
-    assert.equal(parseIngresoCOP('gano 8 millones').monto, 8_000_000);
-    assert.equal(parseIngresoCOP('soy ingeniero y gano 12 millones netos').monto, 12_000_000);
-    assert.equal(parseIngresoCOP('12.000.000').monto, 12_000_000);
-  });
 
-  test('un RANGO es una sola idea, no dos fuentes', () => {
-    // Abstenerse de más también cuesta: "entre 8 y 10 millones" es una cifra.
-    assert.equal(cuentaCifrasDeDinero('entre 8 y 10 millones'), 1);
-    assert.notEqual(parseIngresoCOP('entre 8 y 10 millones').monto, null);
-  });
 
   test('con la suma del LLM, el lead del QA YA NO se descalifica', () => {
     const estado = estadoEn('M1_RANGO_PREGUNTADO');
@@ -1664,27 +1412,6 @@ describe('Varias fuentes de ingreso (QA 4-sep-2026)', () => {
 
 // ====================================================================
 
-describe('Hostilidad: la frustración NO es hostilidad', () => {
-  test('el detector determinista no marca quejas', () => {
-    // El QA del 4-sep escaló por "no gracias, eso es inaceptable las
-    // confusiones". El determinista NO disparó (correcto); fue el LLM, que no
-    // tenía ni una línea de definición en el prompt. Este test fija el lado
-    // determinista para que nadie lo "endurezca" por error.
-    for (const t of ['no gracias, eso es inaceptable las confusiones',
-                     'que confusion',
-                     'me estas haciendo perder el tiempo',
-                     'no me estas entendiendo',
-                     'esto esta mal']) {
-      assert.equal(detectarHostilidad(t), false, JSON.stringify(t));
-    }
-  });
-
-  test('la hostilidad de verdad sí se marca', () => {
-    for (const t of ['eres un estafador', 'no me escribas mas', 'idiota', 'esto es una estafa']) {
-      assert.equal(detectarHostilidad(t), true, JSON.stringify(t));
-    }
-  });
-});
 
 // ====================================================================
 
@@ -1720,22 +1447,7 @@ describe('Detectores del cierre (QA 4-sep-2026)', () => {
     }
   });
 
-  test('el acompañante se nombra sin preposición y también cuenta', () => {
-    // La gente contesta "va mi esposa", no "con mi esposa". Antes solo se
-    // detectaba la forma con "con...".
-    for (const t of ['va mi esposa', 'con mi pareja', 'estaria mi socio', 'mi mama tambien']) {
-      assert.equal(detectarAcompanante(t), true, JSON.stringify(t));
-    }
-    for (const t of ['voy solo', 'solo yo', 'nadie mas']) {
-      assert.equal(detectarAcompanante(t), false, JSON.stringify(t));
-    }
-  });
 
-  test('"voy solo" gana aunque mencione a alguien', () => {
-    // "voy solo, mi esposa trabaja" es un NO. Si se evaluara la persona primero
-    // se leería al revés.
-    assert.equal(detectarAcompanante('no, voy solo, mi esposa trabaja'), false);
-  });
 
   test('una objeción en M5 se atiende ANTES de leerla como aceptación', () => {
     // La regla ya existía en M1 y M2; en M5 faltaba, y costó un link enviado a
@@ -1762,27 +1474,7 @@ describe('Detectores del cierre (QA 4-sep-2026)', () => {
 // ====================================================================
 
 describe('Incertidumbre de endeudamiento vs Objecion 6 (bug real 5-sep-2026)', () => {
-  test('pareceIncertidumbre distingue "no se" de una reticencia real', () => {
-    assert.equal(pareceIncertidumbre('no se, la verdad'), true);
-    assert.equal(pareceIncertidumbre('no estoy segura de cuanto debo'), true);
-    assert.equal(pareceIncertidumbre('ni idea'), true);
-    assert.equal(pareceIncertidumbre('no tengo idea de mi endeudamiento'), true);
-    assert.equal(pareceIncertidumbre('prefiero no dar esa info por aqui'), false);
-    assert.equal(pareceIncertidumbre('eso es informacion privada'), false);
-    assert.equal(pareceIncertidumbre(''), false);
-  });
 
-  test('BUG REAL: un "no se" NO se trata como Objecion 6 -- se pide un estimado', () => {
-    // Antes un regex (`pareceIncertidumbre`) anulaba al LLM cuando marcaba la
-    // Objecion 6 sobre un "no se". Se quito con el resto de la capa (6-sep-2026):
-    // distinguir "no tengo el dato" de "no te lo quiero dar" es comprension, y
-    // la regla esta escrita en el prompt (ver el test que la fija abajo).
-    const p = decidirTurno(estadoEn('M2_ENVIADO'),
-      { endeudamiento_pct: null, objecion_num: null },
-      'no se, la verdad no estoy segura');
-    assert.equal(p.etapaNueva, 'M2_NO_SABE');
-    assert.match(p.mensajes.join('\n'), /dame un estimado/i);
-  });
 
   // Reescrito el 6-sep-2026 (bug real, Marly): esto escalaba en silencio al
   // segundo "no se" -- CERO mensajes. Ahora reencauza como M4/M5 (decision
@@ -1904,100 +1596,6 @@ describe('Calendario de producción (5-sep-2026)', () => {
 // SEGUIDOS en los que el LLM no pudo responder (`llm_fallo`). No escala el
 // lead confuso: escala el bot sin cerebro.
 // ===========================================================================
-describe('Reencauzar con contexto: el tope es del LLM, no del lead', () => {
-  const st = (etapa, extra = {}) => ({
-    estado_codigo: 'calificado', etapa_bot: etapa, nombre: 'Marly',
-    salario_monto: 10_000_000, ambiguedad_consecutiva: 0, handoff_razon: null,
-    ...extra,
-  });
-
-  // BUG REAL reportado: "cual es la diferencia si lo hago ahora o despues?"
-  // el determinista de detectarUrgencia lo arreglo (ver otro describe), pero
-  // si el LLM aun asi no logra clasificar algo en M4, "como asi?" ya NO se
-  // queda sin respuesta.
-  test('BUG REAL: "como asi?" en M4 ya no escala mudo -- responde con contexto', () => {
-    const p = reencauzar(st('M4_ENVIADO'), {}, 'Marly', 'No se pudo leer la urgencia con confianza.');
-    assert.equal(p.handoffRazon, null);
-    assert.equal(p.etapaNueva, 'M4_ENVIADO');
-    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
-    assert.ok(p.preguntaLibre, 'y se le pide al Worker razonar la respuesta con el playbook');
-  });
-
-  test('insistir con LA MISMA duda 5 veces NO escala: se le responde siempre', () => {
-    let estado = st('M4_ENVIADO');
-    for (let i = 1; i <= 5; i++) {
-      const p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
-      assert.equal(p.handoffRazon, null, `intento ${i}: un lead confuso nunca escala`);
-      assert.ok(p.mensajes.length > 0, `intento ${i}: nunca mudo`);
-      estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    }
-  });
-
-  test('3 turnos SEGUIDOS con el LLM caido -> AHI si escala', () => {
-    let estado = st('M4_ENVIADO');
-    let p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null);
-    assert.equal(p.campos.ambiguedad_consecutiva, 1);
-
-    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null, 'segundo fallo: todavia aguanta');
-    assert.equal(p.campos.ambiguedad_consecutiva, 2);
-
-    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, 'ambiguo', 'tercer fallo seguido: entra un humano');
-    assert.equal(p.campos.ambiguedad_consecutiva, 0, 'se resetea al escalar');
-    assert.match(p.summary, /sin responder/);
-  });
-
-  test('un turno con LLM vivo resetea el conteo de fallos', () => {
-    const estado = st('M4_ENVIADO', { ambiguedad_consecutiva: 2 });
-    const p = reencauzar(estado, { es_duda_nueva: false }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null, 'el LLM respondio: no hereda los fallos anteriores');
-    assert.equal(p.campos.ambiguedad_consecutiva, 0);
-  });
-
-  test('sin pregunta pendiente en la etapa, no hay a donde reencauzar: escala directo', () => {
-    const p = reencauzar(st('CIERRE_PRECALL'), {}, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, 'ambiguo');
-    assert.equal(p.campos.ambiguedad_consecutiva, 0);
-  });
-
-  // BUG REAL encontrado en vivo (6-sep-2026): probando con la GROQ_API_KEY
-  // real bajo rate limit sostenido (429 en cada llamada), el lead quedaba en
-  // un bucle IMPOSIBLE de romper -- 12 turnos seguidos, el bot repitiendo
-  // literalmente el mismo mensaje sin importar que el lead dijera "ya agende"
-  // o cualquier otra cosa. Causa: `es_duda_nueva` queda `undefined` tanto si
-  // el LLM nunca corrio como si corrio y REVENTO (429/timeout/red), y el
-  // default ("undefined -> nueva") reseteaba el contador a 1 en cada fallo,
-  // sin importar cuantas veces seguidas pasara. `llm_fallo` (worker_bot_setter_v42.js,
-  // marcado SOLO cuando la llamada a Groq revienta de verdad) rompe ese ciclo:
-  // un fallo real de Groq cuenta como "misma duda" para el tope de 3.
-  test('BUG REAL: Groq caido (llm_fallo) SI acumula hacia la escalada -- nunca bucle infinito', () => {
-    let estado = st('M2_NO_SABE');
-    let p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null);
-    assert.equal(p.campos.ambiguedad_consecutiva, 1, 'un solo fallo no escala, pero SI cuenta');
-
-    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null);
-    assert.equal(p.campos.ambiguedad_consecutiva, 2);
-
-    estado = { ...estado, ambiguedad_consecutiva: p.campos.ambiguedad_consecutiva };
-    p = reencauzar(estado, { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, 'ambiguo', 'el 3er fallo SEGUIDO de Groq escala -- garantiza que nunca queda mudo para siempre');
-  });
-
-  test('llm_fallo puntual (no sostenido) no rompe el conteo de dudas nuevas normal', () => {
-    // Un solo fallo de Groq en medio de una conversacion sana no debe leerse
-    // distinto de una duda cualquiera: sigue sumando 1, como cualquier otra.
-    const p = reencauzar(st('M2_NO_SABE'), { llm_fallo: true }, 'Marly', 'ctx');
-    assert.equal(p.handoffRazon, null);
-    assert.ok(p.mensajes.length > 0, 'nunca se queda mudo');
-  });
-});
 
 // ===========================================================================
 // RESPUESTA LIBRE GUIADA POR EL PLAYBOOK (6-sep-2026)

@@ -17,13 +17,7 @@
  * TODO el ruteo sin depender de que un modelo externo se porte igual dos veces.
  */
 
-import {
-  decidirTurno, decidirSiResponder,
-  parseIngresoCOP, detectarEndeudamientoPct, detectarDolorLetras, detectarSiNo,
-  detectarUrgencia, detectarAceptacion, detectarConfirmacionAgenda,
-  detectarAcompanante, detectarHostilidad, detectarAgradecimiento,
-  detectarSinHorarios,
-} from './bot_router_v42.js';
+import { decidirTurno, decidirSiResponder, detectarAceptacion, detectarConfirmacionAgenda, detectarAgradecimiento } from './bot_router_v42.js';
 import { verificarMensajes } from './verificador_cumplimiento.js';
 import { clasificar } from './worker_bot_setter_v42.js';
 
