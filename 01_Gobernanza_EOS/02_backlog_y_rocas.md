@@ -5099,3 +5099,23 @@ Los disparadores del Flow son listas de palabras (`CONTROL`, `A/B/C/D`, `Si/No/D
 12 funciones más 2 helpers, **242 líneas** del router (2.179 → 1.937) y 33 tests. Llevaban sin usarse desde el 6-sep pero seguían exportadas y con tests, como si estuvieran vivas.
 
 El costo no fue teórico: la primera sospecha ante el fallo del `70` fue *"hay un regex por ahí"*. No lo había, pero el código muerto hizo perder tiempo buscando donde no era. Las **reglas** que esos regex protegían (glosario del "integral", sumar fuentes, la frustración no es hostilidad) siguen cubiertas por los tests del prompt en `worker_seguridad.test.js`.
+
+### ✅ Confirmado en vivo: el Default Reply resolvió el caso del "70"
+
+El fundador configuró el disparador **Default Reply** en ManyChat y lo probó: el `70` pelado pasó limpio, el bot evaluó el remanente correctamente y avanzó a la etapa del dolor. **Queda como regla de arquitectura: el Flow no filtra, manda todo al Worker y el Worker decide** (tiene `BOT_ACTIVO`, la lista blanca y `decidirSiResponder`).
+
+### Estado del pool de llaves Groq (verificado en `llm_telemetria`)
+
+Las 3 llaves están cargadas en `GROQ_API_KEYS` y **el pool sí está rotando**:
+
+| Alias | OK | 429 | Tokens restantes |
+|---|---|---|---|
+| `principal` | 378 | **80** | 2.394 / 8.000 |
+| `respaldo_1` | 25 | 5 | 4.595 / 8.000 |
+| `respaldo_2` | 4 | 1 | 5.649 / 8.000 |
+
+`pedirAGroq()` es **failover, no round-robin**: siempre empieza por la primera y baja solo ante un 429. Por eso la principal absorbe ~21% de rechazos antes de que el tráfico pase a los respaldos. Es el argumento concreto para el panel de observabilidad del LLM.
+
+⚠️ **Mina pendiente:** `worker_bot_setter_v42.js` tiene `if (!env.GROQ_API_KEY)` en **cuatro** sitios. Si alguien borra la variable singular dejando solo `GROQ_API_KEYS`, **el LLM deja de correr del todo** aunque el pool tenga tres llaves — y falla en silencio. Arreglo de raíz: que esas guardas usen `llavesDeGroq(env).length > 0`.
+
+**Nota para el panel nuevo:** `CapacidadLLMBoard.tsx`, `llm-telemetria.ts` y `api/telemetria-llm/route.ts` **no están en `master`** — viven solo en la rama `feat/panel-capacidad-llm`, sin fusionar. El dashboard de Setters/Closers/Admin no tiene rastro de esto: no hay nada que limpiar de ahí, solo código que reutilizar.
