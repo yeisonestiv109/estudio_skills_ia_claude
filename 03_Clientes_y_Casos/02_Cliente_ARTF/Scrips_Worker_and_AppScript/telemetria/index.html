@@ -439,7 +439,7 @@ function tarjetaLlave(fila, ultimo, compartida) {
   const nombre = el('div');
   nombre.append(el('div', 'text-sm font-semibold text-neutral-100', fila.llave_alias));
   nombre.append(el('div', 'font-mono text-[11px] text-neutral-500',
-    `…${fila.llave_huella || '????'} · ${fila.organizacion || 'organización sin observar'}`));
+    `${fila.llave_huella ? `…${fila.llave_huella}` : 'huella tras su próxima llamada'} · ${fila.organizacion || 'organización sin observar'}`));
   cab.append(nombre);
   cab.append(el('span', `rounded-full border px-2 py-0.5 text-[11px] ${estado.clase}`, `${estado.icono} ${estado.etiqueta}`));
   t.append(cab);
