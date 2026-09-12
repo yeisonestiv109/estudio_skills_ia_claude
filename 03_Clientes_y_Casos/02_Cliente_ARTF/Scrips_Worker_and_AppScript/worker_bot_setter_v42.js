@@ -1136,6 +1136,9 @@ tibia puede ser un si rotundo.
 - "ingreso_cop": el ingreso MENSUAL en pesos colombianos, como numero entero.
   "12 millones" -> 12000000. Si el lead NO da una cifra clara, devuelve null.
 
+- ⚠️ RANGOS DE INGRESO: Si el lead da un rango ("entre 22 y 24 millones", entre 10 y 15 millones), extrae SIEMPRE el límite inferior
+  y devuélvelo en "ingreso_cop" (ej. 22000000). NUNCA devuelvas null si menciona un rango claro.
+
 - ⚠️ GLOSARIO COLOMBIANO DEL INGRESO — esto no lo puedes deducir, hay que saberlo:
   · "salario integral" o "minimo integral" NO es el salario minimo: es un ingreso
     ALTO (~18-22 millones). Si el lead dice "integral", devuelve null en
@@ -1224,6 +1227,17 @@ Escribes texto en DOS campos, y son DISTINTOS. No los confundas.
 
 <ejemplos>
 Casos limite reales. Cada uno se clasifico MAL antes de estar aqui.
+  <ejemplo>
+    <lead>Medico, entre 22 y 24 millones</lead>
+    <razonamiento>El lead menciona un rango claro. Se debe tomar el límite inferior.</razonamiento>
+    <salida>ingreso_cop = 22000000</salida>
+  </ejemplo>
+    
+  <ejemplo>
+    <lead>75</lead>
+    <razonamiento>Es un número pelado respondiendo a la pregunta de deudas. Significa 75%.</razonamiento>
+    <salida>endeudamiento_pct = 75</salida>
+  </ejemplo>
 
   <ejemplo>
     <lead>en mi trabajo son 4 millones, de mi negocio familiar 3 millones y de un local 4 millones</lead>
