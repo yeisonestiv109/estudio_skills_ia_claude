@@ -1,5 +1,7 @@
 # Auditoría de la lógica del bot V4.2 — de la arquitectura al guion
 
+> **Actualización 12-sep-2026 (noche):** el Filtro 2 ya no decide sobre la cifra que devuelve el LLM sino sobre la que escribió el lead (`lectura_deuda.js`). La sección 2 describe la regla del remanente de $2,5M, que ya no está vigente: la regla actual es escalera + piso de $3M (ver bitácora 11-sep). Detalle en `01_Gobernanza_EOS/02_backlog_y_rocas.md`, sesión 12-sep (noche).
+
 **Fecha:** 11-sep-2026 · **Base:** código en `setup/base-conocimiento` @ `6abd18d` (incluye los fixes de Gabyota del 11-sep)
 **Todo lo que sigue sale de leer el código actual, no de la memoria de sesiones anteriores.**
 
@@ -38,7 +40,8 @@
 | **Router** | `bot_router_v42.js` | **Decide**: los 3 filtros y la máquina de 25 etapas | 2.179 líneas | 200 |
 | **Plantillas** | `sop_v42_plantillas.js` | **Habla y mide**: todo el copy, umbrales e interruptores | 1.379 líneas | — |
 | **Verificador** | `verificador_cumplimiento.js` | **Filtra**: nada sale si no es copy aprobado o pasa las reglas G1–G10 | 447 líneas | 69 |
-| **LLM** | `llm_groq.mjs` | Pool de llaves con failover | 112 líneas | 12 |
+| **LLM** | `llm_groq.mjs` | Pool de llaves con failover (429, 5xx y 401/403 pasan a la siguiente) + límite leído del error | ~150 líneas | 18 |
+| **Lectura de deuda** | `lectura_deuda.js` | **Verifica** la cifra del Filtro 2 contra lo que escribió el lead (12-sep): el LLM cita, el código comprueba | ~190 líneas | 30 |
 | **Alertas** | `notificador_google_chat.js` | Mensaje al Setter en cada handoff | 169 líneas | 18 |
 | **Base** | `fn_bot_procesar_turno`, `fn_etapa_bot_valida` | Guarda el estado y **rechaza etapas que no conoce** | SQL | — |
 
@@ -172,6 +175,8 @@ LLM que entiende y código que decide · escritura síncrona antes de responder 
 | **Encender o apagar un comportamiento** | `sop_v42_plantillas.js` | `EMPATIA_HABILITADA`, `CATCHALL_LLM_HABILITADO`, `COPY_PENDIENTE_HABILITADO`, `ESCALERA_REPREGUNTAS_HABILITADA` |
 | **Qué hace el bot con una respuesta** (el flujo) | `bot_router_v42.js` | El `case 'ETAPA'` dentro de `decidirTurno` |
 | **Qué entiende del mensaje** (qué extrae el LLM) | `worker_bot_setter_v42.js` | Prompt y esquema de `clasificarConLLM` (~línea 847) |
+| **Cómo se lee una cifra de deuda** (qué es imposible, ambiguo, qué unidad tiene un número pelado) | `lectura_deuda.js` + `UNIDAD_QUE_PIDE_LA_PREGUNTA` en `sop_v42_plantillas.js` | Si cambia la redacción de `P.M2` o `P.M2_DEUDA_TOTAL_VS_CUOTA`, la unidad cambia con ella (hay test) |
+| **Ver el pool de llaves y la rotación** | `telemetria/index.html`, pestaña LLM | Lee `llm_telemetria` (agregado) y `telemetry_spans` (`llm.intentos`) |
 | **Una etapa nueva** | `bot_router_v42.js` **+ migración** | El `case` nuevo + migración en `Tarea_1_Migrar_DB/migraciones/` que la agregue a `fn_etapa_bot_valida`. Sin la migración, la base la rechaza |
 | **La alerta al Setter** | `notificador_google_chat.js` | `construirMensajeHandoff` |
 | **Encender o apagar el bot** | Cloudflare | Variable `BOT_ACTIVO` (`"false"` = modo secretaria: escucha y registra, no habla) |

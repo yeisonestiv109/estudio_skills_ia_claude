@@ -5119,3 +5119,50 @@ Las 3 llaves están cargadas en `GROQ_API_KEYS` y **el pool sí está rotando**:
 ⚠️ **Mina pendiente:** `worker_bot_setter_v42.js` tiene `if (!env.GROQ_API_KEY)` en **cuatro** sitios. Si alguien borra la variable singular dejando solo `GROQ_API_KEYS`, **el LLM deja de correr del todo** aunque el pool tenga tres llaves — y falla en silencio. Arreglo de raíz: que esas guardas usen `llavesDeGroq(env).length > 0`.
 
 **Nota para el panel nuevo:** `CapacidadLLMBoard.tsx`, `llm-telemetria.ts` y `api/telemetria-llm/route.ts` **no están en `master`** — viven solo en la rama `feat/panel-capacidad-llm`, sin fusionar. El dashboard de Setters/Closers/Admin no tiene rastro de esto: no hay nada que limpiar de ahí, solo código que reutilizar.
+
+## 🧮 12-sep-2026 (noche) — M2 blindado, pool de llaves visible y dos minas desactivadas
+
+**591 tests en verde.** Producción: `69744a12`. Commits `c0c84f1`, `442c70a`, `c9c4cca`, `4571477`.
+
+### 1. Filtro 2: el LLM "corregía" la cifra del lead y lo calificaba
+
+Traza real `tr_cd45365f7f`: ingreso $22M, el lead responde `1200` a la pregunta del %. Qwen devolvió `deuda_cop=12000000` —una escala que el lead nunca escribió— y el router dijo *"Filtro 2 superado: le quedan 9.900.000 libres (deuda 55%)"*. Tres causas encadenadas, todas de raíz:
+
+1. **El validador borraba en silencio todo % > 100.** Un `1200%` bien extraído llegaba al router como "no dio cifra".
+2. **El prompt invitaba a corregir:** *"aca no hay router que valga, es pura intuicion tuya"*.
+3. **El router solo atajaba `deuda_cop >= ingreso`.**
+
+**La solución: extracción anclada (`lectura_deuda.js`).** El LLM *copia* la cifra (`deuda_literal`) y dice qué unidad expresó el lead (`deuda_unidad_dicha`). El código comprueba la cita contra el mensaje y decide sobre lo que **escribió el lead**, no sobre lo que el modelo interpretó:
+
+- Un número que no está en el mensaje no se usa.
+- Sin una palabra de escala escrita ("mil", "millones", "palos") nadie puede reescalar, y una escala nunca achica.
+- Un pelado se lee con la unidad que **pide la pregunta** (`UNIDAD_QUE_PIDE_LA_PREGUNTA`, atada al copy con test): M2 pide %, M2_DEUDA_TOTAL pide pesos.
+- Si el mensaje no tiene ni una letra, el mensaje mismo es la cita: el caso real se ataja aunque Qwen ignore el campo nuevo.
+- **Imposible** = % ≥ 100 o cuota ≥ ingreso. **Ambigua** = cuota mil veces menor al ingreso (la huella de un "mil" que el lead se comió, o de un % mal hecho). No es umbral de negocio: no cambia quién califica, solo cuándo se pregunta.
+
+**Router:** imposible o ambigua → `M2_DEUDA_TOTAL` la primera vez (la propuesta del fundador, ampliada). Si ya se aclaró o se verificó la cuenta → `reencauzar`: ni pasa, ni se descarta, ni abre la salida de la hipoteca. **Una cifra imposible jamás se guarda.**
+
+**Hueco encontrado de paso:** `M2_DEUDA_TOTAL` y `M2_VERIFICAR_CALCULO` no tenían pregunta pendiente, así que `reencauzar` ahí escalaba a un humano en vez de repreguntar. Corregido, y las dos entran al test de etapas conversacionales.
+
+**Telemetría para que el próximo bug de este tipo se vea en una consulta:** el span del router lleva `deuda.*` (cita, lectura del LLM, `deuda.discrepancia=llm_cambio_la_cifra`, motivo) y `filtro2.*` (tope, escalera, piso, `regla_que_manda`). El del LLM lleva `llm.descartes`, porque ningún campo se borra ya sin dejar rastro. Esto también arregló un summary que mentía: con `66.6%` y $9M decía *"3006000 libres (< 3000000)"* cuando frenó la escalera (`tr_a730817345`).
+
+**Pendiente:** medir con `evals.mjs` que Qwen llena `deuda_literal`. **La llave de `.dev.vars` está revocada (401)**, así que ni evals ni sondas locales corren hasta reemplazarla.
+
+### 2. El pool de llaves, visible (`telemetria/index.html`, pestaña LLM)
+
+Proveedor y modelo; cada llave con huella (últimos 4 caracteres), organización, estado (online / 429 / llave inválida / en reserva) y medidor de **ITPM**; aviso si dos llaves comparten organización; capacidad estimada del pool; y el **registro de rotación** leído de `telemetry_spans` (`llm.intentos = principal:429 > respaldo_1:ok`).
+
+- **El límite que rebota ya no es OTPM (1.000) sino ITPM (7.000 tokens de entrada/min).** Cada clasificación pide unos 5.100: **una organización aguanta una por minuto.** El panel de `feat/panel-capacidad-llm` está construido sobre OTPM y hoy mentiría. No se reutilizó.
+- **Antes solo el clasificador escribía en `llm_telemetria`**; las otras 3 llamadas eran invisibles. Ahora `crearObservadorLLM` registra las 4.
+- El límite y la organización se **leen del texto del 429**: nada escrito a mano.
+- Migración `20260912_llm_telemetria_itpm_y_huella` (aditiva, probada antes con `DO … RAISE` para forzar rollback). **De paso cierra un hueco:** `fn_registrar_telemetria_llm` era SECURITY DEFINER con EXECUTE para `PUBLIC`/`anon`, así que cualquiera con la llave pública podía falsear la telemetría.
+- **Organizaciones:** a las 17:43 `principal` y `respaldo_1` compartían `org_01kyebnn…`. A las 19:14 `respaldo_1` ya citaba `org_01kksfh3…`. Hoy son **3 cupos reales**.
+
+### 3. Dos minas desactivadas
+
+- **Guardas de la llave singular:** usan `llavesDeGroq(env).length`. ⚠️ El primer commit (`c718010`) **no las llevaba**: el archivo se guardó desde otro editor con el bloque manual `2.b CORTACORRIENTE (solo_registro)` entre la compuerta y el commit, y se desplegó así. Lo detectaron los tests en la corrida siguiente y se reaplicó en `c0c84f1`. **Lección: correr la compuerta sobre lo commiteado, justo antes de desplegar, siempre.** El bloque `solo_registro` quedó en producción sin tests; falta confirmación del fundador.
+- **401 ya no corta el pool.** Se había decidido que "gastar la siguiente llave en un 401 es tirar cupo". Eso aplica a un 400 (el pedido está mal), no a un 401/403, que es un error de **esa** llave. Con el corte, revocar una llave en Groq antes de sacarla de `GROQ_API_KEYS` dejaba al bot sin LLM con dos respaldos sanos.
+
+### Round-robin: no
+
+Con límite por organización y cada llamada comiéndose ~73% del ITPM, repartir entre llaves de la misma organización no suma nada. Entre organizaciones distintas, el failover ya lo aprovecha: un 429 no consume cupo y cuesta un viaje HTTP. La palanca real es más cupo por organización: **Cerebras (30.000 TPM) como segundo proveedor**, que es lo siguiente.
