@@ -838,6 +838,24 @@ La operación se hace solo con la cuota mensual. Y ojo: el arriendo, los servici
 
 ¿Cuánto te da entonces al mes entre todas tus cuotas?`;
 
+/**
+ * QUE UNIDAD PIDE CADA PREGUNTA DE DEUDA (12-sep-2026).
+ *
+ * Un numero pelado ("1200", "1.500.000") no trae unidad: la unidad la pone la
+ * PREGUNTA que se le hizo. `P.M2` le pide al lead hacer la division y darnos
+ * el % ("total de deudas ÷ ingresos × 100 ... ¿Cuánto te da a ti?");
+ * `P.M2_DEUDA_TOTAL_VS_CUOTA` le pide la cuota en plata ("¿Cuánto te da
+ * entonces al mes entre todas tus cuotas?"). Las etapas que no estan aca hacen
+ * preguntas abiertas y un pelado > 100 se lee como pesos.
+ *
+ * ⚠️ VA ATADO AL COPY. Si cambia la redaccion de esas preguntas, esto cambia
+ * con ella: hay un test que lo vigila. Lo usa `leerDeuda` (lectura_deuda.js).
+ */
+export const UNIDAD_QUE_PIDE_LA_PREGUNTA = {
+  M2_ENVIADO: 'porcentaje',
+  M2_DEUDA_TOTAL: 'pesos',
+};
+
 // ---------------------------------------------------------------------------
 // SOP DE RECUPERACION (bumps) — se disparan por tiempo, no por webhook.
 // Se dejan definidos aca para la Fase 2 (cron). Ver guia de despliegue.

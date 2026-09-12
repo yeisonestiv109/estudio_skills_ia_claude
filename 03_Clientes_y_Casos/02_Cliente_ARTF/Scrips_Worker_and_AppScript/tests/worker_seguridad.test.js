@@ -78,9 +78,29 @@ describe('Validación de la salida del LLM', () => {
     assert.equal(validarClasificacionLLM({ ingreso_cop: 12000000 }).ingreso_cop, 12000000);
   });
 
-  test('descarta porcentajes imposibles', () => {
-    assert.equal(validarClasificacionLLM({ endeudamiento_pct: 250 }).endeudamiento_pct, null);
+  // CAMBIO DE REGLA A PROPOSITO (12-sep-2026). Antes un % > 100 se volvia null
+  // aca, en silencio: el "1200%" del lead que dividio el SALDO por su sueldo
+  // llegaba al router como "no dio cifra". Ahora pasa tal cual y lo ataja
+  // `leerDeuda` con nombre propio (M2_DEUDA_TOTAL), dejando rastro en la traza.
+  test('un porcentaje mayor a 100 NO se borra: lo ataja el router, con rastro', () => {
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: 250 }).endeudamiento_pct, 250);
     assert.equal(validarClasificacionLLM({ endeudamiento_pct: 30 }).endeudamiento_pct, 30);
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: -5 }).endeudamiento_pct, null, 'negativo no existe');
+  });
+
+  test('la cita literal y la unidad dicha se validan', () => {
+    const v = validarClasificacionLLM({ deuda_literal: '  1200% ', deuda_unidad_dicha: 'porcentaje' });
+    assert.equal(v.deuda_literal, '1200%');
+    assert.equal(v.deuda_unidad_dicha, 'porcentaje');
+    assert.equal(validarClasificacionLLM({ deuda_unidad_dicha: 'dolares' }).deuda_unidad_dicha, null);
+    assert.equal(validarClasificacionLLM({ deuda_literal: 1200 }).deuda_literal, '1200', 'un numero se toma como su texto');
+    assert.equal(validarClasificacionLLM({ deuda_literal: 'x'.repeat(200) }).deuda_literal.length, 60);
+  });
+
+  test('todo lo que el validador descarta queda anotado en _descartes', () => {
+    const v = validarClasificacionLLM({ endeudamiento_pct: 'mucho', objecion_num: 42, dolor: 'Z' });
+    assert.deepEqual(v._descartes.sort(), ['dolor', 'endeudamiento_pct', 'objecion_num']);
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: 30 })._descartes, undefined);
   });
 
   test('descarta enums inventados', () => {

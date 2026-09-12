@@ -15,9 +15,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, formatearHistorial, generarConCorreccion,
-  validarClasificacionLLM,
+  validarClasificacionLLM, camposDesdeClasificacion,
 } from '../worker_bot_setter_v42.js';
-import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA } from '../sop_v42_plantillas.js';
+import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA, UNIDAD_QUE_PIDE_LA_PREGUNTA } from '../sop_v42_plantillas.js';
 
 const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
 
@@ -255,7 +255,42 @@ describe('PUNTO 4 — intuición del LLM sobre la cifra de deuda', () => {
 
   test('una cifra imposible como cuota mensual es el saldo total', () => {
     assert.match(src, /gana \$1\.000\.000 y dice que debe \$1\.230\.000 al mes/);
-    assert.match(src, /aca no hay router que valga/i);
+    // CAMBIO A PROPOSITO (12-sep-2026): "aca no hay router que valga, es pura
+    // intuicion tuya" invitaba al modelo a resolver la cifra por su cuenta, y
+    // la resolvia reescalandola (traza tr_cd45365f7f). Ahora lo imposible lo
+    // ataja `leerDeuda`, y al modelo se le prohibe corregir.
+    assert.doesNotMatch(src, /aca no hay router que valga/i);
+  });
+
+  test('el modelo NO corrige la cifra: la copia y dice la unidad que expreso el lead', () => {
+    assert.match(src, /NO CORRIJAS LA CIFRA DEL LEAD/);
+    assert.match(src, /1200 es 1200, no\s+12 ni 12000000/);
+    assert.match(src, /"deuda_literal"/);
+    assert.match(src, /"deuda_unidad_dicha"/);
+    for (const etapa of ['M2_ENVIADO', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO', 'M2_DEUDA_TOTAL']) {
+      assert.match(ESQUEMA_POR_ETAPA[etapa], /"deuda_literal"/, etapa);
+      assert.match(ESQUEMA_POR_ETAPA[etapa], /"deuda_unidad_dicha"/, etapa);
+    }
+  });
+
+  test('la traza lleva el diagnostico de la cifra y los descartes del validador', () => {
+    // Sin esto, "el LLM reescalo la cifra" hay que reconstruirlo a mano cruzando
+    // user.intent con el summary. Ahora sale con nombre propio en el span.
+    assert.match(src, /\.\.\.\(plan\.telemetria \|\| \{\}\)/, 'el span del router vuelca plan.telemetria');
+    assert.match(src, /'llm\.descartes'/, 'el span del LLM muestra lo que el validador borro');
+    assert.match(src, /'deuda_literal', 'deuda_unidad_dicha'/, 'user.intent muestra la cita');
+  });
+
+  test('modo secretaria: un % imposible no se guarda en la ficha del lead', () => {
+    assert.equal(camposDesdeClasificacion({ endeudamiento_pct: 1200 }).endeudamiento_pct, undefined);
+    assert.equal(camposDesdeClasificacion({ endeudamiento_pct: 45 }).endeudamiento_pct, 45);
+  });
+
+  test('la unidad que pide cada pregunta sigue atada a su copy', () => {
+    assert.equal(UNIDAD_QUE_PIDE_LA_PREGUNTA.M2_ENVIADO, 'porcentaje');
+    assert.match(PLANTILLAS.M2, /× 100/, 'M2 le pide al lead sacar el %');
+    assert.equal(UNIDAD_QUE_PIDE_LA_PREGUNTA.M2_DEUDA_TOTAL, 'pesos');
+    assert.match(PLANTILLAS.M2_DEUDA_TOTAL_VS_CUOTA, /al mes entre todas tus cuotas/, 'y esta pide la cuota en plata');
   });
 
   test('y el copy lo resuelve en UN solo mensaje', () => {
@@ -332,8 +367,9 @@ describe('RAÍZ 2 — un error de tipado del LLM no puede costar un lead', () =>
     assert.equal(validarClasificacionLLM({ ingreso_cop: 'como ocho palos' }).ingreso_cop, null);
     assert.equal(validarClasificacionLLM({ ingreso_cop: '' }).ingreso_cop, null);
     assert.equal(validarClasificacionLLM({ ingreso_cop: {} }).ingreso_cop, null);
-    // Un porcentaje fuera de rango sigue rechazándose.
-    assert.equal(validarClasificacionLLM({ endeudamiento_pct: '150' }).endeudamiento_pct, null);
+    // Un porcentaje > 100 ya NO se rechaza aca (12-sep-2026): lo ataja el
+    // router con `leerDeuda`. Ver worker_seguridad.test.js.
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: '150' }).endeudamiento_pct, 150);
   });
 });
 

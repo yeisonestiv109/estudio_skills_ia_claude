@@ -73,6 +73,7 @@ import {
   verificarMensajes, formatearFallas,
 } from './verificador_cumplimiento.js';
 import { pedirAGroq, llavesDeGroq } from './llm_groq.mjs';
+import { aNumero } from './lectura_deuda.js';
 import { notificarSetterGoogleChat } from './notificador_google_chat.js';
 
 // Presupuesto de latencia: ManyChat corta la External Request cerca de los
@@ -316,6 +317,9 @@ async function manejar(request, env, ctx) {
   tz.fin(spLLM, clasificacion?.llm_fallo ? 'ERROR' : 'OK', {
     'llm.fallo': Boolean(clasificacion?.llm_fallo),
     'user.intent': resumirIntencion(clasificacion),
+    // Lo que el modelo devolvio y el validador convirtio en null. Distingue
+    // "no extrajo nada" de "extrajo algo invalido", que son bugs distintos.
+    'llm.descartes': clasificacion?._descartes?.join(',') ?? null,
   });
   // El nombre tiene que viajar en la clasificacion: en el PRIMER turno el lead
   // todavia no existe en la base, asi que `estado` es null y el router se
@@ -351,6 +355,9 @@ async function manejar(request, env, ctx) {
     'router.handoff': plan.handoffRazon,
     'router.burbujas': plan.mensajes.length,
     'router.summary': plan.summary,
+    // Diagnostico propio de la etapa (ej. `deuda.*` y `filtro2.*` en M2): que
+    // cifra escribio el lead, que leyo el LLM, si discreparon y que regla freno.
+    ...(plan.telemetria || {}),
   });
 
   let mensajes = [...plan.mensajes];
@@ -741,7 +748,8 @@ function resumirIntencion(c) {
                        'sin_horarios', 'crisis', 'hostil', 'confirma_rango', 'retoma',
                        'profesion', 'dolores', 'dolor', 'dolor_financiero', 'ingreso_glosario',
                        'cifra_es_remanente', 'deuda_mayoritariamente_buena', 'recupera_handoff',
-                       'acompanado', 'objecion_conocida', 'ex_cliente']) {
+                       'acompanado', 'objecion_conocida', 'ex_cliente',
+                       'deuda_literal', 'deuda_unidad_dicha']) {
     const v = c[campo];
     if (v !== null && v !== undefined && v !== false) partes.push(`${campo}=${v}`);
   }
@@ -852,6 +860,17 @@ export async function clasificar(env, estado, texto, ctxLLM = null, historial = 
 const CAMPO_RAZONAMIENTO =
   '"analisis_paso_a_paso": string, ';
 
+/**
+ * Campos de DEUDA de M2 (12-sep-2026). Ademas de la cifra ya interpretada, se
+ * pide la CITA: el numero tal cual lo escribio el lead y la unidad que expreso.
+ * El router comprueba la cita contra el mensaje (`leerDeuda`) y decide sobre
+ * lo que el lead escribio, no sobre lo que el modelo "corrigio". Ver la traza
+ * tr_cd45365f7f: "1200" salio como deuda_cop=12000000 y califico a un lead.
+ */
+const CAMPOS_DEUDA =
+  '"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, '
+  + '"deuda_literal": string|null, "deuda_unidad_dicha": "porcentaje"|"pesos"|"ninguna"|null, ';
+
 const CAMPOS_COMUNES =
   '"objecion_num": 1|2|3|4|5|6|7|8|9|null, "objecion_conocida": boolean, '
   + '"crisis": boolean, "hostil": boolean, "ex_cliente": boolean'
@@ -915,7 +934,11 @@ export function camposDesdeClasificacion(c) {
     // Lo dijo en una charla con un humano, no confirmado por el guion del bot.
     campos.ingreso_confirmado = false;
   }
-  if (typeof c?.endeudamiento_pct === 'number') campos.endeudamiento_pct = c.endeudamiento_pct;
+  // Aca no hay router que ataje un "1200%": se guarda solo lo que puede ser
+  // una cuota. Lo imposible queda en la traza, no en la ficha del lead.
+  if (typeof c?.endeudamiento_pct === 'number' && c.endeudamiento_pct < 100) {
+    campos.endeudamiento_pct = c.endeudamiento_pct;
+  }
   if (Array.isArray(c?.dolores) && c.dolores.length) {
     campos.dolor = serializarDolorSecretaria(c.dolores, c.dolor_detalle);
   }
@@ -935,13 +958,13 @@ export const ESQUEMA_POR_ETAPA = {
   M1_INGRESO_AMBIGUO:   `{${CAMPO_RAZONAMIENTO}"profesion": string|null, "ingreso_cop": number|null, "ingreso_glosario": "salario_integral"|"ingreso_variable"|"varias_fuentes"|null, "cifra_es_remanente": boolean, ${CAMPOS_COMUNES}}`,
   M1_RANGO_PREGUNTADO:  `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "confirma_rango": true|false|null, ${CAMPOS_COMUNES}}`,
   M1_ACLARAR_REMANENTE: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, ${CAMPOS_COMUNES}}`,
-  M2_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
-  M2_NO_SABE:           `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M2_ENVIADO:           `{${CAMPO_RAZONAMIENTO}${CAMPOS_DEUDA}${CAMPOS_COMUNES}}`,
+  M2_NO_SABE:           `{${CAMPO_RAZONAMIENTO}${CAMPOS_DEUDA}${CAMPOS_COMUNES}}`,
   M2_BORDERLINE:        `{${CAMPO_RAZONAMIENTO}"deuda_mayoritariamente_buena": boolean, ${CAMPOS_COMUNES}}`,
   // Verificacion del calculo: se espera la cifra CORREGIDA, en % o en plata.
-  M2_VERIFICAR_CALCULO: `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M2_VERIFICAR_CALCULO: `{${CAMPO_RAZONAMIENTO}${CAMPOS_DEUDA}${CAMPOS_COMUNES}}`,
   // Se le aclaro que la cuenta va con la CUOTA mensual: llega la cifra nueva.
-  M2_DEUDA_TOTAL:       `{${CAMPO_RAZONAMIENTO}"endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, ${CAMPOS_COMUNES}}`,
+  M2_DEUDA_TOTAL:       `{${CAMPO_RAZONAMIENTO}${CAMPOS_DEUDA}${CAMPOS_COMUNES}}`,
   M3_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"dolores": ["A"|"B"|"C"|"D"], "dolor_detalle": string|null, "dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
   M3_RECONDUCIR:        `{${CAMPO_RAZONAMIENTO}"dolor_financiero": boolean, ${CAMPOS_COMUNES}}`,
   M4_ENVIADO:           `{${CAMPO_RAZONAMIENTO}"urgencia": "ahora"|"algun_dia"|"pregunta_por_que"|null, ${CAMPOS_COMUNES}}`,
@@ -1237,12 +1260,33 @@ tibia puede ser un si rotundo.
   "objecion_num" en null.
   Ejemplo: gana $1.000.000 y dice que debe $1.230.000 al mes -> IMPOSIBLE como
   cuota mensual, se llevaria todo su sueldo y mas. Es el saldo total.
-  TU TRABAJO AHI ES DEDUCIRLO, NO SENTENCIAR: aca no hay router que valga, es
-  pura intuicion tuya antes de que nadie descalifique a nadie. El sistema le
-  preguntara, en UN SOLO mensaje, si esa cifra es la cuota mensual o el saldo
-  total, recordandole que la cuenta va solo con la cuota y que arriendo,
-  servicios y mercado NO cuentan. Nunca se descarta a alguien por una cuenta mal
-  hecha.
+  Tu trabajo ahi es reconocer que NO es una objecion. Lo imposible lo detecta el
+  sistema con la cifra que tu copies: le preguntara, en UN SOLO mensaje, si es la
+  cuota mensual o el saldo total, recordandole que la cuenta va solo con la cuota
+  y que arriendo, servicios y mercado NO cuentan. Nunca se descarta a alguien por
+  una cuenta mal hecha.
+
+- ⚠️ NO CORRIJAS LA CIFRA DEL LEAD. Si da un porcentaje absurdo ("1200", "1200%",
+  "300%", "120%"), casi siempre dividio el SALDO TOTAL por su sueldo. NO asumas un
+  error de tipeo, NO le quites ceros, NO lo pases a pesos y NO lo "arregles" a algo
+  posible: extrae EXACTAMENTE ese numero en "endeudamiento_pct" (1200 es 1200, no
+  12 ni 12000000). El sistema tiene como atajar un porcentaje de 100 o mas; si tu
+  lo corriges, lo que atajas es la verdad y el lead pasa el filtro con un dato falso.
+  Lo mismo con la plata: solo multiplicas si el lead ESCRIBIO la escala ("mil",
+  "millones", "palos", "lucas").
+
+- "deuda_literal" — la cifra de deuda COPIADA del mensaje, caracter por caracter,
+  con el simbolo o la palabra de escala que la acompaña si la hay: "1200", "1200%",
+  "66.6%", "$1.500.000", "8 millones", "setenta". Sin normalizar, sin completar.
+  null si no dio ninguna cifra de deuda.
+
+- "deuda_unidad_dicha" — la unidad que EXPRESO el lead, no la que tu supones:
+  · "porcentaje" = escribio "%" o la palabra "por ciento".
+  · "pesos"      = escribio "$", una palabra de plata o escala ("millones", "mil",
+                   "palos", "lucas", "pesos"), o dice que lo PAGA o que le QUEDA
+                   ("pago 1.500.000", "me quedan 3").
+  · "ninguna"    = numero pelado, sin nada de lo anterior ("1200", "70").
+  · null         = no dio cifra.
 
 - "pregunta_libre" — es la que evita que el bot conteste al lado:
   · Si el lead PREGUNTA o PLANTEA algo que NINGUN campo captura, escribe aca esa
@@ -1294,7 +1338,13 @@ Casos limite reales. Cada uno se clasifico MAL antes de estar aqui.
   <ejemplo>
     <lead>75</lead>
     <razonamiento>Es un número pelado respondiendo a la pregunta de deudas. Significa 75%.</razonamiento>
-    <salida>endeudamiento_pct = 75</salida>
+    <salida>endeudamiento_pct = 75, deuda_literal = "75", deuda_unidad_dicha = "ninguna"</salida>
+  </ejemplo>
+
+  <ejemplo>
+    <lead>1200</lead>
+    <razonamiento>Número pelado a la pregunta de deudas: es 1200%. Es imposible como cuota (seguro dividió el saldo total por su sueldo), pero NO lo corrijo: el sistema lo aclara con él.</razonamiento>
+    <salida>endeudamiento_pct = 1200 (NO 12, NO deuda_cop = 12000000), deuda_literal = "1200", deuda_unidad_dicha = "ninguna"</salida>
   </ejemplo>
 
   <ejemplo>
@@ -1933,23 +1983,10 @@ export function validarClasificacionLLM(bruto) {
    * cifra como STRING ("70", "8500000") y el validador la convertia en null:
    * el dato se perdia en silencio y el turno seguia como si el lead no hubiera
    * dicho nada. Un error de tipado del modelo no puede costar un lead.
-   *
-   * Se aceptan tambien los separadores de miles cuando NO son ambiguos
-   * ("8.500.000", "8,500,000"): grupos de exactamente 3 digitos. Un "8.5"
-   * suelto se respeta como decimal, que es lo que el modelo quiso decir.
+   * Vive en lectura_deuda.js: el router usa el MISMO parser para comprobar la
+   * cita del lead, y dos parsers distintos terminarian discrepando.
    */
-  const num = (v) => {
-    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-    if (typeof v !== 'string') return null;
-    let t = v.trim().replace(/\s|\$|COP/gi, '');
-    if (!t) return null;
-    // Separadores de miles inequivocos: 1.234.567 o 1,234,567
-    if (/^-?\d{1,3}([.,]\d{3})+$/.test(t)) t = t.replace(/[.,]/g, '');
-    // Decimal con coma al estilo latino: 42,5 -> 42.5
-    else if (/^-?\d+,\d{1,2}$/.test(t)) t = t.replace(',', '.');
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  };
+  const num = aNumero;
   const bool = (v) => (typeof v === 'boolean' ? v : undefined);
   const enumDe = (v, permitidos) => (permitidos.includes(v) ? v : null);
 
@@ -1960,8 +1997,20 @@ export function validarClasificacionLLM(bruto) {
   }
   if ('ingreso_cop' in bruto) limpio.ingreso_cop = num(bruto.ingreso_cop);
   if ('endeudamiento_pct' in bruto) {
+    // SIN tope de 100 (12-sep-2026). Un "1200%" es un dato: el lead dividio el
+    // SALDO por su sueldo. Borrarlo aca lo convertia en "no dio cifra", sin
+    // rastro. Lo ataja el router (`leerDeuda` -> M2_DEUDA_TOTAL).
     const p = num(bruto.endeudamiento_pct);
-    limpio.endeudamiento_pct = p !== null && p >= 0 && p <= 100 ? p : null;
+    limpio.endeudamiento_pct = p !== null && p >= 0 ? p : null;
+  }
+  // La cita de la cifra tal cual la escribio el lead, y la unidad que expreso.
+  // Es lo que le permite al router comprobar que el LLM no la reescalo.
+  if ('deuda_literal' in bruto) {
+    const t = typeof bruto.deuda_literal === 'number' ? String(bruto.deuda_literal) : bruto.deuda_literal;
+    limpio.deuda_literal = typeof t === 'string' && t.trim() ? t.trim().slice(0, 60) : null;
+  }
+  if ('deuda_unidad_dicha' in bruto) {
+    limpio.deuda_unidad_dicha = enumDe(bruto.deuda_unidad_dicha, ['porcentaje', 'pesos', 'ninguna']);
   }
   if ('deuda_cop' in bruto) limpio.deuda_cop = num(bruto.deuda_cop);
   if ('remanente_cop' in bruto) limpio.remanente_cop = num(bruto.remanente_cop);
@@ -2022,6 +2071,13 @@ export function validarClasificacionLLM(bruto) {
     limpio.pregunta_libre = typeof bruto.pregunta_libre === 'string' && bruto.pregunta_libre.trim()
       ? bruto.pregunta_libre.trim().slice(0, 300) : null;
   }
+  // NINGUN DESCARTE EN SILENCIO (12-sep-2026). Si el modelo dijo algo y aca se
+  // convirtio en null, queda anotado: la traza lo muestra en `llm.descartes`.
+  // Sin esto, "el LLM no extrajo nada" y "el LLM extrajo algo invalido" se
+  // ven identicos en el dashboard, y son dos bugs distintos.
+  const descartes = Object.keys(limpio).filter((k) => limpio[k] === null
+    && bruto[k] !== null && bruto[k] !== undefined && bruto[k] !== '');
+  if (descartes.length) limpio._descartes = descartes;
   return limpio;
 }
 

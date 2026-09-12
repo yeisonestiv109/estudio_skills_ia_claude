@@ -551,7 +551,8 @@ describe('Catch-all: el unico texto generado que ve el lead', () => {
     // esto se pone rojo antes de que un lead se quede mudo.
     const ETAPAS_CONVERSACIONALES = [
       'M1_ENVIADO', 'M1_INGRESO_AMBIGUO', 'M1_RANGO_PREGUNTADO', 'M1_ACLARAR_REMANENTE',
-      'M2_ENVIADO', 'M2_NO_SABE', 'M3_ENVIADO', 'M3_RECONDUCIR',
+      'M2_ENVIADO', 'M2_NO_SABE', 'M2_VERIFICAR_CALCULO', 'M2_DEUDA_TOTAL', 'M2_BORDERLINE',
+      'M3_ENVIADO', 'M3_RECONDUCIR',
       'M4_ENVIADO', 'M4_URGENCIA_REINTENTO', 'M5_ENVIADO', 'M5_PITCH_REINTENTO',
       'M7_ENVIADO', 'M7_ESPERANDO_VINCULO',
     ];

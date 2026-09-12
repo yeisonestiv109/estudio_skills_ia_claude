@@ -1833,6 +1833,124 @@ describe('Fallos reportados en vivo (11-sep-2026)', () => {
     assert.notEqual(p.etapaNueva, 'M2_DEUDA_TOTAL', 'no puede quedarse en bucle aclarando');
   });
 
+  // --- 2.b LECTURA FIEL DE LA CIFRA (12-sep-2026) --------------------------
+  // Traza real tr_cd45365f7f: ingreso $22M, el lead responde "1200" a la
+  // pregunta del %, Qwen devuelve deuda_cop=12000000 y el router lo califica.
+  test('TRAZA REAL: "1200" reescalado por el LLM a $12M NO pasa: se aclara cuota vs saldo', () => {
+    const p = decidirTurno(
+      st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { deuda_cop: 12_000_000, deuda_literal: '1200', deuda_unidad_dicha: 'ninguna' },
+      '1200',
+    );
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.match(p.summary, /Endeudamiento imposible \(1200% vs ingreso 22000000\)/);
+    assert.equal(p.campos.endeudamiento_pct, undefined, 'una cifra imposible jamas se guarda');
+    assert.equal(p.telemetria['deuda.discrepancia'], 'llm_cambio_la_cifra');
+    assert.equal(p.telemetria['deuda.llm_deuda_cop'], 12_000_000);
+  });
+
+  test('CASO 4: % >= 100 dispara la aclaracion aunque el LLM lo haya extraido bien', () => {
+    for (const [lit, v] of [['1200%', 1200], ['120%', 120], ['300%', 300]]) {
+      const p = decidirTurno(
+        st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+        { endeudamiento_pct: v, deuda_literal: lit, deuda_unidad_dicha: 'porcentaje' },
+        `me da ${lit}`,
+      );
+      assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL', lit);
+    }
+  });
+
+  test('CASO 4: Qwen "corrige" 1200% a 12% -> se usa lo que escribio el lead', () => {
+    const p = decidirTurno(
+      st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { endeudamiento_pct: 12, deuda_literal: '1200%', deuda_unidad_dicha: 'porcentaje' },
+      '1200%',
+    );
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+  });
+
+  test('CASO 1 y 2 siguen funcionando con la cita', () => {
+    const pct = decidirTurno(st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { endeudamiento_pct: 40, deuda_literal: '40', deuda_unidad_dicha: 'ninguna' }, '40');
+    assert.equal(pct.etapaNueva, 'M3_ENVIADO');
+    assert.equal(pct.campos.endeudamiento_pct, 40);
+
+    const plata = decidirTurno(st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { deuda_cop: 8_000_000, deuda_literal: '8 millones', deuda_unidad_dicha: 'pesos' }, 'pago 8 millones');
+    assert.equal(plata.etapaNueva, 'M3_ENVIADO');
+    assert.equal(plata.campos.endeudamiento_pct, 36);
+  });
+
+  test('CASO 3 sigue: saldo en pesos >= ingreso se aclara', () => {
+    const p = decidirTurno(st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { deuda_cop: 120_000_000, deuda_literal: '120.000.000', deuda_unidad_dicha: 'pesos' }, '120.000.000');
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+    assert.match(p.summary, /saldo total/);
+  });
+
+  test('si YA se aclaro y vuelve a dar una cifra imposible, se reencauza: ni pasa ni se descarta', () => {
+    const p = decidirTurno(
+      st('M2_DEUDA_TOTAL', { salario_monto: 22_000_000 }),
+      { endeudamiento_pct: 1200, deuda_literal: '1200%', deuda_unidad_dicha: 'porcentaje' },
+      '1200%',
+    );
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+    assert.equal(p.handoffRazon, null, 'un lead confuso no escala: se le razona');
+    assert.notEqual(p.estadoDestino, 'descalificado');
+    assert.ok(p.mensajes.length > 0, 'nunca queda mudo');
+    assert.equal(p.campos.endeudamiento_pct, undefined);
+  });
+
+  test('cuota ambigua despues de aclarar ("1200" pesos contra $22M) se reencauza, no pasa', () => {
+    const p = decidirTurno(
+      st('M2_DEUDA_TOTAL', { salario_monto: 22_000_000 }),
+      { deuda_cop: 1200, deuda_literal: '1200', deuda_unidad_dicha: 'ninguna' },
+      '1200',
+    );
+    assert.notEqual(p.etapaNueva, 'M3_ENVIADO');
+    assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
+    assert.match(p.summary, /ambigua/i);
+  });
+
+  test('en la verificacion del calculo, ratificar un % imposible no abre la salida de la hipoteca', () => {
+    const p = decidirTurno(
+      st('M2_VERIFICAR_CALCULO', { salario_monto: 22_000_000 }),
+      { endeudamiento_pct: 1200, deuda_literal: '1200', deuda_unidad_dicha: 'ninguna' },
+      'si, 1200',
+    );
+    assert.notEqual(p.etapaNueva, 'M2_BORDERLINE');
+    assert.notEqual(p.etapaNueva, 'M3_ENVIADO');
+    assert.equal(p.handoffRazon, null);
+  });
+
+  test('una cita que no esta en el mensaje no decide nada: se vuelve a pedir la cifra', () => {
+    const p = decidirTurno(
+      st('M2_ENVIADO', { salario_monto: 22_000_000 }),
+      { endeudamiento_pct: 20, deuda_literal: '20%', deuda_unidad_dicha: 'porcentaje' },
+      'poquito la verdad',
+    );
+    assert.notEqual(p.etapaNueva, 'M3_ENVIADO');
+    assert.equal(p.telemetria['deuda.anclaje'], 'literal_no_esta_en_el_mensaje');
+  });
+
+  test('el summary dice QUE regla frena: escalera o piso, sin desigualdades falsas', () => {
+    // Traza real tr_a730817345: "66.6%" con $9M decia "le quedarian 3006000
+    // libres (< 3000000)". Freno la ESCALERA (tope 60%), no el piso.
+    const p = decidirTurno(st('M2_ENVIADO', { salario_monto: 9_000_000 }),
+      { endeudamiento_pct: 66.6, deuda_literal: '66.6%', deuda_unidad_dicha: 'porcentaje' }, '66.6%');
+    assert.equal(p.etapaNueva, 'M2_VERIFICAR_CALCULO');
+    assert.doesNotMatch(p.summary, /3006000 libres \(< 3000000\)/);
+    assert.match(p.summary, /escalera/);
+    assert.equal(p.telemetria['filtro2.regla_que_manda'], 'escalera');
+    assert.equal(p.telemetria['filtro2.tope_pct'], 60);
+  });
+
+  test('M2_DEUDA_TOTAL y M2_VERIFICAR_CALCULO tienen pregunta pendiente que reenviar', () => {
+    assert.ok(preguntaPendiente('M2_DEUDA_TOTAL', 'Ana').length > 0);
+    assert.ok(preguntaPendiente('M2_VERIFICAR_CALCULO', 'Ana').length > 0);
+  });
+
   test('una cuota mensual plausible NO dispara la aclaracion', () => {
     const p = decidirTurno(
       st('M2_ENVIADO', { salario_monto: 10_000_000 }),
