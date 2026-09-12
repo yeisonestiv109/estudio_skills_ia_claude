@@ -227,6 +227,26 @@ function pintarSpan(s) {
 }
 
 /* ===========================================================================
+   2.b COLA DE LLEGADA — los spans de un turno llegan casi juntos y sin orden
+   garantizado. Se esperan 400 ms, se ordenan por `started_at` y recién ahí se
+   pintan. Es la diferencia entre un log fiel y uno que confunde.
+   =========================================================================== */
+let pendientes = [];
+let temporizador = null;
+function encolar(span) {
+  pendientes.push(span);
+  clearTimeout(temporizador);
+  temporizador = setTimeout(() => {
+    pendientes
+      .sort((a, b) => (a.trace_id === b.trace_id
+        ? new Date(a.started_at) - new Date(b.started_at) || a.id - b.id
+        : a.id - b.id))
+      .forEach(pintarSpan);
+    pendientes = [];
+  }, 400);
+}
+
+/* ===========================================================================
    3. CONEXIÓN Y TIEMPO REAL
    =========================================================================== */
 let cliente = null;
@@ -244,7 +264,7 @@ async function conectar(url, key) {
     .from('telemetry_spans')
     .select('*')
     .order('id', { ascending: false })
-    .limit(150);
+    .limit(200);
 
   if (error) {
     marcarConexion('error', 'bg-red-500/15 text-red-300');
@@ -253,12 +273,19 @@ async function conectar(url, key) {
     return false;
   }
 
-  data.reverse().forEach(pintarSpan);
+  // ⚠️ Ordenar por `started_at` y NO por orden de llegada (12-sep-2026).
+  // Los spans de un turno se insertan en UN solo lote y Realtime los entrega
+  // sin garantia de orden: el log mostraba "GENERACION" como paso 2, antes de
+  // leer el estado. Un log que miente sobre el orden hace perder el tiempo
+  // justo cuando se usa para diagnosticar.
+  data.sort((a, b) => (a.trace_id === b.trace_id
+    ? new Date(a.started_at) - new Date(b.started_at) || a.id - b.id
+    : a.id - b.id)).forEach(pintarSpan);
 
   cliente.channel('telemetria')
     .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'telemetry_spans' },
-        (payload) => pintarSpan(payload.new))
+        (payload) => encolar(payload.new))
     .subscribe((estado) => {
       if (estado === 'SUBSCRIBED')  marcarConexion('en vivo', 'bg-emerald-500/15 text-emerald-300');
       if (estado === 'CHANNEL_ERROR') marcarConexion('sin realtime', 'bg-amber-500/15 text-amber-300');

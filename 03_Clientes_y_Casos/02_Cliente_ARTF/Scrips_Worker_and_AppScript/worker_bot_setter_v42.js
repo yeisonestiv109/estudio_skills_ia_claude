@@ -707,9 +707,16 @@ async function manejar(request, env, ctx) {
 function resumirIntencion(c) {
   if (!c || typeof c !== 'object') return null;
   const partes = [];
+  // ⚠️ Esta lista estaba incompleta y el log MENTIA: "Soy concejal" salia como
+  // "sin_señal" aunque el modelo SI habia extraido la profesion. Una telemetria
+  // que omite campos hace perder el tiempo diagnosticando lo que no falla.
+  // Si se agrega un campo al esquema, se agrega aca.
   for (const campo of ['ingreso_cop', 'endeudamiento_pct', 'deuda_cop', 'remanente_cop',
                        'objecion_num', 'urgencia', 'acepta', 'confirmo_agendo', 'pide_link',
-                       'sin_horarios', 'crisis', 'hostil', 'confirma_rango', 'retoma']) {
+                       'sin_horarios', 'crisis', 'hostil', 'confirma_rango', 'retoma',
+                       'profesion', 'dolores', 'dolor', 'dolor_financiero', 'ingreso_glosario',
+                       'cifra_es_remanente', 'deuda_mayoritariamente_buena', 'recupera_handoff',
+                       'acompanado', 'objecion_conocida', 'ex_cliente']) {
     const v = c[campo];
     if (v !== null && v !== undefined && v !== false) partes.push(`${campo}=${v}`);
   }
@@ -945,6 +952,21 @@ export const ESQUEMA_POR_ETAPA = {
   // `detectarAceptacion`. Sin ese regex y sin este campo, el lead que acepta
   // desde un handoff se quedaba sin pitch.
   HANDOFF: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, "acepta": boolean, ${CAMPOS_COMUNES}}`,
+
+  // ⚠️ ETAPAS DE CIERRE (12-sep-2026). Faltaban las tres, y eso apagaba el
+  // LLM por completo en ellas: `clasificarConLLM` hace `if (!esquema) return {}`.
+  // Encontrado en la telemetria real: trazas en DESCALIFICADO con
+  // GROQ_CLASIFICADOR en 0 ms y llm.fallo=false -- la llamada nunca ocurrio.
+  //
+  // La consecuencia era de SEGURIDAD: `crisis` y `hostil` solo los llena el
+  // LLM. Un lead recien descalificado que escribiera algo revelando una crisis
+  // emocional recibia el cierre enlatado, sin escalar a un humano.
+  //
+  // DESCALIFICADO lleva ademas los campos de dinero: el RetornoLead del SOP
+  // recalifica al lead si suelta una cifra que ya pasa el Filtro 1.
+  DESCALIFICADO: `{${CAMPO_RAZONAMIENTO}"ingreso_cop": number|null, "endeudamiento_pct": number|null, "deuda_cop": number|null, "remanente_cop": number|null, "retoma": true|false|null, ${CAMPOS_COMUNES}}`,
+  CIERRE_PRECALL:   `{${CAMPO_RAZONAMIENTO}${CAMPOS_COMUNES}}`,
+  BLINDAJE_CERRADO: `{${CAMPO_RAZONAMIENTO}${CAMPOS_COMUNES}}`,
 };
 
 const CONTEXTO_POR_ETAPA = {
@@ -967,14 +989,25 @@ const CONTEXTO_POR_ETAPA = {
   M7_ENVIADO: 'El lead YA agendo. Se le pregunto: "¿asistiras solo tu o consideras importante que participe alguien mas?". "acompanado" es true si dice que ira con alguien (pareja, esposo/a, socio), false si va solo. Un "si" a secas aca significa "si, ira alguien mas" -> acompanado=true. NO existe "confirmo_agendo" en esta etapa: ya agendo.',
   M7_ESPERANDO_VINCULO: 'Dijo que ya agendo y se le acuso recibo; se espera a que el equipo verifique la reserva.',
   SIN_HORARIOS_ESPERANDO_FRANJA: 'Dijo que no encontraba un horario disponible; se le pidio que cuente que dia/franja le queda bien porque el equipo lo va a agendar a mano. Este mensaje es su respuesta con esa franja. En "respuesta_empatica" escribe un cierre CORTO (1-2 frases) que retome la franja que dio en sus propias palabras y confirme que el equipo ya la tiene para buscarle un horario -- sin prometer un dia u hora exactos, sin pedir mas datos, y sin decir que ya quedo agendado.',
+  DESCALIFICADO: 'El lead quedo descalificado y vuelve a escribir. Extrae cifras si las da (puede recalificarse) y, sobre todo, evalua crisis y hostilidad como en cualquier otra etapa.',
+  CIERRE_PRECALL: 'El embudo ya termino: el lead agendo y se le entregaron las preguntas previas a la llamada. Este mensaje es posterior al cierre.',
+  BLINDAJE_CERRADO: 'La conversacion ya se cerro del todo. Solo importa detectar crisis u hostilidad.',
   RETORNO_PREGUNTA: 'Es un lead que fue descartado antes y volvio a escribir. Se le pregunto si su situacion cambio desde entonces. "retoma" es true si dice que si cambio/mejoro, false si dice que sigue igual.',
   HANDOFF: 'El lead fue escalado a un humano y este es un mensaje NUEVO que escribe despues. "recupera_handoff" es true SOLO si el lead da un dato pendiente, dice que quiere seguir/continuar, o pide agendar -- NO ante un simple saludo, un "hola" suelto, o una queja sin intencion de avanzar. Si el lead da una cifra de ingreso o de deuda/remanente -- aunque sea aproximada ("por ahi unos 4 millones") o partida en dos mensajes ("si me queda algo" + despues "unos 4m") -- extraela en los campos de dinero: sirve para no volver a preguntarla al retomar.',
 };
 
 async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null, ctxLLM = null, historial = '') {
   if (!env.GROQ_API_KEY) return {};
-  const esquema = esquemaForzado || ESQUEMA_POR_ETAPA[etapa];
+  // RED DE FONDO (12-sep-2026): si mañana alguien agrega una etapa y olvida su
+  // esquema, ANTES el LLM dejaba de correr ahi en silencio -- y con el se
+  // apagaban crisis y hostilidad. Ya paso cuatro veces. Ahora se cae al esquema
+  // universal: se extrae menos, pero las escaladas de seguridad SIEMPRE corren.
+  // El test 'toda etapa del router tiene esquema' evita que esto sea la norma.
+  const esquema = esquemaForzado || ESQUEMA_POR_ETAPA[etapa] || ESQUEMA_SECRETARIA;
   if (!esquema) return {};
+  if (!ESQUEMA_POR_ETAPA[etapa] && !esquemaForzado) {
+    console.warn(`[clasificar] etapa sin esquema propio: ${etapa}. Se usa el universal.`);
+  }
 
   // Revertido (5-sep-2026, a pedido explicito): el CoT condicional
   // (`mereceRazonamiento`) recortaba `analisis_paso_a_paso` en mensajes sin
@@ -1868,7 +1901,30 @@ export function sanearEmpatia(valor) {
  */
 export function validarClasificacionLLM(bruto) {
   if (!bruto || typeof bruto !== 'object') return {};
-  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  /**
+   * Numero tolerante al tipado del LLM (12-sep-2026).
+   *
+   * ⚠️ BUG REAL: esto exigia `typeof v === 'number'`. Qwen devuelve a veces la
+   * cifra como STRING ("70", "8500000") y el validador la convertia en null:
+   * el dato se perdia en silencio y el turno seguia como si el lead no hubiera
+   * dicho nada. Un error de tipado del modelo no puede costar un lead.
+   *
+   * Se aceptan tambien los separadores de miles cuando NO son ambiguos
+   * ("8.500.000", "8,500,000"): grupos de exactamente 3 digitos. Un "8.5"
+   * suelto se respeta como decimal, que es lo que el modelo quiso decir.
+   */
+  const num = (v) => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v !== 'string') return null;
+    let t = v.trim().replace(/\s|\$|COP/gi, '');
+    if (!t) return null;
+    // Separadores de miles inequivocos: 1.234.567 o 1,234,567
+    if (/^-?\d{1,3}([.,]\d{3})+$/.test(t)) t = t.replace(/[.,]/g, '');
+    // Decimal con coma al estilo latino: 42,5 -> 42.5
+    else if (/^-?\d+,\d{1,2}$/.test(t)) t = t.replace(',', '.');
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  };
   const bool = (v) => (typeof v === 'boolean' ? v : undefined);
   const enumDe = (v, permitidos) => (permitidos.includes(v) ? v : null);
 

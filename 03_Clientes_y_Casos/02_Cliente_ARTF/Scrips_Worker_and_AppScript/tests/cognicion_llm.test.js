@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, formatearHistorial, generarConCorreccion,
+  validarClasificacionLLM,
 } from '../worker_bot_setter_v42.js';
 import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA } from '../sop_v42_plantillas.js';
 
@@ -262,5 +263,119 @@ describe('PUNTO 4 — intuición del LLM sobre la cifra de deuda', () => {
     assert.match(t, /cuota mensual/i, 'dice con qué se hace la cuenta');
     assert.match(t, /arriendo/i, 'y que los gastos fijos no cuentan');
     assert.match(t, /\?/, 'y pregunta, todo junto');
+  });
+});
+
+// ===========================================================================
+// Fallos encontrados en la TELEMETRÍA REAL (12-sep-2026)
+//
+// Los cuatro salieron de leer trazas de producción, no de hipótesis. Cada
+// test aquí es la garantía de que no vuelven.
+// ===========================================================================
+
+describe('RAÍZ 1 — ninguna etapa puede dejar al LLM apagado', () => {
+  // El bug: DESCALIFICADO, CIERRE_PRECALL y BLINDAJE_CERRADO no tenían
+  // esquema, y `clasificarConLLM` hace `if (!esquema) return {}`. En la
+  // telemetría se veía como GROQ_CLASIFICADOR en 0 ms con llm.fallo=false.
+  // Como `crisis` y `hostil` SOLO los llena el LLM, esas etapas quedaban
+  // ciegas a una crisis emocional. Ya había pasado cuatro veces.
+  const routerSrc = readFileSync(new URL('../bot_router_v42.js', import.meta.url), 'utf8');
+
+  test('TODA etapa que el router puede dejar en la base tiene esquema propio', () => {
+    const etapas = [...new Set(
+      [...routerSrc.matchAll(/etapaNueva: '([A-Z0-9_]+)'/g)].map((m) => m[1]),
+    )].filter((e) => e !== 'HANDOFF');   // HANDOFF lo pone el helper, y sí tiene esquema
+
+    const sinEsquema = etapas.filter((e) => !ESQUEMA_POR_ETAPA[e]);
+    assert.deepEqual(sinEsquema, [],
+      `estas etapas dejarían el LLM apagado (crisis y hostilidad incluidas): ${sinEsquema.join(', ')}`);
+  });
+
+  test('las etapas de cierre evalúan crisis y hostilidad', () => {
+    for (const etapa of ['DESCALIFICADO', 'CIERRE_PRECALL', 'BLINDAJE_CERRADO']) {
+      assert.ok(ESQUEMA_POR_ETAPA[etapa], `falta el esquema de ${etapa}`);
+      assert.match(ESQUEMA_POR_ETAPA[etapa], /"crisis"/, `${etapa} ciego a una crisis`);
+      assert.match(ESQUEMA_POR_ETAPA[etapa], /"hostil"/);
+    }
+  });
+
+  test('DESCALIFICADO además extrae cifras: el RetornoLead lo necesita', () => {
+    assert.match(ESQUEMA_POR_ETAPA.DESCALIFICADO, /"ingreso_cop"/);
+  });
+
+  test('RED DE FONDO: una etapa olvidada cae al esquema universal, no al vacío', () => {
+    // Aunque el test de arriba proteja el caso conocido, el día que alguien
+    // agregue una etapa nueva el LLM tiene que seguir corriendo igual.
+    assert.match(src, /ESQUEMA_POR_ETAPA\[etapa\] \|\| ESQUEMA_SECRETARIA/);
+    assert.match(ESQUEMA_SECRETARIA, /"crisis"/, 'el universal también evalúa seguridad');
+  });
+});
+
+describe('RAÍZ 2 — un error de tipado del LLM no puede costar un lead', () => {
+  test('un número que llega como string YA NO se descarta', () => {
+    // El bug: `typeof v === 'number'` convertía "70" en null, en silencio.
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: '70' }).endeudamiento_pct, 70);
+    assert.equal(validarClasificacionLLM({ ingreso_cop: '8500000' }).ingreso_cop, 8_500_000);
+  });
+
+  test('los separadores de miles inequívocos se entienden', () => {
+    assert.equal(validarClasificacionLLM({ ingreso_cop: '8.500.000' }).ingreso_cop, 8_500_000);
+    assert.equal(validarClasificacionLLM({ ingreso_cop: '8,500,000' }).ingreso_cop, 8_500_000);
+    assert.equal(validarClasificacionLLM({ ingreso_cop: ' $ 12000000 COP ' }).ingreso_cop, 12_000_000);
+  });
+
+  test('un decimal latino se respeta como decimal, no como miles', () => {
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: '42,5' }).endeudamiento_pct, 42.5);
+  });
+
+  test('y lo que NO es número sigue siendo null: no se adivina', () => {
+    assert.equal(validarClasificacionLLM({ ingreso_cop: 'como ocho palos' }).ingreso_cop, null);
+    assert.equal(validarClasificacionLLM({ ingreso_cop: '' }).ingreso_cop, null);
+    assert.equal(validarClasificacionLLM({ ingreso_cop: {} }).ingreso_cop, null);
+    // Un porcentaje fuera de rango sigue rechazándose.
+    assert.equal(validarClasificacionLLM({ endeudamiento_pct: '150' }).endeudamiento_pct, null);
+  });
+});
+
+describe('RAÍZ 3 — a un lead con datos no se le vuelve a mandar el saludo', () => {
+  test('lead con ingreso ya registrado y sin etapa: retoma, no saluda', () => {
+    // Visto en producción: 2 turnos de historial, hablando de sus deudas, y
+    // el bot le respondió "Apertura enviada (M1_GENERAL)".
+    const p = decidirTurno(
+      { estado_codigo: 'contactado', etapa_bot: null, nombre: 'Ana', salario_monto: 9_000_000,
+        objeciones_consecutivas: 0, handoff_razon: null },
+      {}, 'pago como 2 millones al mes',
+    );
+    assert.ok(!/Llegas al lugar correcto|Te entiendo, no tener el control/.test(p.mensajes.join(' ')),
+      'no puede reabrir el embudo desde cero');
+    assert.match(p.summary, /se retoma en/);
+  });
+
+  test('un lead de verdad nuevo SÍ recibe la apertura', () => {
+    const p = decidirTurno(null, {}, 'CONTROL');
+    assert.equal(p.etapaNueva, 'M1_ENVIADO');
+    assert.match(p.summary, /Apertura enviada/);
+  });
+
+  test('un lead que existe pero no ha dicho nada también recibe la apertura', () => {
+    const p = decidirTurno(
+      { estado_codigo: 'contactado', etapa_bot: null, nombre: 'Ana', objeciones_consecutivas: 0 },
+      {}, 'CONTROL',
+    );
+    assert.match(p.summary, /Apertura enviada/);
+  });
+});
+
+describe('RAÍZ 4 — la telemetría no puede mentir por omisión', () => {
+  test('reporta también profesión y dolor: "Soy concejal" ya no es "sin_señal"', () => {
+    assert.match(src, /'profesion', 'dolores'/);
+    assert.match(src, /'dolor_financiero'/);
+    assert.match(src, /'recupera_handoff'/);
+  });
+
+  test('el dashboard ordena los pasos por hora real, no por orden de llegada', () => {
+    const dash = readFileSync(new URL('../telemetria/index.html', import.meta.url), 'utf8');
+    assert.match(dash, /new Date\(a\.started_at\) - new Date\(b\.started_at\)/);
+    assert.match(dash, /function encolar/, 'los spans en vivo se ordenan antes de pintarse');
   });
 });

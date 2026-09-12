@@ -5027,3 +5027,46 @@ Ver `ARQUITECTURA_CAPTURA_MENSAJES_SETTER.md`. Tres caminos, con su riesgo real:
 
 - **Producción sigue con la versión anterior** (`d9f9ba62`): estos 5 cambios están en git pero no desplegados.
 - Mirar la telemetría con tráfico real y confirmar que la apertura empática sale.
+
+## 🔬 Sesión 12-sep-2026 — Cuatro bugs encontrados leyendo la telemetría real
+
+La telemetría empezó a pagar sola: los cuatro salieron de leer trazas de producción, no de hipótesis.
+
+**Contexto importante para leer esas trazas:** nuestro bot estaba encendido y analizando, pero el Flow de ManyChat filtra por la etiqueta `V42 EN PRUEBA` (Condición #6), así que **no enviaba**. Quien respondía era el bot de Javier. Por eso la memoria de nuestro bot contiene conversaciones que él nunca tuvo. Los bugs de abajo son hechos del código y aplican igual.
+
+### 1. Tres etapas dejaban el LLM apagado — era un riesgo de seguridad
+
+`ESQUEMA_POR_ETAPA` no tenía entrada para `DESCALIFICADO`, `CIERRE_PRECALL` ni `BLINDAJE_CERRADO`, y `clasificarConLLM` hace `if (!esquema) return {}`. En la telemetría se veía como `GROQ_CLASIFICADOR [0 ms]` con `llm.fallo=false`: la llamada nunca ocurría.
+
+**Como `crisis` y `hostil` solo los llena el LLM, esas etapas estaban ciegas a una crisis emocional.** Un lead recién descalificado que escribiera algo grave recibía el cierre enlatado.
+
+**Arreglo de raíz, en tres capas:** se añadieron las tres etapas; `clasificarConLLM` ahora cae al esquema universal si una etapa no tiene el suyo (se extrae menos, pero las escaladas de seguridad **siempre** corren); y hay un test que recorre el código del router y exige esquema para **toda** etapa que pueda quedar en la base. Ya había pasado cuatro veces; ahora no puede repetirse en silencio.
+
+### 2. El validador tiraba datos por un error de tipado del modelo
+
+`num(v)` exigía `typeof v === 'number'`. Qwen devuelve a veces `"70"` como string y el dato se convertía en `null` sin avisar: el turno seguía como si el lead no hubiera dicho nada. Ahora acepta strings numéricos y separadores de miles inequívocos (`8.500.000`, `8,500,000`), respeta el decimal latino (`42,5`) y **sigue devolviendo null para lo que no es número**: no se adivina.
+
+### 3. Un lead con datos recibía otra vez el saludo de apertura
+
+Visto en producción: lead con 2 turnos de historial, hablando de sus deudas, y el bot respondió *"Apertura enviada (M1_GENERAL)"*. La causa: `if (!etapa)` mandaba el Mensaje 1 sin mirar si el lead ya tenía datos. Pasa siempre que la fila existe pero la etapa nunca se fijó.
+
+Ahora, si el lead ya dijo algo (ingreso, endeudamiento, dolor o urgencia), se retoma con `etapaParaRetomar` en vez de saludarlo de nuevo. **La etapa no es la única fuente de verdad: los datos también lo son.**
+
+### 4. La telemetría mentía por omisión
+
+`user.intent` no reportaba `profesion`, `dolores`, `dolor_financiero` ni otros seis campos: *"Soy concejal"* salía como `sin_señal` aunque el modelo **sí** había extraído la profesión. Y el dashboard pintaba los spans por orden de llegada del WebSocket, no por `started_at`, así que mostraba "GENERACIÓN" antes de "ESTADO_DB". Un log que miente hace perder el tiempo justo cuando se usa para diagnosticar. Corregidos los dos.
+
+### El modelo — me equivoqué, y queda documentado
+
+Recomendé pasar a `openai/gpt-oss-120b` sin revisar primero la bitácora. **Estaba descartado dos veces**, con el motivo escrito: ignora `json_schema`/`strict:true` de forma inconsistente (foro oficial de Groq + issue `langchain-ai/langchain#34155`). Hay incluso un comentario en el código advirtiéndolo. Debí leerlo antes de opinar.
+
+**El matiz que sí importa:** ese bug es del modo **estricto**, y nosotros usamos `response_format: json_object` — el modo básico, elegido precisamente por eso. O sea que la objeción documentada no aplica a nuestro uso. Aun así **no se cambia el modelo sin medirlo** con `evals.mjs` sobre el corpus de 50 casos.
+
+**Datos verificados de capacidad (12-sep-2026):**
+
+| Proveedor | Modelo | RPM | TPM | TPD |
+|---|---|---|---|---|
+| Groq (actual) | `qwen/qwen3.8-27b` *(preview)* | 30 | 8.000 | 200.000 |
+| Cerebras | mismo `qwen-3.8-27b` y `gpt-oss-120b` | 5 | 30.000 | 1.000.000 |
+
+Groq da más peticiones por minuto; Cerebras da **4x tokens por minuto y 5x por día**. Como nuestro cuello de botella es el TPM (el prompt XML es grande), **la vía interesante no es cambiar de cerebro sino sumar capacidad**: Cerebras como segundo proveedor con el MISMO modelo, reusando el pool de failover que ya existe en `llm_groq.mjs`. Pendiente de decisión del fundador.

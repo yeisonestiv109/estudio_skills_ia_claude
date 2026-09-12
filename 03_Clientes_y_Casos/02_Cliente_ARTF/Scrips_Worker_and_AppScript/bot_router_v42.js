@@ -653,6 +653,28 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
 
   // --- Lead nuevo: se envia el Mensaje 1 ---
   if (!etapa) {
+    // ⚠️ "SIN ETAPA" NO SIEMPRE ES "NUEVO" (12-sep-2026). Visto en produccion:
+    // un lead con 2 turnos de historial y hablando de sus deudas recibio otra
+    // vez el saludo de apertura, porque su `etapa_bot` estaba en null.
+    //
+    // Pasa siempre que la fila existe pero la etapa nunca se fijo: turnos
+    // registrados en modo log-only, un lead creado por otro sistema, o los dos
+    // bots conviviendo. Reenviarle el Mensaje 1 lo devuelve al principio del
+    // embudo y le hace repetir lo que ya contesto.
+    //
+    // La etapa no es la unica fuente de verdad: los DATOS del lead tambien lo
+    // son, y `etapaParaRetomar` ya sabe deducir el punto exacto a partir del
+    // primer filtro que le falte. Solo se saluda a quien de verdad no ha dicho
+    // nada todavia.
+    const yaDijoAlgo = Boolean(estado && (estado.salario_monto
+      || estado.endeudamiento_pct !== null && estado.endeudamiento_pct !== undefined
+      || estado.dolor || estado.urgencia));
+    if (yaDijoAlgo) {
+      const retomaEn = etapaParaRetomar(estado);
+      const r = decidirTurno({ ...estado, etapa_bot: retomaEn }, c, textoLead);
+      return { ...r, summary: `Lead con datos pero sin etapa: se retoma en ${retomaEn} en vez de saludarlo de nuevo. ${r.summary}` };
+    }
+
     const variante = detectarVarianteM1(textoLead);
     return {
       mensajes: [render(P[variante], nombre)],
