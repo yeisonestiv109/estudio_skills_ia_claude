@@ -56,12 +56,43 @@ export function leerCapacidad(headers) {
 }
 
 /**
+ * Lee del mensaje de error QUE limite rebota, su valor y la organizacion.
+ *
+ * Groq no publica en headers el limite que nos frena (ni OTPM ni ITPM), pero
+ * lo escribe en el 429: "in organization `org_...` ... on input tokens per
+ * minute (ITPM): Limit 7000, Used 4100, Requested 5066". Leerlo de ahi hace que
+ * la telemetria se entere sola si el limite cambia, y que dos alias de la
+ * MISMA organizacion (un solo cupo) se vean sin revisar el texto a mano.
+ */
+export function leerLimiteDelError(detalle) {
+  const t = String(detalle ?? '');
+  const org = t.match(/organization `([^`]+)`/);
+  const lim = t.match(/\((\w+)\):\s*Limit\s+(\d+)(?:,\s*Used\s+(\d+))?(?:,\s*Requested\s+(\d+))?/);
+  return {
+    tipo: lim ? lim[1].toUpperCase() : null,
+    valor: lim ? Number(lim[2]) : null,
+    usado: lim?.[3] ? Number(lim[3]) : null,
+    pedido: lim?.[4] ? Number(lim[4]) : null,
+    organizacion: org ? org[1] : null,
+  };
+}
+
+/** Ultimos 4 caracteres: suficiente para saber de que cuenta es, inutil para usarla. */
+const huellaDe = (llave) => String(llave || '').slice(-4);
+
+/**
  * Llama a Groq recorriendo el pool si hace falta.
  *
  * Es FAILOVER, no round-robin: siempre arranca por la principal y solo pasa a
- * la siguiente si la actual devuelve 429 (o 5xx). Round-robin repartiria carga
- * pero haria impredecible que llave atiende a quien, y con llaves de distinta
- * capacidad eso es peor, no mejor.
+ * la siguiente si la actual devuelve 429, 5xx o 401/403. Round-robin repartiria
+ * carga pero haria impredecible que llave atiende a quien, y con llaves de
+ * distinta capacidad eso es peor, no mejor.
+ *
+ * 401/403 (12-sep-2026): antes cortaban el pool. Pero son errores de ESA
+ * llave (revocada, mal pegada), no del pedido: no consumen cupo y la siguiente
+ * es otra credencial. Con el corte, revocar una llave en la consola antes de
+ * sacarla de GROQ_API_KEYS dejaba al bot sin LLM con dos respaldos sanos. Un
+ * 400 si sigue cortando: es el cuerpo el que esta mal y ninguna llave lo arregla.
  *
  * @returns {Promise<{ok, datos?, intentos, alias?, tokensSalida, capacidad?, estado?, detalle?}>}
  */
@@ -73,6 +104,8 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
 
   for (let i = 0; i < llaves.length; i++) {
     const alias = aliasDeLlave(i);
+    const huella = huellaDe(llaves[i]);
+    const t0 = Date.now();
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
@@ -87,26 +120,33 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
       if (resp.ok) {
         const datos = await resp.json();
         const tokensSalida = datos?.usage?.completion_tokens ?? 0;
-        intentos.push({ alias, resultado: 'ok', tokensSalida, capacidad });
-        return { ok: true, datos, intentos, alias, tokensSalida, capacidad };
+        const tokensEntrada = datos?.usage?.prompt_tokens ?? 0;
+        intentos.push({ alias, huella, resultado: 'ok', tokensSalida, tokensEntrada, capacidad, latenciaMs: Date.now() - t0 });
+        return { ok: true, datos, intentos, alias, huella, tokensSalida, tokensEntrada, capacidad };
       }
 
       const detalle = (await resp.text()).slice(0, 300);
-      const reintentable = resp.status === 429 || resp.status >= 500;
+      const llaveInvalida = resp.status === 401 || resp.status === 403;
+      const reintentable = resp.status === 429 || resp.status >= 500 || llaveInvalida;
       intentos.push({
-        alias, resultado: resp.status === 429 ? '429' : 'error',
-        estado: resp.status, detalle, capacidad, tokensSalida: 0,
+        alias, huella,
+        resultado: resp.status === 429 ? '429' : llaveInvalida ? 'llave_invalida' : 'error',
+        estado: resp.status, detalle, capacidad, tokensSalida: 0, tokensEntrada: 0,
+        limite: leerLimiteDelError(detalle), latenciaMs: Date.now() - t0,
       });
-      if (!reintentable) break;      // 401/400: cambiar de llave no arregla nada
+      if (!reintentable) break;      // 400: el pedido esta mal, ninguna llave lo arregla
       console.warn(`[groq] ${alias} devolvio ${resp.status}; se prueba la siguiente llave.`);
     } catch (e) {
-      intentos.push({ alias, resultado: 'error', detalle: String(e?.message || e).slice(0, 200), tokensSalida: 0 });
+      intentos.push({
+        alias, huella, resultado: 'error', detalle: String(e?.message || e).slice(0, 200),
+        tokensSalida: 0, tokensEntrada: 0, latenciaMs: Date.now() - t0,
+      });
     } finally { clearTimeout(t); }
   }
 
   const ultimo = intentos[intentos.length - 1] || {};
   return {
-    ok: false, intentos, tokensSalida: 0,
+    ok: false, intentos, tokensSalida: 0, tokensEntrada: 0,
     estado: ultimo.estado, detalle: ultimo.detalle, capacidad: ultimo.capacidad,
   };
 }

@@ -92,6 +92,10 @@
       <h1 class="text-base font-semibold text-neutral-100">ARTF · Telemetría del bot V4.2</h1>
       <p class="text-xs text-neutral-500">Trazas en vivo · OpenTelemetry sobre Supabase Realtime</p>
     </div>
+    <nav class="flex items-center gap-1 rounded-lg border border-neutral-800 p-1 text-xs" role="tablist">
+      <button data-vista="trazas" role="tab" class="pestana rounded-md px-3 py-1">Trazas</button>
+      <button data-vista="llm" role="tab" class="pestana rounded-md px-3 py-1">LLM</button>
+    </nav>
     <div class="flex items-center gap-3 text-xs">
       <span id="estadoConexion" class="rounded-full bg-neutral-800 px-3 py-1 text-neutral-400">desconectado</span>
       <span id="contadorTrazas" class="text-neutral-500">0 trazas</span>
@@ -101,6 +105,7 @@
   </div>
 </header>
 
+<main id="vistaTrazas">
 <!-- ══ ZONA A: mapa del pipeline ══ -->
 <section class="px-6 py-5">
   <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-neutral-500">Pipeline</h2>
@@ -117,6 +122,62 @@
   </div>
   <pre id="terminal" class="terminal h-[52vh] overflow-y-auto rounded-lg border border-neutral-800 bg-black p-4 font-mono text-[12px] leading-relaxed text-emerald-400"></pre>
 </section>
+</main>
+
+<!-- ══ VISTA LLM: pool de llaves, capacidad y registro de rotación (12-sep-2026) ══
+     Dos fuentes, a propósito:
+       · llm_telemetria  → AGREGADO por llave (contadores, ventana de un minuto).
+       · telemetry_spans → EVENTOS: cada llamada con su cadena de intentos
+         (`llm.intentos`). Es lo único que permite reconstruir la rotación. -->
+<main id="vistaLLM" class="px-6 py-5 space-y-6" hidden>
+  <section>
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h2 class="text-xs font-medium uppercase tracking-wide text-neutral-500">Proveedor y modelo</h2>
+        <p id="llmProveedor" class="mt-1 text-sm text-neutral-200">—</p>
+      </div>
+      <p id="llmActualizado" class="text-xs text-neutral-500">sin datos</p>
+    </div>
+    <div id="llmResumen" class="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4"></div>
+    <div id="llmAvisos" class="mt-3 space-y-2"></div>
+  </section>
+
+  <section>
+    <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-neutral-500">Llaves del pool</h2>
+    <div id="llmLlaves" class="grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+    <p class="mt-2 text-[11px] text-neutral-600">
+      La barra principal es tokens de ENTRADA por minuto (ITPM): el límite que rebota desde el prompt en XML.
+      El límite se lee del propio error del proveedor; hasta el primer 429 figura como "aún no observado".
+    </p>
+  </section>
+
+  <section>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <h2 class="text-xs font-medium uppercase tracking-wide text-neutral-500">Registro de rotación</h2>
+      <label class="flex items-center gap-2 text-xs text-neutral-500">
+        <input id="chkSoloRotacion" type="checkbox" class="accent-emerald-600"> solo con rotación o error
+      </label>
+    </div>
+    <div class="overflow-x-auto rounded-lg border border-neutral-800">
+      <table class="w-full text-left text-xs">
+        <thead class="bg-neutral-900 text-neutral-500">
+          <tr>
+            <th class="px-3 py-2 font-medium">Hora</th>
+            <th class="px-3 py-2 font-medium">Lead</th>
+            <th class="px-3 py-2 font-medium">Función</th>
+            <th class="px-3 py-2 font-medium">Intentos</th>
+            <th class="px-3 py-2 font-medium">Atendió</th>
+            <th class="px-3 py-2 font-medium text-right">Entrada</th>
+            <th class="px-3 py-2 font-medium text-right">Salida</th>
+            <th class="px-3 py-2 font-medium text-right">Latencia</th>
+          </tr>
+        </thead>
+        <tbody id="llmRotacion" class="divide-y divide-neutral-900"></tbody>
+      </table>
+    </div>
+    <p id="llmRotacionNota" class="mt-2 text-[11px] text-neutral-600"></p>
+  </section>
+</main>
 
 <script>
 /* ===========================================================================
@@ -285,7 +346,7 @@ async function conectar(url, key) {
   cliente.channel('telemetria')
     .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'telemetry_spans' },
-        (payload) => encolar(payload.new))
+        (payload) => { encolar(payload.new); recibirSpanLLM(payload.new); })
     .subscribe((estado) => {
       if (estado === 'SUBSCRIBED')  marcarConexion('en vivo', 'bg-emerald-500/15 text-emerald-300');
       if (estado === 'CHANNEL_ERROR') marcarConexion('sin realtime', 'bg-amber-500/15 text-amber-300');
@@ -293,6 +354,274 @@ async function conectar(url, key) {
     });
   return true;
 }
+
+/* ===========================================================================
+   3.b VISTA LLM — pool de llaves, capacidad y registro de rotación
+   =========================================================================== */
+const MODELOS_DE_PRUEBA = ['ping', 'smoke-test'];   // los escribe la compuerta, no son producción
+const REFRESCO_LLM_MS = 10_000;
+const VENTANA_MS = 60_000;
+const nf = new Intl.NumberFormat('es-CO');
+
+/** Crea un elemento con clases y texto. Nunca innerHTML con datos. */
+function el(tag, clases = '', texto = null) {
+  const n = document.createElement(tag);
+  if (clases) n.className = clases;
+  if (texto !== null && texto !== undefined) n.textContent = String(texto);
+  return n;
+}
+
+/* Estado de una llave. Siempre ícono + etiqueta: nunca solo color. */
+const ESTADOS_LLAVE = {
+  online:         { icono: '🟢', etiqueta: 'Online',              clase: 'text-emerald-300 border-emerald-700' },
+  limitada:       { icono: '🟡', etiqueta: '429 · limitada',       clase: 'text-amber-300 border-amber-600' },
+  llave_invalida: { icono: '🔴', etiqueta: 'Llave inválida',       clase: 'text-red-300 border-red-600' },
+  error:          { icono: '🔴', etiqueta: 'Error',                clase: 'text-red-300 border-red-600' },
+  reserva:        { icono: '⚪', etiqueta: 'En reserva',           clase: 'text-neutral-400 border-neutral-700' },
+};
+
+let rotacion = [];        // spans con llm.intentos, más nuevos primero
+let temporizadorLLM = null;
+
+/** Último resultado visto por alias, sacado de la cadena de intentos de las trazas. */
+function ultimoResultadoPorAlias() {
+  const visto = {};
+  for (const s of rotacion) {                     // ya viene de más nuevo a más viejo
+    const cadena = String(s.attributes?.['llm.intentos'] || '');
+    const pasos = cadena.split(' > ').filter(Boolean).reverse();
+    for (const paso of pasos) {
+      const [alias, resultado] = paso.split(':');
+      if (alias && !visto[alias]) visto[alias] = { resultado, cuando: s.started_at };
+    }
+  }
+  return visto;
+}
+
+function estadoDeLlave(fila, ultimo) {
+  const total = Number(fila.llamadas_ok) + Number(fila.llamadas_429) + Number(fila.llamadas_error);
+  if (!total) return 'reserva';
+  const hace429 = fila.ultimo_429_at ? Date.now() - new Date(fila.ultimo_429_at).getTime() : Infinity;
+  if (ultimo?.resultado === 'llave_invalida') return 'llave_invalida';
+  if (hace429 < VENTANA_MS) return 'limitada';
+  if (ultimo?.resultado === 'error') return 'error';
+  return 'online';
+}
+
+function medidor(etiqueta, usado, limite, pie) {
+  const caja = el('div');
+  const cab = el('div', 'mb-1 flex items-baseline justify-between text-[11px]');
+  cab.append(el('span', 'text-neutral-400', etiqueta));
+  const pct = limite ? Math.round((usado / limite) * 100) : null;
+  cab.append(el('span', 'font-mono text-neutral-300',
+    limite ? `${nf.format(usado)} / ${nf.format(limite)} · ${pct}%` : `${nf.format(usado)} · límite aún no observado`));
+  caja.append(cab);
+  const riel = el('div', 'h-2 w-full overflow-hidden rounded-full bg-neutral-800');
+  const barra = el('div', `h-full rounded-full ${pct === null ? 'bg-neutral-600' : pct >= 90 ? 'bg-red-500' : pct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'}`);
+  barra.style.width = `${Math.min(100, pct ?? 0)}%`;
+  riel.append(barra);
+  caja.append(riel);
+  if (pie) caja.append(el('div', 'mt-1 text-[10px] text-neutral-500', pie));
+  return caja;
+}
+
+function dato(etiqueta, valor, clase = 'text-neutral-100') {
+  const d = el('div');
+  d.append(el('div', 'text-[10px] uppercase tracking-wide text-neutral-500', etiqueta));
+  d.append(el('div', `font-mono text-sm ${clase}`, valor));
+  return d;
+}
+
+function tarjetaLlave(fila, ultimo, compartida) {
+  const estado = ESTADOS_LLAVE[estadoDeLlave(fila, ultimo)];
+  const t = el('article', 'space-y-3 rounded-lg border border-neutral-800 bg-neutral-900 p-4');
+
+  const cab = el('div', 'flex items-start justify-between gap-2');
+  const nombre = el('div');
+  nombre.append(el('div', 'text-sm font-semibold text-neutral-100', fila.llave_alias));
+  nombre.append(el('div', 'font-mono text-[11px] text-neutral-500',
+    `…${fila.llave_huella || '????'} · ${fila.organizacion || 'organización sin observar'}`));
+  cab.append(nombre);
+  cab.append(el('span', `rounded-full border px-2 py-0.5 text-[11px] ${estado.clase}`, `${estado.icono} ${estado.etiqueta}`));
+  t.append(cab);
+
+  if (compartida) {
+    t.append(el('div', 'rounded-md border border-amber-700 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-300',
+      `⚠️ Comparte organización con ${compartida.join(', ')}: es el mismo cupo.`));
+  }
+
+  const vigente = Date.now() - new Date(fila.ventana_inicio).getTime() < VENTANA_MS;
+  const seg = vigente ? Math.ceil((VENTANA_MS - (Date.now() - new Date(fila.ventana_inicio).getTime())) / 1000) : 0;
+  const pie = vigente ? `ventana se reinicia en ${seg}s` : 'sin tráfico en el último minuto';
+  t.append(medidor('Tokens de entrada · este minuto (ITPM)', vigente ? Number(fila.itpm_consumido) : 0, fila.itpm_limite_conocido, pie));
+  t.append(medidor('Tokens de salida · este minuto (OTPM)', vigente ? Number(fila.otpm_consumido) : 0, fila.otpm_limite_conocido, null));
+
+  const total = Number(fila.llamadas_ok) + Number(fila.llamadas_429) + Number(fila.llamadas_error);
+  const rebote = total ? Math.round((Number(fila.llamadas_429) / total) * 100) : null;
+  const grilla = el('div', 'grid grid-cols-4 gap-2 border-t border-neutral-800 pt-3');
+  grilla.append(dato('OK', nf.format(fila.llamadas_ok)));
+  grilla.append(dato('429', nf.format(fila.llamadas_429), Number(fila.llamadas_429) ? 'text-amber-300' : 'text-neutral-100'));
+  grilla.append(dato('Error', nf.format(fila.llamadas_error), Number(fila.llamadas_error) ? 'text-red-300' : 'text-neutral-100'));
+  grilla.append(dato('% rebote', rebote === null ? '—' : `${rebote}%`));
+  t.append(grilla);
+
+  const ult = el('div', 'text-[11px] text-neutral-500');
+  ult.textContent = [
+    fila.ultima_latencia_ms != null ? `última latencia ${nf.format(fila.ultima_latencia_ms)} ms` : null,
+    fila.ultimo_429_at ? `último 429 ${new Date(fila.ultimo_429_at).toLocaleTimeString('es-CO', { hour12: false })}` : null,
+    fila.ultimo_limite_tipo ? `rebota por ${fila.ultimo_limite_tipo} (${nf.format(fila.ultimo_limite_valor)})` : null,
+  ].filter(Boolean).join(' · ') || 'sin eventos';
+  t.append(ult);
+  return t;
+}
+
+function pintarLlaves(filas) {
+  const reales = filas.filter((f) => !MODELOS_DE_PRUEBA.includes(f.modelo));
+  const ultimo = ultimoResultadoPorAlias();
+
+  const proveedores = [...new Set(reales.map((f) => f.proveedor))];
+  const modelos = [...new Set(reales.map((f) => f.modelo))];
+  $('llmProveedor').textContent = reales.length
+    ? `${proveedores.join(' + ')} · ${modelos.join(', ')} · ${reales.length} llave(s) en el pool`
+    : 'Todavía no hay llamadas registradas.';
+  $('llmActualizado').textContent = `actualizado ${new Date().toLocaleTimeString('es-CO', { hour12: false })}`;
+
+  // Organizaciones: dos alias con la misma = un solo cupo.
+  const porOrg = {};
+  for (const f of reales) if (f.organizacion) (porOrg[f.organizacion] ||= []).push(f.llave_alias);
+  const orgs = new Set(reales.map((f) => f.organizacion || `sin_observar_${f.llave_alias}`));
+
+  const resumen = $('llmResumen');
+  resumen.replaceChildren();
+  const sum = (k) => reales.reduce((a, f) => a + Number(f[k] || 0), 0);
+  const ok = sum('llamadas_ok'); const r429 = sum('llamadas_429'); const err = sum('llamadas_error');
+  const caja = (etq, val, nota) => {
+    const c = el('div', 'rounded-lg border border-neutral-800 bg-neutral-900 p-3');
+    c.append(el('div', 'text-[10px] uppercase tracking-wide text-neutral-500', etq));
+    c.append(el('div', 'mt-1 font-mono text-lg text-neutral-100', val));
+    if (nota) c.append(el('div', 'text-[10px] text-neutral-500', nota));
+    return c;
+  };
+  resumen.append(caja('Llamadas atendidas', nf.format(ok), `${nf.format(err)} con error`));
+  resumen.append(caja('Rebotes 429', nf.format(r429), ok + r429 + err ? `${Math.round((r429 / (ok + r429 + err)) * 100)}% del total` : null));
+  resumen.append(caja('Cupos reales', `${orgs.size}`, `${reales.length} llaves · 1 cupo por organización`));
+  // Capacidad estimada: suma de ITPM de organizaciones distintas / tokens promedio por llamada.
+  const entradaTotal = sum('tokens_entrada_total');
+  const promedio = ok ? entradaTotal / ok : 0;
+  const limitesPorOrg = {};
+  for (const f of reales) if (f.organizacion && f.itpm_limite_conocido) limitesPorOrg[f.organizacion] = f.itpm_limite_conocido;
+  const itpmPool = Object.values(limitesPorOrg).reduce((a, b) => a + b, 0);
+  resumen.append(caja('Llamadas / minuto (est.)',
+    promedio && itpmPool ? `≈ ${(itpmPool / promedio).toFixed(1)}` : '—',
+    promedio ? `${nf.format(Math.round(promedio))} tokens de entrada por llamada` : 'se calcula con el tráfico nuevo'));
+
+  const avisos = $('llmAvisos');
+  avisos.replaceChildren();
+  for (const [org, alias] of Object.entries(porOrg)) {
+    if (alias.length > 1) {
+      avisos.append(el('div', 'rounded-md border border-amber-700 bg-amber-500/10 px-3 py-2 text-xs text-amber-300',
+        `⚠️ ${alias.join(' y ')} son de la misma organización (${org}). Rotar entre ellas no suma capacidad.`));
+    }
+  }
+  for (const [alias, u] of Object.entries(ultimo)) {
+    if (u.resultado === 'llave_invalida') {
+      avisos.append(el('div', 'rounded-md border border-red-700 bg-red-500/10 px-3 py-2 text-xs text-red-300',
+        `🔴 ${alias} respondió "llave inválida" en su último intento: hay que reemplazarla en GROQ_API_KEYS.`));
+    }
+  }
+
+  const cont = $('llmLlaves');
+  cont.replaceChildren();
+  for (const f of reales.sort((a, b) => a.llave_alias.localeCompare(b.llave_alias))) {
+    const otras = f.organizacion ? porOrg[f.organizacion].filter((a) => a !== f.llave_alias) : [];
+    cont.append(tarjetaLlave(f, ultimo[f.llave_alias], otras.length ? otras : null));
+  }
+}
+
+function filaRotacion(s) {
+  const a = s.attributes || {};
+  const tr = el('tr', a['llm.rotacion'] || a['llm.resultado'] !== 'ok' ? 'bg-amber-500/5' : '');
+  const td = (contenido, clase = '') => {
+    const c = el('td', `px-3 py-2 align-top ${clase}`);
+    if (contenido instanceof Node) c.append(contenido); else c.textContent = contenido ?? '—';
+    return c;
+  };
+  tr.append(td(hora(s.started_at), 'font-mono text-neutral-400 whitespace-nowrap'));
+  tr.append(td(s.manychat_id, 'font-mono text-neutral-400'));
+  tr.append(td(a['llm.funcion'], 'text-neutral-300'));
+
+  const chips = el('div', 'flex flex-wrap items-center gap-1');
+  String(a['llm.intentos'] || '').split(' > ').filter(Boolean).forEach((paso, i) => {
+    const [alias, res] = paso.split(':');
+    if (i) chips.append(el('span', 'text-neutral-600', '→'));
+    const icono = res === 'ok' ? '🟢' : res === '429' ? '🟡' : '🔴';
+    chips.append(el('span', 'rounded border border-neutral-700 px-1.5 py-0.5 font-mono text-[11px] text-neutral-300', `${icono} ${alias} ${res}`));
+  });
+  tr.append(td(chips));
+  tr.append(td(a['llm.resultado'] === 'ok' ? `${a['llm.llave']} …${a['llm.huella'] || ''}` : 'nadie (falló)',
+    a['llm.resultado'] === 'ok' ? 'font-mono text-neutral-300' : 'text-red-300'));
+  tr.append(td(nf.format(a['llm.tokens_entrada'] || 0), 'text-right font-mono text-neutral-400'));
+  tr.append(td(nf.format(a['llm.tokens_salida'] || 0), 'text-right font-mono text-neutral-400'));
+  tr.append(td(`${nf.format(a['llm.latencia_ms'] || 0)} ms`, 'text-right font-mono text-neutral-400'));
+  return tr;
+}
+
+function pintarRotacion() {
+  const solo = $('chkSoloRotacion').checked;
+  const filas = rotacion.filter((s) => !solo || s.attributes?.['llm.rotacion'] || s.attributes?.['llm.resultado'] !== 'ok');
+  const cuerpo = $('llmRotacion');
+  cuerpo.replaceChildren(...filas.slice(0, 150).map(filaRotacion));
+  const rotadas = rotacion.filter((s) => s.attributes?.['llm.rotacion']).length;
+  $('llmRotacionNota').textContent = rotacion.length
+    ? `${rotacion.length} llamadas en memoria · ${rotadas} necesitaron otra llave. Las trazas se purgan a los 30 días.`
+    : 'Sin llamadas con registro de intentos todavía (se registran desde el deploy del 12-sep-2026).';
+}
+
+/** Un span nuevo por Realtime: si trae la cadena de intentos, entra al registro. */
+function recibirSpanLLM(s) {
+  if (!s?.attributes?.['llm.intentos']) return;
+  rotacion.unshift(s);
+  rotacion = rotacion.slice(0, 500);
+  if (!$('vistaLLM').hidden) pintarRotacion();
+}
+
+async function cargarLLM() {
+  if (!cliente) return;
+  const [llaves, spans] = await Promise.all([
+    cliente.from('llm_telemetria').select('*'),
+    cliente.from('telemetry_spans')
+      .select('id,trace_id,manychat_id,node_name,status,started_at,attributes')
+      .in('node_name', ['GROQ_CLASIFICADOR', 'GENERACION_LLM'])
+      .order('started_at', { ascending: false })
+      .limit(500),
+  ]);
+  if (llaves.error) {
+    $('llmProveedor').textContent = `No se pudo leer llm_telemetria: ${llaves.error.message}`;
+    return;
+  }
+  if (!spans.error) rotacion = (spans.data || []).filter((s) => s.attributes?.['llm.intentos']);
+  pintarLlaves(llaves.data || []);
+  pintarRotacion();
+}
+
+function mostrarVista(vista) {
+  $('vistaTrazas').hidden = vista !== 'trazas';
+  $('vistaLLM').hidden = vista !== 'llm';
+  document.querySelectorAll('.pestana').forEach((b) => {
+    const activa = b.dataset.vista === vista;
+    b.className = `pestana rounded-md px-3 py-1 ${activa ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`;
+    b.setAttribute('aria-selected', String(activa));
+  });
+  clearInterval(temporizadorLLM);
+  if (vista === 'llm') {
+    cargarLLM();
+    // llm_telemetria no está en Realtime: se refresca mientras la pestaña está a la vista.
+    temporizadorLLM = setInterval(cargarLLM, REFRESCO_LLM_MS);
+  }
+  try { localStorage.setItem('artf_telemetria_vista', vista); } catch { /* sin storage */ }
+}
+
+document.querySelectorAll('.pestana').forEach((b) => b.addEventListener('click', () => mostrarVista(b.dataset.vista)));
+$('chkSoloRotacion').addEventListener('change', pintarRotacion);
 
 /* ===========================================================================
    4. CREDENCIALES (solo en este navegador)
@@ -303,6 +632,11 @@ async function iniciar(url, key, recordar) {
   $('puerta').classList.add('hidden');
   marcarConexion('conectando…', 'bg-neutral-800 text-neutral-400');
   const ok = await conectar(url, key);
+  if (ok) {
+    let vista = 'trazas';
+    try { vista = localStorage.getItem('artf_telemetria_vista') || 'trazas'; } catch { /* sin storage */ }
+    mostrarVista(vista);
+  }
   if (ok && recordar) localStorage.setItem(GUARDADO, JSON.stringify({ url, key }));
   if (!ok) $('puerta').classList.remove('hidden');
 }

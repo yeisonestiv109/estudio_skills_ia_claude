@@ -313,13 +313,16 @@ async function manejar(request, env, ctx) {
   tz.fin(spHist, 'OK', { 'memoria.turnos': filasHistorial.length, 'memoria.chars': historial.length });
 
   const spLLM = tz.inicio(NODOS.LLM, { 'llm.model': GROQ_MODEL, 'llm.etapa': estado?.etapa_bot ?? null });
-  const clasificacion = await clasificar(env, estado, lastText, ctx, historial);
+  const obsLLM = crearObservadorLLM(env, ctx, tz);
+  const clasificacion = await clasificar(env, estado, lastText, ctx, historial, obsLLM);
   tz.fin(spLLM, clasificacion?.llm_fallo ? 'ERROR' : 'OK', {
     'llm.fallo': Boolean(clasificacion?.llm_fallo),
     'user.intent': resumirIntencion(clasificacion),
     // Lo que el modelo devolvio y el validador convirtio en null. Distingue
     // "no extrajo nada" de "extrajo algo invalido", que son bugs distintos.
     'llm.descartes': clasificacion?._descartes?.join(',') ?? null,
+    // Que llave atendio, la cadena de intentos y los tokens de ESTA llamada.
+    ...obsLLM.atributos('clasificador'),
   });
   // El nombre tiene que viajar en la clasificacion: en el PRIMER turno el lead
   // todavia no existe en la base, asi que `estado` es null y el router se
@@ -383,7 +386,7 @@ async function manejar(request, env, ctx) {
     // esta funcion adaptaba objeciones a ciegas y perdia el hilo del embudo.
     const pendienteObj = Number.isInteger(plan.reenvioPendienteIdx) ? mensajes[plan.reenvioPendienteIdx] : '';
     const texto = await adaptarObjecionConLLM(
-      env, plan.objecionPlantillaOriginal, lastText, llamadaYaMencionada, historial, pendienteObj);
+      env, plan.objecionPlantillaOriginal, lastText, llamadaYaMencionada, historial, pendienteObj, obsLLM);
     if (texto) { mensajes[0] = texto; adaptada = true; }
   }
 
@@ -408,7 +411,7 @@ async function manejar(request, env, ctx) {
     const idxPend = plan.reenvioPendienteIdx;
     const pendiente = plan.preguntaLibreReemplaza ? ''
       : (Number.isInteger(idxPend) && mensajes[idxPend] ? mensajes[idxPend] : mensajes[0]);
-    const respuesta = await responderPreguntaConLLM(env, plan.preguntaLibre, lastText, pendiente);
+    const respuesta = await responderPreguntaConLLM(env, plan.preguntaLibre, lastText, pendiente, obsLLM);
     if (respuesta) {
       if (plan.preguntaLibreReemplaza) mensajes[0] = respuesta;
       else mensajes.unshift(respuesta);
@@ -454,14 +457,14 @@ async function manejar(request, env, ctx) {
       mensajes.splice(idxReenvio, 1);
       repregunta = 'omitida';
     } else {
-      const d = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, yaSeEnvio);
+      const d = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, yaSeEnvio, obsLLM);
       if (d.accion === 'omitir' && !antesDeLosFiltros) {
         mensajes.splice(idxReenvio, 1);
         repregunta = 'omitida';
       } else if (d.accion === 'omitir' && antesDeLosFiltros) {
         // El LLM quiso omitirla pero el dato sigue pendiente: se reformula para
         // no repetirla textual, y si no se puede se manda tal cual. Nunca se cae.
-        const r = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, true);
+        const r = await decidirRepregunta(env, otras, mensajes[idxReenvio], historial, lastText, true, obsLLM);
         if (r.accion === 'reformular' && r.texto) { mensajes[idxReenvio] = r.texto; repregunta = 'reformulada'; }
       } else if (d.accion === 'reformular' && d.texto) {
         mensajes[idxReenvio] = d.texto;
@@ -508,7 +511,7 @@ async function manejar(request, env, ctx) {
       // dijo: no tenia forma de saber de que huir, devolvia un equivalente,
       // `yaSeDijo` lo tumbaba otra vez y la burbuja se perdia. Es la amnesia
       // que dejaba turnos vacios y escalaba leads que no habia que escalar.
-      const nuevo = await adaptarObjecionConLLM(env, m, lastText, true, historial);
+      const nuevo = await adaptarObjecionConLLM(env, m, lastText, true, historial, '', obsLLM);
       if (nuevo && !yaSeDijo(filasHistorial, nuevo)) revisadas.push(nuevo);
       else repetidasQuitadas += 1;
     }
@@ -525,7 +528,7 @@ async function manejar(request, env, ctx) {
     const pendienteEmbudo = ['M1', 'M2', 'M3', 'M4'].includes(faseActual)
       ? preguntaEmbudo : '';
     if (pendienteEmbudo) {
-      const r = await decidirRepregunta(env, '', pendienteEmbudo, historial, lastText, true);
+      const r = await decidirRepregunta(env, '', pendienteEmbudo, historial, lastText, true, obsLLM);
       if (r.accion === 'reformular' && r.texto && !yaSeDijo(filasHistorial, r.texto)) {
         mensajes = [r.texto];
         repregunta = 'reformulada';
@@ -765,7 +768,7 @@ function resumirIntencion(c) {
  * matchean con confianza. El LLM cubre el texto libre y aporta la empatia.
  * Un solo llamado al LLM por turno como maximo.
  */
-export async function clasificar(env, estado, texto, ctxLLM = null, historial = '') {
+export async function clasificar(env, estado, texto, ctxLLM = null, historial = '', obs = null) {
   const etapa = estado?.etapa_bot || null;
   // `detectarHostilidad` tambien se elimino (6-sep-2026): decidir si alguien es
   // hostil o solo esta frustrado es comprension pura, y ese regex ya costo un
@@ -779,7 +782,7 @@ export async function clasificar(env, estado, texto, ctxLLM = null, historial = 
   // acaba de hacer una pregunta concreta, y aca las preguntas las hace un
   // humano, asi que aplicarlos leeria respuestas que nadie pidio.
   if (enModoSecretaria(env)) {
-    const llm = await clasificarConLLM(env, etapa, texto, {}, ESQUEMA_SECRETARIA, ctxLLM, historial)
+    const llm = await clasificarConLLM(env, etapa, texto, {}, ESQUEMA_SECRETARIA, ctxLLM, historial, obs)
       .catch((e) => { console.error('LLM (secretaria) fallo:', e?.message); return {}; });
     return { ...c, ...llm };
   }
@@ -824,7 +827,7 @@ export async function clasificar(env, estado, texto, ctxLLM = null, historial = 
   // (`error_tecnico`). Antes se seguia "solo con deterministas", que es
   // exactamente como se le mando un calendario a alguien que dijo que no.
   // ─────────────────────────────────────────────────────────────────────────
-  const llm = await clasificarConLLM(env, etapa, texto, {}, null, ctxLLM, historial).catch((e) => {
+  const llm = await clasificarConLLM(env, etapa, texto, {}, null, ctxLLM, historial, obs).catch((e) => {
     console.error('LLM fallo:', e?.message);
     return { llm_fallo: true };
   });
@@ -1044,7 +1047,7 @@ const CONTEXTO_POR_ETAPA = {
   HANDOFF: 'El lead fue escalado a un humano y este es un mensaje NUEVO que escribe despues. "recupera_handoff" es true SOLO si el lead da un dato pendiente, dice que quiere seguir/continuar, o pide agendar -- NO ante un simple saludo, un "hola" suelto, o una queja sin intencion de avanzar. Si el lead da una cifra de ingreso o de deuda/remanente -- aunque sea aproximada ("por ahi unos 4 millones") o partida en dos mensajes ("si me queda algo" + despues "unos 4m") -- extraela en los campos de dinero: sirve para no volver a preguntarla al retomar.',
 };
 
-async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null, ctxLLM = null, historial = '') {
+async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null, ctxLLM = null, historial = '', obs = null) {
   if (!llavesDeGroq(env).length) return {};
   // RED DE FONDO (12-sep-2026): si mañana alguien agrega una etapa y olvida su
   // esquema, ANTES el LLM dejaba de correr ahi en silencio -- y con el se
@@ -1440,7 +1443,7 @@ ${esquema}`;
 
   // Telemetria: se reporta SIEMPRE, acierte o falle. Es lo que convierte una
   // degradacion silenciosa en algo que el dashboard puede mostrar.
-  registrarTelemetria(env, ctxLLM, r);
+  notificarLLM(obs, 'clasificador', r);
 
   if (!r.ok) {
     console.error('[groq] sin respuesta util:', r.estado || '', String(r.detalle || '').slice(0, 200));
@@ -1545,7 +1548,7 @@ export async function generarConCorreccion({ pedir, verificar, etiqueta }) {
  * -- ese fue el bug real que motivo esta feature (Objecion 9 en M4).
  */
 export async function adaptarObjecionConLLM(
-  env, plantillaOriginal, textoLead, llamadaYaMencionada = true, historial = '', preguntaPendiente = '',
+  env, plantillaOriginal, textoLead, llamadaYaMencionada = true, historial = '', preguntaPendiente = '', obs = null,
 ) {
   if (!llavesDeGroq(env).length || !plantillaOriginal) return '';
 
@@ -1617,6 +1620,7 @@ Responde con el texto final que le llegaria al lead. NADA de JSON, NADA de comil
             },
           ],
         }, { timeoutMs: TIMEOUT_LLM_MS });
+        notificarLLM(obs, 'adaptar_objecion', r);
         if (!r.ok) {
           console.warn('[adaptar-objecion] sin respuesta util:', r.estado || '');
           return '';
@@ -1649,7 +1653,7 @@ Responde con el texto final que le llegaria al lead. NADA de JSON, NADA de comil
  * Devuelve '' ante cualquier problema -- el llamador SIEMPRE tiene que poder
  * seguir con la pregunta pendiente sola, que es lo que se enviaba antes.
  */
-export async function responderPreguntaConLLM(env, pregunta, textoLead, preguntaPendiente = '') {
+export async function responderPreguntaConLLM(env, pregunta, textoLead, preguntaPendiente = '', obs = null) {
   if (!llavesDeGroq(env).length || !pregunta) return '';
 
   const system = `Eres Andres, respondiendo en primera persona por Instagram DM a un lead colombiano.
@@ -1694,6 +1698,7 @@ Responde SOLO con el mensaje que le llegaria al lead. Nada de JSON, comillas env
             },
           ],
         }, { timeoutMs: TIMEOUT_LLM_MS });
+        notificarLLM(obs, 'responder_pregunta', r);
         if (!r.ok) {
           console.warn('[respuesta-libre] sin respuesta util:', r.estado || '');
           return '';
@@ -1753,7 +1758,7 @@ Responde SOLO con el mensaje que le llegaria al lead. Nada de JSON, comillas env
  * pregunta del guion -- por eso el prompt sesga explicitamente hacia MANTENER
  * ante la duda, y por eso cualquier fallo cae en "mantener".
  */
-export async function decidirRepregunta(env, respuestaDelTurno, preguntaPendiente, historial, textoLead, yaSeEnvioTextual = false) {
+export async function decidirRepregunta(env, respuestaDelTurno, preguntaPendiente, historial, textoLead, yaSeEnvioTextual = false, obs = null) {
   if (!llavesDeGroq(env).length || !preguntaPendiente) return { accion: 'mantener', texto: '' };
 
   const system = `Eres Andres, escribiendo por Instagram DM a un lead colombiano.
@@ -1829,6 +1834,7 @@ ${String(textoLead || '').replace(/<\/?mensaje_lead>/gi, '').slice(0, 400)}
         },
       ],
     }, { timeoutMs: TIMEOUT_LLM_MS });
+    notificarLLM(obs, 'repregunta', r);
 
     if (!r.ok) {
       console.warn('[repregunta] sin respuesta util:', r.estado || '');
@@ -1878,6 +1884,61 @@ ${String(textoLead || '').replace(/<\/?mensaje_lead>/gi, '').slice(0, 400)}
 }
 
 /**
+ * OBSERVADOR DE LAS LLAMADAS AL LLM de un turno (12-sep-2026).
+ *
+ * Antes solo el clasificador escribia en llm_telemetria: adaptar objecion,
+ * responder pregunta y repregunta eran invisibles, y la tasa de 429 que se
+ * veia era un piso. Tampoco quedaba en la traza QUE llave atendio, asi que la
+ * rotacion del pool no se podia reconstruir. Ahora cada llamada:
+ *   · suma a llm_telemetria (agregado por llave: el panel de capacidad), y
+ *   · deja un span con la cadena de intentos (el registro de rotacion).
+ *
+ * Sin observador (tests, evals.mjs, sondas locales) no se escribe NADA: una
+ * corrida local con una llave vieja ensucio los contadores de produccion el
+ * 12-sep. La telemetria de produccion la escribe solo el Worker.
+ */
+export function crearObservadorLLM(env, ctx, tz) {
+  const porFuncion = {};
+  const observar = (funcion, r) => {
+    const attrs = atributosLlamadaLLM(funcion, r);
+    porFuncion[funcion] = attrs;
+    registrarTelemetria(env, ctx, r);
+    // El clasificador ya tiene su span (GROQ_CLASIFICADOR) y sus atributos se
+    // le suman al cerrarlo; las de redaccion van como eventos de GENERACION.
+    if (funcion !== 'clasificador') tz?.evento(NODOS.GENERACION, r?.ok ? 'OK' : 'ERROR', attrs);
+  };
+  observar.atributos = (funcion) => porFuncion[funcion] || {};
+  return observar;
+}
+
+/** Nunca deja que la telemetria tumbe un turno. */
+function notificarLLM(obs, funcion, r) {
+  try { obs?.(funcion, r); } catch (e) { console.warn('[telemetria] observador LLM:', e?.message); }
+}
+
+/** Atributos de UNA llamada al LLM para la traza. Nunca la llave, solo su huella. */
+export function atributosLlamadaLLM(funcion, r) {
+  const intentos = Array.isArray(r?.intentos) ? r.intentos : [];
+  const ultimo = intentos[intentos.length - 1] || {};
+  const limite = intentos.map((i) => i.limite).filter((l) => l?.tipo).pop() || {};
+  return {
+    'llm.funcion': funcion,
+    'llm.proveedor': 'groq',
+    'llm.modelo': GROQ_MODEL,
+    'llm.llave': r?.alias ?? ultimo.alias ?? null,
+    'llm.huella': r?.huella ?? ultimo.huella ?? null,
+    'llm.intentos': intentos.map((i) => `${i.alias}:${i.resultado}`).join(' > ') || null,
+    'llm.rotacion': intentos.length > 1,
+    'llm.resultado': r?.ok ? 'ok' : (ultimo.resultado ?? r?.detalle ?? 'error'),
+    'llm.tokens_entrada': r?.tokensEntrada ?? 0,
+    'llm.tokens_salida': r?.tokensSalida ?? 0,
+    'llm.latencia_ms': intentos.reduce((a, i) => a + (i.latenciaMs || 0), 0),
+    'llm.limite_tipo': limite.tipo ?? null,
+    'llm.organizacion_limitada': limite.organizacion ?? null,
+  };
+}
+
+/**
  * Manda la telemetria a Supabase sin bloquear el turno.
  *
  * Se registra CADA intento del pool, no solo el ultimo: si la principal rebota
@@ -1893,8 +1954,15 @@ function registrarTelemetria(env, ctxLLM, r) {
         p_proveedor: 'groq',
         p_modelo: GROQ_MODEL,
         p_llave_alias: intento.alias,
-        p_resultado: intento.resultado,
+        // La tabla cuenta ok / 429 / error; una llave invalida es un error.
+        p_resultado: intento.resultado === 'llave_invalida' ? 'error' : intento.resultado,
         p_tokens_salida: intento.tokensSalida || 0,
+        p_tokens_entrada: intento.tokensEntrada || 0,
+        p_llave_huella: intento.huella ?? null,
+        p_organizacion: intento.limite?.organizacion ?? null,
+        p_limite_tipo: intento.limite?.tipo ?? null,
+        p_limite_valor: intento.limite?.valor ?? null,
+        p_latencia_ms: intento.latenciaMs ?? null,
         p_limite_requests: cap.limite_requests ?? null,
         p_restantes_requests: cap.restantes_requests ?? null,
         p_reset_requests: cap.reset_requests ?? null,
