@@ -75,6 +75,11 @@ import { notificarSetterGoogleChat } from './notificador_google_chat.js';
 
 // Presupuesto de latencia: ManyChat corta la External Request cerca de los
 // 12-15s. Se deja margen para responder SIEMPRE algo antes de ese corte.
+// Observabilidad (11-sep-2026). Ver telemetria_spans.js: acumula spans en
+// memoria y los inserta en UN solo lote dentro de ctx.waitUntil, asi que no
+// suma latencia a la respuesta que espera ManyChat.
+import { nuevoTrazador, NODOS } from './telemetria_spans.js';
+
 const TIMEOUT_LLM_MS = 6000;
 const TIMEOUT_DB_MS = 5000;
 // BUG REAL (6-sep-2026): se usaba en 2 sitios (limpiarHandoff, registrarTelemetria)
@@ -208,6 +213,18 @@ async function manejar(request, env, ctx) {
   //    respuesta se demora), devolvemos lo ya calculado sin volver a escribir
   //    en la base ni a llamar al LLM.
   // -------------------------------------------------------------------------
+  // ───────────────────────────────────────────────────────────────────────
+  // TRAZA DEL TURNO. Nace ANTES del chequeo de idempotencia a proposito: un
+  // reintento de ManyChat tambien deja traza, que es como se detectan las
+  // respuestas duplicadas que se vieron en produccion el 11-sep.
+  // ───────────────────────────────────────────────────────────────────────
+  const tz = nuevoTrazador(env, ctx, { manychat_id: subId });
+  tz.evento(NODOS.WEBHOOK, 'OK', {
+    'lead.mensaje': lastText,
+    'bot.activo': !enModoSecretaria(env),
+    'bot.lista_blanca': hayListaBlanca,
+  });
+
   const cacheKey = new Request(
     `https://bot-artf.local/idem/${encodeURIComponent(subId)}/${await hash(lastText)}`,
     { method: 'GET' },
@@ -216,6 +233,8 @@ async function manejar(request, env, ctx) {
   const cacheado = await cache.match(cacheKey);
   if (cacheado) {
     console.log('Respuesta idempotente servida de cache:', subId);
+    tz.evento(NODOS.WEBHOOK, 'FALLBACK', { 'webhook.idempotente': true });
+    tz.enviar();
     return cacheado;
   }
 
@@ -227,7 +246,11 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // 2. Reconstruccion del contexto desde Supabase (nunca desde ManyChat)
   // -------------------------------------------------------------------------
+  const spEstado = tz.inicio(NODOS.ESTADO);
   const estado = await leerEstado(env, subId);
+  tz.fin(spEstado, estado ? 'OK' : 'FALLBACK', { 'lead.nuevo': !estado });
+  // El id y la etapa se conocen recien aca: se aplican a TODOS los spans.
+  tz.contexto({ gestion_lead_id: estado?.gestion_lead_id ?? null, etapa_bot: estado?.etapa_bot ?? null });
 
   const puerta = decidirSiResponder(estado);
   if (!puerta.responder) {
@@ -247,6 +270,8 @@ async function manejar(request, env, ctx) {
         : `Mensaje recibido sin respuesta automatica (${puerta.razon}).`,
       p_ultimo_msg_lead: lastText,
     }).catch((e) => console.error('log-only fallo:', e?.message));
+    tz.evento(NODOS.ROUTER, 'OK', { 'router.decision': 'no_responder', 'router.razon': puerta.razon });
+    tz.enviar();
     return json({ ok: true, responder: false, motivo: puerta.razon, etapa: estado?.etapa_bot ?? null });
   }
 
@@ -255,9 +280,17 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // La memoria corta va ANTES de clasificar: es lo que le permite al LLM
   // entender el mensaje nuevo en contexto en vez de a ciegas (ver leerHistorial).
+  const spHist = tz.inicio(NODOS.HISTORIAL);
   const filasHistorial = await leerHistorial(env, estado?.gestion_lead_id);
   const historial = formatearHistorial(filasHistorial);
+  tz.fin(spHist, 'OK', { 'memoria.turnos': filasHistorial.length, 'memoria.chars': historial.length });
+
+  const spLLM = tz.inicio(NODOS.LLM, { 'llm.model': GROQ_MODEL, 'llm.etapa': estado?.etapa_bot ?? null });
   const clasificacion = await clasificar(env, estado, lastText, ctx, historial);
+  tz.fin(spLLM, clasificacion?.llm_fallo ? 'ERROR' : 'OK', {
+    'llm.fallo': Boolean(clasificacion?.llm_fallo),
+    'user.intent': resumirIntencion(clasificacion),
+  });
   // El nombre tiene que viajar en la clasificacion: en el PRIMER turno el lead
   // todavia no existe en la base, asi que `estado` es null y el router se
   // quedaria sin nombre. Sin esto, el saludo de apertura le llega roto
@@ -285,6 +318,14 @@ async function manejar(request, env, ctx) {
       summary: 'Modo secretaria: se registro el mensaje y se extrajeron datos; el bot no respondio.',
     }
     : decidirTurno(estado, clasificacion, lastText);
+
+  tz.evento(NODOS.ROUTER, 'OK', {
+    'router.etapa_nueva': plan.etapaNueva,
+    'router.estado_destino': plan.estadoDestino,
+    'router.handoff': plan.handoffRazon,
+    'router.burbujas': plan.mensajes.length,
+    'router.summary': plan.summary,
+  });
 
   let mensajes = [...plan.mensajes];
 
@@ -472,6 +513,18 @@ async function manejar(request, env, ctx) {
     plan.summary = `${plan.summary} Todo el turno era repetido y no se pudo reformular: escala en vez de repetir.`;
   }
 
+  // Que redacto el LLM en este turno y que sobrevivio al verificador. Es el
+  // par de spans que responde "¿por que el lead recibio ESE texto?".
+  tz.evento(NODOS.GENERACION, (adaptada || respondida || repregunta) ? 'OK' : 'FALLBACK', {
+    'gen.objecion_adaptada': Boolean(adaptada),
+    'gen.duda_respondida': Boolean(respondida),
+    'gen.repregunta': repregunta || null,
+  });
+  tz.evento(NODOS.COMPLIANCE, repetidasQuitadas ? 'FALLBACK' : 'OK', {
+    'compliance.repetidas_quitadas': Boolean(repetidasQuitadas),
+    'compliance.burbujas_final': mensajes.length,
+  });
+
   // -------------------------------------------------------------------------
   // 5. Escritura SINCRONA antes de responder. Si esto falla, el lead NO recibe
   //    un mensaje que la base nunca registro.
@@ -527,9 +580,12 @@ async function manejar(request, env, ctx) {
   };
 
   let resultado;
+  const spEsc = tz.inicio(NODOS.ESCRITURA, { 'db.etapa': plan.etapaNueva });
   try {
     resultado = await escribirTurno(env, rpc);
+    tz.fin(spEsc, 'OK', { 'db.estado': resultado?.out_estado_codigo ?? null });
   } catch (e) {
+    tz.fin(spEsc, 'ERROR', { 'error.message': e?.message });
     console.error('Escritura en Supabase fallo:', e?.message);
     // Fallback seguro: se le avisa al lead, se marca handoff tecnico y se
     // etiqueta para que un humano lo tome. Nunca se responde el guion cuando
@@ -546,6 +602,7 @@ async function manejar(request, env, ctx) {
       ctx.waitUntil(notificarSetterGoogleChat(
         env, estado, { handoffRazon: 'error_tecnico' }, lastText));
     }
+    tz.enviar();
     return json({
       ok: false, responder: true, msg: render(P.FALLBACK_ERROR, nombre),
       msg2: '', msg3: '', msg4: '', handoff: true, handoff_razon: 'error_tecnico',
@@ -591,12 +648,39 @@ async function manejar(request, env, ctx) {
     estado: resultado?.out_estado_codigo ?? null,
   });
 
+  tz.evento(NODOS.EFECTOS, 'OK', {
+    'efectos.tags': Boolean(env.MANYCHAT_API_TOKEN) && !enModoSecretaria(env),
+    'efectos.alerta_chat': Boolean(plan.handoffRazon && plan.handoffRazon !== LIMPIAR_HANDOFF),
+    'bot.responde': mensajes.length > 0,
+  });
+  tz.enviar();
+
   if (ctx?.waitUntil) {
     const paraCache = respuesta.clone();
     paraCache.headers.set('Cache-Control', `max-age=${CACHE_IDEMPOTENCIA_S}`);
     ctx.waitUntil(cache.put(cacheKey, paraCache));
   }
   return respuesta;
+}
+
+/**
+ * Resume en una linea QUE entendio el LLM, para la traza.
+ *
+ * No se vuelca la clasificacion entera a proposito: `attributes` es para leer
+ * de un vistazo en el dashboard, no un volcado de memoria. Se listan solo los
+ * campos que de verdad cambian el rumbo del turno.
+ */
+function resumirIntencion(c) {
+  if (!c || typeof c !== 'object') return null;
+  const partes = [];
+  for (const campo of ['ingreso_cop', 'endeudamiento_pct', 'deuda_cop', 'remanente_cop',
+                       'objecion_num', 'urgencia', 'acepta', 'confirmo_agendo', 'pide_link',
+                       'sin_horarios', 'crisis', 'hostil', 'confirma_rango', 'retoma']) {
+    const v = c[campo];
+    if (v !== null && v !== undefined && v !== false) partes.push(`${campo}=${v}`);
+  }
+  if (c.pregunta_libre) partes.push('pregunta_libre');
+  return partes.length ? partes.join(' ') : 'sin_señal';
 }
 
 // ---------------------------------------------------------------------------

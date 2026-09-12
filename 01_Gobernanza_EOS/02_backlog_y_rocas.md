@@ -4905,3 +4905,43 @@ Verificado en caliente: `POST` sin secreto → `401` (la autenticación filtra),
 ⚠️ **`git push` bloqueado por el clasificador de permisos** (tercera vez en el proyecto). Los 3 commits — `788d634`, `880dbd7`, `836efef` — están en local, en `setup/base-conocimiento`, pero **NO en el remoto**. Lo desplegado en Cloudflare sí corresponde exactamente a `836efef` (árbol limpio al desplegar). Hay que correr el push a mano, o añadir una regla de permiso Bash en settings.
 
 Pendiente para que el canary vea tráfico real: **abrir el Flow de ManyChat (`V42_EN_PRUEBA`)**. Sin eso el Worker está vivo pero no le llega nada.
+
+---
+
+## 🔭 Sesión 11-sep-2026 (tarde) — Observabilidad del bot: fase 1 de 3
+
+Se abrió un plan de tres fases para atacar la queja real: *"el bot manda mensajes que no tienen en cuenta el contexto"*. **Orden decidido por el fundador: telemetría → prompt → libertad del LLM**, porque la telemetría tiene riesgo cero y es lo único que permite medir si las otras dos mejoran algo.
+
+### Lo que se encontró primero (auditoría de cognición)
+
+Tres huecos de contexto, verificados en el código y contra conversaciones reales:
+
+1. **La empatía nunca se envía.** El Worker lee `clasificacion.oracion_empatia`, pero el esquema que se le pide al LLM solo declara `respuesta_empatica`. Ese campo no se pide nunca. Verificado contra 20 mensajes reales del 11-sep: **ninguno** lleva frase de apertura. `EMPATIA_HABILITADA = true` pero la función está muerta.
+2. **Los mensajes del Setter humano no se guardan en ningún lado.** El historial se arma solo con turnos del bot (`evento='mensaje_bot'`). Tras una intervención humana, el bot ve la respuesta del lead sin ver a qué responde.
+3. **`verificarMensajes` no se llama en producción.** La compuerta global de copy (link aislado, tuteo, no revelar IA) solo la usan el simulador y los tests. Lo que sí corre revisa únicamente el texto que escribe el LLM.
+
+### Fase 1 — Telemetría (ENTREGADA)
+
+- **`telemetry_spans`**: una fila por paso de cada turno, estilo OpenTelemetry para GenAI. RLS cerrada (solo `service_role`), en `supabase_realtime`, purga a 30 días por Habeas Data.
+- **`telemetria_spans.js`**: spans en memoria + **una sola inserción en lote** dentro de `ctx.waitUntil()`. O(1) respecto al número de spans, cero latencia para ManyChat. Perilla `TELEMETRIA_ACTIVA`.
+- **`telemetria/index.html`**: dashboard local, sin build ni servidor. Mapa de 9 nodos + terminal en vivo por WebSocket.
+- 9 puntos instrumentados en el Worker: webhook, estado, memoria, LLM, router, redacción, compliance, escritura y efectos.
+
+**540 tests en verde.** Validado además contra la tabla real: el payload del trazador encaja columna por columna y el `CHECK` de `status` rechaza valores inventados.
+
+### Dos desvíos de la propuesta original, con fundamento
+
+- **Cloudflare Queues descartadas**: exigen plan Workers **PAID** y la regla 6 exige tier gratuito. El lote en memoria da el mismo desacoplamiento sin costo.
+- **`pg_cron` no se instaló**: está disponible, pero meter una extensión en una base compartida de producción es riesgo innecesario para una purga. La dispara el Worker (~1% de los turnos).
+
+### La decisión sobre las guardas (para que no se reinterprete después)
+
+La regla 2 del encargo pedía eliminar toda validación rígida. Se le presentaron las 5 que no son estilo y **el fundador respondió que conservan su rigidez**: link aislado (bug real de Instagram, sin él el lead no puede agendar), no revelar que es IA, no inventar precios ni promesas, tuteo y primera persona, y la aritmética de los filtros.
+
+Lo que sí cambia en la fase 3: al romper una guarda ya no se descarta en silencio para mandar la plantilla seca. Se le devuelve al LLM qué regla rompió para que **replantee guiado por el Playbook**; la plantilla queda como último recurso. Deja de ser censura y pasa a ser corrección.
+
+### Pendiente
+
+- **Fase 2:** system prompt en XML con definiciones semánticas de intención y few-shot de casos límite (`prompt_engineering_guide.md`).
+- **Fase 3:** libertad de redacción del LLM, detrás de perilla y con canario, midiendo con la telemetría recién construida.
+- Desplegar el Worker instrumentado (no se ha hecho: la telemetría no llega a la base hasta que se despliegue).

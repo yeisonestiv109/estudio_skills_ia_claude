@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARTF · Telemetría del bot V4.2</title>
+
+<!--
+  ===========================================================================
+  DASHBOARD DE OBSERVABILIDAD — bot conversacional ARTF V4.2
+  ===========================================================================
+
+  QUE ES: una sola pagina, sin build ni servidor. Se suscribe por WebSocket a
+  la tabla `telemetry_spans` de Supabase y pinta, en vivo, el viaje de cada
+  mensaje que entra al bot.
+
+  ⚠️ ES PARA USO LOCAL. Ver "SEGURIDAD" abajo. No subir a ningun hosting.
+
+  COMO SE ABRE
+    1. Abrir este archivo en el navegador (doble clic).
+       Si el navegador bloquea la conexion por CORS desde file://, servirlo:
+           cd telemetria && python3 -m http.server 8080
+           -> http://localhost:8080
+    2. Pegar la URL del proyecto y la llave `service_role` cuando las pida.
+
+  SEGURIDAD — POR QUE LA LLAVE NO ESTA ESCRITA EN ESTE ARCHIVO
+    `telemetry_spans` tiene RLS cerrada y sin politicas: la unica forma de
+    leerla es con la llave `service_role`, que es una llave de administrador.
+    Escribirla aca dejaria una credencial de produccion en un archivo del
+    repositorio. En vez de eso se pide al abrir y se guarda SOLO en el
+    localStorage de este navegador. La telemetria ademas contiene fragmentos
+    de mensajes de leads reales (dato personal): la base los purga a 30 dias.
+-->
+
+<!--
+  INTEGRIDAD DE LOS SCRIPTS EXTERNOS
+
+  supabase-js va anclado con SRI: es el unico script que toca la llave
+  `service_role`. Si el CDN fuera comprometido, un supabase-js alterado podria
+  robarsela. Con el hash, el navegador se niega a ejecutar cualquier archivo
+  que no sea exactamente este (v2.45.4).
+
+  Tailwind va SIN SRI a proposito: el play CDN no expone una build versionada
+  con hash estable (se genera al vuelo). Solo aplica estilos, nunca ve la llave
+  ni los datos, y esta pagina es de uso LOCAL. Si algun dia se publicara, hay
+  que reemplazarlo por una hoja CSS compilada y servida desde el repo.
+-->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"
+        integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o"
+        crossorigin="anonymous"></script>
+<style>
+  /* Solo lo que Tailwind no da: la animacion del nodo que esta trabajando. */
+  @keyframes latido { 0%,100% { opacity:1 } 50% { opacity:.45 } }
+  .trabajando { animation: latido 1s ease-in-out infinite; }
+  .terminal::-webkit-scrollbar { width: 10px; }
+  .terminal::-webkit-scrollbar-thumb { background:#1f2937; border-radius:8px; }
+</style>
+</head>
+
+<body class="bg-neutral-950 text-neutral-200 font-sans antialiased">
+
+<!-- ══ Puerta de entrada: credenciales (nunca viajan a ningun lado) ══ -->
+<div id="puerta" class="fixed inset-0 z-50 grid place-items-center bg-neutral-950 p-6">
+  <form id="formPuerta" class="w-full max-w-md space-y-4 rounded-xl border border-neutral-800 bg-neutral-900 p-6">
+    <div>
+      <h1 class="text-lg font-semibold text-neutral-100">Telemetría del bot</h1>
+      <p class="mt-1 text-sm text-neutral-400">
+        Las credenciales se guardan solo en este navegador. No se escriben en el archivo.
+      </p>
+    </div>
+    <label class="block">
+      <span class="text-xs uppercase tracking-wide text-neutral-500">URL del proyecto</span>
+      <input id="inUrl" required placeholder="https://xxxx.supabase.co"
+             class="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-emerald-500">
+    </label>
+    <label class="block">
+      <span class="text-xs uppercase tracking-wide text-neutral-500">Llave service_role</span>
+      <input id="inKey" required type="password" placeholder="eyJ…"
+             class="mt-1 w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-emerald-500">
+    </label>
+    <button class="w-full rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500">
+      Conectar
+    </button>
+    <p class="text-xs text-neutral-600">Uso local. Esta página no debe publicarse.</p>
+  </form>
+</div>
+
+<header class="border-b border-neutral-800 px-6 py-4">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-base font-semibold text-neutral-100">ARTF · Telemetría del bot V4.2</h1>
+      <p class="text-xs text-neutral-500">Trazas en vivo · OpenTelemetry sobre Supabase Realtime</p>
+    </div>
+    <div class="flex items-center gap-3 text-xs">
+      <span id="estadoConexion" class="rounded-full bg-neutral-800 px-3 py-1 text-neutral-400">desconectado</span>
+      <span id="contadorTrazas" class="text-neutral-500">0 trazas</span>
+      <button id="btnLimpiar" class="rounded-md border border-neutral-700 px-3 py-1 text-neutral-400 hover:bg-neutral-800">Limpiar</button>
+      <button id="btnSalir" class="rounded-md border border-neutral-700 px-3 py-1 text-neutral-400 hover:bg-neutral-800">Olvidar llave</button>
+    </div>
+  </div>
+</header>
+
+<!-- ══ ZONA A: mapa del pipeline ══ -->
+<section class="px-6 py-5">
+  <h2 class="mb-3 text-xs font-medium uppercase tracking-wide text-neutral-500">Pipeline</h2>
+  <div id="mapa" class="flex flex-wrap items-stretch gap-2"></div>
+</section>
+
+<!-- ══ ZONA B: terminal de trazabilidad ══ -->
+<section class="px-6 pb-6">
+  <div class="mb-3 flex items-center justify-between">
+    <h2 class="text-xs font-medium uppercase tracking-wide text-neutral-500">Trazas</h2>
+    <label class="flex items-center gap-2 text-xs text-neutral-500">
+      <input id="chkAuto" type="checkbox" checked class="accent-emerald-600"> seguir al final
+    </label>
+  </div>
+  <pre id="terminal" class="terminal h-[52vh] overflow-y-auto rounded-lg border border-neutral-800 bg-black p-4 font-mono text-[12px] leading-relaxed text-emerald-400"></pre>
+</section>
+
+<script>
+/* ===========================================================================
+   1. NODOS DEL PIPELINE
+   Deben coincidir con `NODOS` en telemetria_spans.js. Si allá se agrega uno,
+   se agrega aquí: el mapa se dibuja a partir de esta lista.
+   =========================================================================== */
+const NODOS = [
+  ['MANYCHAT_WEBHOOK',   'Webhook'],
+  ['ESTADO_DB',          'Estado'],
+  ['HISTORIAL_DB',       'Memoria'],
+  ['GROQ_CLASIFICADOR',  'LLM'],
+  ['ROUTER_FSM',         'Router'],
+  ['GENERACION_LLM',     'Redacción'],
+  ['COMPLIANCE_CHECK',   'Compliance'],
+  ['SUPABASE_ESCRITURA', 'Escritura'],
+  ['EFECTOS_BACKGROUND', 'Efectos'],
+];
+
+const ICONO = { OK: '🟢', ERROR: '🔴', FALLBACK: '🟡', PENDING: '⏳' };
+
+/* Estética de cada estado en el mapa. Un nodo que no ha corrido queda apagado. */
+const ESTILO = {
+  inactivo: 'border-neutral-800 bg-neutral-900 text-neutral-600',
+  PENDING:  'border-amber-500 bg-amber-500/10 text-amber-300 trabajando',
+  OK:       'border-emerald-600 bg-emerald-500/10 text-emerald-300',
+  FALLBACK: 'border-amber-500 bg-amber-500/10 text-amber-300',
+  ERROR:    'border-red-500 bg-red-500/15 text-red-300',
+};
+
+const $ = (id) => document.getElementById(id);
+const mapa = $('mapa');
+const terminal = $('terminal');
+
+/* Dibuja el esqueleto del pipeline una sola vez. */
+const cajas = {};
+NODOS.forEach(([clave, etiqueta], i) => {
+  if (i) {
+    const flecha = document.createElement('div');
+    flecha.className = 'self-center text-neutral-700';
+    flecha.textContent = '→';
+    mapa.appendChild(flecha);
+  }
+  const caja = document.createElement('div');
+  caja.className = `min-w-[104px] flex-1 rounded-lg border px-3 py-2 transition-colors ${ESTILO.inactivo}`;
+  caja.innerHTML = `<div class="text-[11px] font-medium">${etiqueta}</div>
+                    <div class="mt-0.5 font-mono text-[10px] opacity-70" data-ms>—</div>`;
+  mapa.appendChild(caja);
+  cajas[clave] = caja;
+});
+
+function pintarNodo(nodo, status, ms) {
+  const caja = cajas[nodo];
+  if (!caja) return;
+  caja.className = `min-w-[104px] flex-1 rounded-lg border px-3 py-2 transition-colors ${ESTILO[status] || ESTILO.inactivo}`;
+  caja.querySelector('[data-ms]').textContent = ms == null ? '…' : `${ms} ms`;
+}
+
+/* ===========================================================================
+   2. FORMATO DE LOS LOGS
+   Pensado para copiar y pegar: cada línea dice qué pasó, dónde y en cuánto.
+   =========================================================================== */
+const trazasVistas = new Map();   // trace_id -> { pasos, lead }
+let totalTrazas = 0;
+
+function hora(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('es-CO', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+}
+
+function atributosLegibles(attrs) {
+  if (!attrs || typeof attrs !== 'object') return '';
+  const partes = Object.entries(attrs)
+    .filter(([, v]) => v !== null && v !== '')
+    .map(([k, v]) => `${k}=${typeof v === 'string' ? `"${v}"` : v}`);
+  return partes.length ? '\n        ' + partes.join('  ') : '';
+}
+
+function escribir(texto) {
+  const nodo = document.createTextNode(texto + '\n');
+  terminal.appendChild(nodo);
+  if ($('chkAuto').checked) terminal.scrollTop = terminal.scrollHeight;
+  // Tope de memoria del navegador: se recortan las líneas más viejas.
+  while (terminal.childNodes.length > 4000) terminal.removeChild(terminal.firstChild);
+}
+
+function pintarSpan(s) {
+  if (!trazasVistas.has(s.trace_id)) {
+    totalTrazas += 1;
+    trazasVistas.set(s.trace_id, { pasos: 0 });
+    $('contadorTrazas').textContent = `${totalTrazas} trazas`;
+    escribir('');
+    escribir('═'.repeat(78));
+    escribir(`[TRACE ${s.trace_id}] · lead ${s.manychat_id || '—'} · etapa ${s.etapa_bot || '—'} · ${hora(s.started_at)}`);
+    escribir('═'.repeat(78));
+  }
+  const traza = trazasVistas.get(s.trace_id);
+  traza.pasos += 1;
+
+  const icono = ICONO[s.status] || '·';
+  const dur = s.duration_ms == null ? '[START]' : `[${s.duration_ms} ms]`;
+  escribir(`${icono} [PASO ${traza.pasos}] [${s.node_name}] ${dur}${atributosLegibles(s.attributes)}`);
+
+  pintarNodo(s.node_name, s.status, s.duration_ms);
+
+  if (s.status === 'ERROR')   escribir(`   ↳ ⚠️  FALLO en ${s.node_name}. Revisar el atributo error.`);
+  if (s.status === 'PENDING') escribir(`   ↳ ⏳ El paso abrió y nunca cerró: el turno se cortó aquí.`);
+}
+
+/* ===========================================================================
+   3. CONEXIÓN Y TIEMPO REAL
+   =========================================================================== */
+let cliente = null;
+
+function marcarConexion(texto, clases) {
+  $('estadoConexion').textContent = texto;
+  $('estadoConexion').className = `rounded-full px-3 py-1 ${clases}`;
+}
+
+async function conectar(url, key) {
+  cliente = supabase.createClient(url, key, { auth: { persistSession: false } });
+
+  // Carga inicial: las últimas trazas, para no arrancar con la pantalla vacía.
+  const { data, error } = await cliente
+    .from('telemetry_spans')
+    .select('*')
+    .order('id', { ascending: false })
+    .limit(150);
+
+  if (error) {
+    marcarConexion('error', 'bg-red-500/15 text-red-300');
+    escribir(`🔴 No se pudo leer telemetry_spans: ${error.message}`);
+    escribir('   ↳ Verifica que la llave sea la de service_role (la tabla tiene RLS cerrada).');
+    return false;
+  }
+
+  data.reverse().forEach(pintarSpan);
+
+  cliente.channel('telemetria')
+    .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'telemetry_spans' },
+        (payload) => pintarSpan(payload.new))
+    .subscribe((estado) => {
+      if (estado === 'SUBSCRIBED')  marcarConexion('en vivo', 'bg-emerald-500/15 text-emerald-300');
+      if (estado === 'CHANNEL_ERROR') marcarConexion('sin realtime', 'bg-amber-500/15 text-amber-300');
+      if (estado === 'CLOSED')      marcarConexion('desconectado', 'bg-neutral-800 text-neutral-400');
+    });
+  return true;
+}
+
+/* ===========================================================================
+   4. CREDENCIALES (solo en este navegador)
+   =========================================================================== */
+const GUARDADO = 'artf_telemetria_credenciales';
+
+async function iniciar(url, key, recordar) {
+  $('puerta').classList.add('hidden');
+  marcarConexion('conectando…', 'bg-neutral-800 text-neutral-400');
+  const ok = await conectar(url, key);
+  if (ok && recordar) localStorage.setItem(GUARDADO, JSON.stringify({ url, key }));
+  if (!ok) $('puerta').classList.remove('hidden');
+}
+
+$('formPuerta').addEventListener('submit', (e) => {
+  e.preventDefault();
+  iniciar($('inUrl').value.trim(), $('inKey').value.trim(), true);
+});
+
+$('btnLimpiar').addEventListener('click', () => {
+  terminal.textContent = '';
+  trazasVistas.clear();
+  totalTrazas = 0;
+  $('contadorTrazas').textContent = '0 trazas';
+  NODOS.forEach(([clave]) => pintarNodo(clave, 'inactivo', null));
+});
+
+$('btnSalir').addEventListener('click', () => {
+  localStorage.removeItem(GUARDADO);
+  location.reload();
+});
+
+/* Si ya se conectó antes en este navegador, entra directo. */
+try {
+  const previo = JSON.parse(localStorage.getItem(GUARDADO) || 'null');
+  if (previo?.url && previo?.key) {
+    $('inUrl').value = previo.url;
+    $('inKey').value = previo.key;
+    iniciar(previo.url, previo.key, false);
+  }
+} catch { /* credencial corrupta: se pide de nuevo */ }
+</script>
+</body>
+</html>
