@@ -190,35 +190,54 @@ export function calcularRemanente(ingreso, pct) {
 }
 
 /**
+ * TOPE DE ENDEUDAMIENTO — el menor entre la escalera y el piso (11-sep-2026).
+ *
+ *   escalera: 50% en $7M, ±5 puntos por cada millon de diferencia.
+ *   piso:     el % que deja exactamente UMBRALES.REMANENTE_MINIMO ($3M) libres.
+ *
+ * Gana el mas estricto. Ver el bloque del FILTRO 2 en sop_v42_plantillas.js
+ * para la tabla completa y el porque.
+ *
+ * @returns {number|null} el tope en %, o null si no hay ingreso con que calcular.
+ */
+export function topeEndeudamiento(ingreso) {
+  if (typeof ingreso !== 'number' || !Number.isFinite(ingreso) || ingreso <= 0) return null;
+  const millones = ingreso / 1_000_000;
+  const referencia = UMBRALES.INGRESO_REFERENCIA / 1_000_000;
+  const escalera = UMBRALES.TOPE_EN_REFERENCIA_PCT + (millones - referencia) * UMBRALES.PUNTOS_POR_MILLON;
+  // El % maximo que todavia deja el piso de remanente en el bolsillo.
+  const piso = (1 - UMBRALES.REMANENTE_MINIMO / ingreso) * 100;
+  // Nunca menos de 0 ni mas de 100: un tope fuera de ese rango no significa nada.
+  return Math.max(0, Math.min(100, Math.min(escalera, piso)));
+}
+
+/**
  * Filtro 2 — 'ok' | 'verificar_calculo' | 'no_sabe'
  *
- * REGLA (11-sep-2026): despues de pagar sus deudas, al lead le tienen que
- * quedar libres al menos UMBRALES.REMANENTE_MINIMO ($2.500.000) al mes.
+ * REGLA (11-sep-2026): la deuda mensual no puede pasar del tope que sale de
+ * `topeEndeudamiento`, con un margen de tolerancia de
+ * UMBRALES.MARGEN_TOLERANCIA_PCT puntos para los estimados "a ojo" del lead.
  *
- *   remanente = ingreso - cuota mensual de deudas   ( = ingreso x (1 - deuda%) )
+ * Por encima NUNCA se descalifica de una: se verifica la cuenta primero. Un
+ * endeudamiento imposible casi siempre es el saldo total en vez de la cuota,
+ * o arriendo y servicios metidos como deuda. La decision final la toman
+ * M2_VERIFICAR_CALCULO y M2_BORDERLINE.
  *
- *   remanente >= $2.5M  -> ok
- *   remanente <  $2.5M  -> verificar_calculo. NUNCA se descalifica de una: un
- *                          remanente bajo casi siempre es una cuenta mal hecha
- *                          (el saldo total en vez de la cuota, o arriendo y
- *                          servicios metidos como deuda). La decision final la
- *                          toman M2_VERIFICAR_CALCULO y M2_BORDERLINE.
- *
- * HISTORIA: el 7-sep se probo un tope de porcentaje segun el ingreso (50% por
- * debajo de $9M, 60% desde $9M). El 11-sep se volvio al remanente: lo que
- * importa es la plata que le queda para trabajar, no el porcentaje.
- *
- * `remanenteDeclarado`: si el lead dio la cifra en plata (lo que paga al mes o
- * lo que le queda), se usa esa directamente. Pasar por el porcentaje redondeado
- * puede mover el resultado unos miles de pesos justo en el limite.
+ * `remanenteDeclarado`: si el lead dio la cifra en plata, se usa esa para
+ * derivar el %; pasar por el porcentaje redondeado mueve el resultado unos
+ * miles de pesos justo en el limite.
  */
 export function evaluarEndeudamiento(pct, ingreso, remanenteDeclarado = null) {
-  const remanente = (typeof remanenteDeclarado === 'number' && Number.isFinite(remanenteDeclarado))
-    ? remanenteDeclarado
-    : calcularRemanente(ingreso, pct);
-  // Sin los dos datos no hay cuenta que hacer: no se adivina ni se descarta.
-  if (remanente === null) return 'no_sabe';
-  return remanente >= UMBRALES.REMANENTE_MINIMO ? 'ok' : 'verificar_calculo';
+  const tope = topeEndeudamiento(ingreso);
+  if (tope === null) return 'no_sabe';
+
+  // Si hablo en plata, el % real sale de esa cifra y no del estimado.
+  const pctReal = (typeof remanenteDeclarado === 'number' && Number.isFinite(remanenteDeclarado))
+    ? (1 - remanenteDeclarado / ingreso) * 100
+    : pct;
+  if (pctReal === null || pctReal === undefined || !Number.isFinite(pctReal)) return 'no_sabe';
+
+  return pctReal <= tope + UMBRALES.MARGEN_TOLERANCIA_PCT ? 'ok' : 'verificar_calculo';
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +279,13 @@ export function decidirSiResponder(estado) {
   // del show-up se retiro el 3-sep: no estaba en el SOP V4.2 y el % de
   // asistencia ya lo marca el Closer desde su dashboard.)
   if (['CIERRE_PRECALL', 'BLINDAJE_ENVIADO', 'BLINDAJE_CERRADO'].includes(estado.etapa_bot)) {
+    // ANTI-BUCLE DEL "GRACIAS" (11-sep-2026). Con el embudo ya cerrado, un
+    // "gracias" dejaba al lead en visto. Se le contesta UNA vez -- el propio
+    // case pasa la etapa a BLINDAJE_CERRADO, asi que esta puerta no se vuelve
+    // a abrir para el mismo lead y no hay forma de entrar en bucle.
+    if (estado.etapa_bot === 'CIERRE_PRECALL') {
+      return { responder: true, razon: 'cierre_por_gratitud' };
+    }
     return { responder: false, razon: 'conversacion_cerrada' };
   }
   // Dominio del Setter/Closer: el bot no vuelve a hablar.
@@ -1005,7 +1031,8 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
       }
 
       // Corrigio la cuenta (en % o en cuota) y ahora si le quedan los $2.5M.
-      if (remanenteCorregido !== null && remanenteCorregido >= UMBRALES.REMANENTE_MINIMO) {
+      if (remanenteCorregido !== null
+          && evaluarEndeudamiento(pctFinal, ingresoConocido, remanenteCorregido) === 'ok') {
         return {
           mensajes: [render(P.M3, nombre)],
           etapaNueva: 'M3_ENVIADO', estadoDestino: 'contactado',
@@ -1549,7 +1576,27 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
     }
 
     // =====================================================================
-    case 'CIERRE_PRECALL':
+    // Embudo cerrado y el lead escribe algo corto de despedida. NO es un lead
+    // que vuelve: es la reaccion al cierre. Se le reconoce y se cierra de
+    // verdad -- nada de saludarlo de nuevo ni de sacarle otra pregunta.
+    case 'CIERRE_PRECALL': {
+      if (detectarAgradecimiento(textoLead) && !c.objecion_num && !c.crisis && !c.hostil) {
+        return {
+          mensajes: [render(P.CIERRE_AGRADECIMIENTO, nombre)],
+          etapaNueva: 'BLINDAJE_CERRADO', estadoDestino: null,
+          handoffRazon: null, motivoPerdida: null, campos: {},
+          permitirEmpatia: false,
+          summary: 'Agradece con el embudo ya cerrado. Se despide y se cierra la conversacion para siempre.',
+        };
+      }
+      return {
+        mensajes: [], etapaNueva: null, estadoDestino: null,
+        handoffRazon: null, motivoPerdida: null, campos: {},
+        permitirEmpatia: false,
+        summary: 'Escribe con el embudo cerrado y no es una despedida. Solo se registra.',
+      };
+    }
+
     case 'BLINDAJE_ENVIADO':   // legado: etapas de leads anteriores al 3-sep
     case 'BLINDAJE_CERRADO':
     case 'RETORNO_PREGUNTA':

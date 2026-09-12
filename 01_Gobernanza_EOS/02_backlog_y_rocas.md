@@ -4975,3 +4975,55 @@ El reintento **solo ocurre cuando ya hubo violación**, que es raro: el camino f
 - **`verificarMensajes` sigue sin llamarse en producción** (bug 3 de la auditoría, sin cerrar). La compuerta global de copy solo la usan el simulador y los tests.
 - Mirar la telemetría con tráfico real y confirmar que la apertura empática ya sale.
 - Capturar de verdad los mensajes del Setter exige tocar ManyChat.
+
+## ✅ Sesión 11-sep-2026 (cierre) — Los 5 requerimientos finales
+
+**569 tests en verde.** Sin parches: todo con test propio y documentado.
+
+### 1. `verificarMensajes` ya corre en producción
+
+Era el bug más grave de la auditoría: la única compuerta que mira el turno COMPLETO —link aislado, tuteo, no revelar que es IA, precio— existía con 69 tests y **solo la llamaban el simulador y la suite**. Nunca corrió contra un lead real.
+
+Ahora es la última puerta antes de hablarle al lead. Y cuando falla no amordaza al modelo: si la burbuja culpable es texto generado, se cae al copy aprobado (que por definición cumple) y se revalida antes de enviarlo. El resultado queda en la telemetría (`compliance.pasa`, `compliance.fallas`) para poder verlo.
+
+### 3. Regla nueva del Filtro 2: dos reglas, gana la más estricta
+
+- **Escalera:** 50% de deuda en $7M, ±5 puntos por cada millón.
+- **Piso:** le tienen que quedar ≥ **$3.000.000** libres al mes.
+- **Margen de tolerancia:** 2 puntos porcentuales.
+
+**Por qué las dos.** La escalera sola deja pasar a alguien de $20M con 115% de deuda (absurdo); el piso solo ignora que a mayor ingreso se aguanta más deuda. Juntas se comportan bien en todo el rango, y **cuadran**: a $12M las dos dan exactamente $3M. Por debajo manda la escalera, por encima el piso.
+
+La primera versión que se propuso (piso 3,4M) no cerraba con la escalera para un lead de 5,5M —42,5% deja 3,16M, no 3,4M—. Se le presentó la contradicción al fundador con la tabla y **eligió el piso en $3M**, que es el valor con el que las dos reglas coinciden. **Filtro 1 se queda en $6M.**
+
+⚠️ El Filtro 2 cambió tres veces en una semana. Antes de volver a tocarlo, preguntar.
+
+### 4. Intuición del LLM sobre la cifra de deuda
+
+Dos reglas nuevas en el prompt:
+
+- **Un número pelado es un porcentaje.** Si se le pregunta el endeudamiento y responde "50", son 50%, no 50 pesos.
+- **Una cifra imposible como cuota mensual es el saldo total.** Ejemplo del fundador: gana $1.000.000 y dice deber $1.230.000 al mes. *"Aquí no hay router que valga, es pura intuición del LLM antes de sentenciar."* El copy se reescribió para resolverlo en **un solo mensaje**: pregunta si es cuota o saldo, recuerda que la cuenta va con la cuota mensual, y aclara que arriendo, servicios y mercado no cuentan. Sin iterar.
+
+### 5. Anti-bucle del "Gracias"
+
+Con el embudo cerrado, un "gracias" dejaba al lead en visto (o peor, lo saludaban de nuevo). Ahora en `CIERRE_PRECALL` se deja pasar **un** turno para despedirse: *"¡Con gusto! Éxitos y nos vemos en la llamada"*. El propio case mueve la etapa a `BLINDAJE_CERRADO`, que sigue mudo — **no hay forma de entrar en bucle**. Y el prompt se lo dice al modelo en un bloque `<cierre_de_conversacion>`: nunca saludar de nuevo, nunca sacar otra pregunta.
+
+### 6. Código huérfano integrado
+
+Las dos líneas de `bot_activo` que llevaban días corriendo en producción sin estar en git entran en este commit. Ya no hay brecha entre lo desplegado y lo versionado.
+
+### 2. Ceguera al Setter — diseño, no implementación
+
+Ver `ARQUITECTURA_CAPTURA_MENSAJES_SETTER.md`. Tres caminos, con su riesgo real:
+
+- **Opción A (la correcta):** webhook `message_echoes` de Meta → endpoint `/webhook/echo` en el Worker. Contrato definido. ⚠️ Exige App de Meta propia y **hay que verificar si desplaza la suscripción de ManyChat** — si la desplaza, se cae el bot entero. Probar en cuenta de pruebas, nunca en producción.
+- **Opción B:** disparador de ManyChat. No me consta que exponga el *texto* del mensaje del admin; hay que revisar el Flow Builder.
+- **Opción C (funciona HOY, cero ingeniería):** el bot ya lee los eventos `nota`. Si el Setter deja una nota de una línea tras intervenir, el bot la ve en el turno siguiente.
+
+**Recomendación:** empezar por C mañana mismo y explorar B con media hora en el Flow Builder.
+
+### Pendiente
+
+- **Producción sigue con la versión anterior** (`d9f9ba62`): estos 5 cambios están en git pero no desplegados.
+- Mirar la telemetría con tráfico real y confirmar que la apertura empática sale.

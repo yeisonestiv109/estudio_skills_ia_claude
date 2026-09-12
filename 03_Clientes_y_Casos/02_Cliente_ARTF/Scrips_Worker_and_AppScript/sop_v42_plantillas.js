@@ -270,27 +270,44 @@ export const UMBRALES = {
   INGRESO_ASUMIDO_POR_RANGO: 7_000_000,
 
   // ───────────────────────────────────────────────────────────────────────
-  // FILTRO 2 — el criterio real es el REMANENTE, no el porcentaje.
+  // FILTRO 2 — DOS REGLAS, Y GANA LA MAS ESTRICTA (11-sep-2026, fundador).
   //
-  // remanente = ingreso × (1 − deuda%)
+  // 1. ESCALERA POR INGRESO. El punto de referencia es $7M = 50% de deuda.
+  //    Por cada millon por encima o por debajo, el tope sube o baja 5 puntos:
   //
-  // Reemplaza al tope condicional por ingreso de V4.0/V4.2. Lo que le importa
-  // al negocio no es que deba poco, sino que le QUEDE con qué trabajar.
+  //      $5,5M -> 42,5%   $6M -> 45%   $7M -> 50%   $8M -> 55%   $10M -> 65%
   //
-  // Ojo con el acoplamiento: con ingreso >= 6M, el remanente de 2.5M solo
-  // muerde por encima del ~58% de deuda. Por debajo de ese punto el filtro es
-  // inoperante por construccion, no por error.
+  //    La idea de negocio: a mayor ingreso se tolera mas deuda, porque queda
+  //    mas plata absoluta aunque el porcentaje sea alto.
+  //
+  // 2. PISO DE REMANENTE. Pase lo que pase, despues de pagar sus cuotas al
+  //    lead le tienen que quedar al menos $3.000.000 al mes.
+  //
+  // POR QUE LAS DOS: la escalera sola deja entrar a alguien de $20M con 115%
+  // de deuda (absurdo), y el piso solo ignora que a mayor ingreso se aguanta
+  // mas. Juntas se comportan bien en todo el rango, y ademas CUADRAN: a $12M
+  // las dos dan exactamente $3M. Por debajo de $12M manda la escalera; por
+  // encima, el piso.
+  //
+  //   ingreso   escalera   piso $3M   TOPE REAL
+  //    $6M        45,0%      50,0%      45,0%   <- escalera
+  //    $7M        50,0%      57,1%      50,0%   <- escalera
+  //   $12M        75,0%      75,0%      75,0%   <- empatan
+  //   $20M       115,0%      85,0%      85,0%   <- piso
+  //
+  // MARGEN DE TOLERANCIA: 2 puntos porcentuales por encima del tope siguen
+  // pasando. Es el colchon para los estimados "a ojo" que da el lead.
   // ───────────────────────────────────────────────────────────────────────
-  REMANENTE_MINIMO: 2_500_000,
+  REMANENTE_MINIMO: 3_000_000,
+  INGRESO_REFERENCIA: 7_000_000,
+  TOPE_EN_REFERENCIA_PCT: 50,
+  PUNTOS_POR_MILLON: 5,
+  MARGEN_TOLERANCIA_PCT: 2,
+
   // Umbral que separa "le sobra poco porque debe mucho" (se pregunta que tipo
   // de deuda es: la hipotecaria no cuenta igual) de "le sobra poco y punto".
   ENDEUDAMIENTO_PARA_BORDERLINE: 50,
 
-  // Nota de historia (11-sep-2026): del 7 al 11-sep el Filtro 2 uso un tope
-  // de PORCENTAJE segun el ingreso (50% por debajo de $9M, 60% desde $9M). Se
-  // retiro: el criterio vuelve a ser REMANENTE_MINIMO, la plata que le queda.
-  // Es mas permisiva que el tope: quien gana $6M pasa con hasta ~58% de deuda,
-  // quien gana $10M con hasta 75%.
   SMLV_2026: 1_420_000,
 
   // Escalamiento por resistencia. El SOP V4.2 de Javier dice 2 (misma objecion
@@ -805,9 +822,21 @@ Cuando tu situación cambie, escríbeme sin pena y lo miramos de nuevo. Mientras
  * entendido la pregunta al revés y sumó el SALDO TOTAL de sus créditos en vez
  * de la cuota que paga al mes. Es el error de cuentas más común del embudo.
  */
-P.M2_DEUDA_TOTAL_VS_CUOTA = `Entiendo, {nombre}. Recuerda que la operación se hace solo con las cuotas mensuales de tus deudas, no con la deuda total.
+/**
+ * CIERRE POR GRATITUD (11-sep-2026, texto del fundador).
+ *
+ * BUG QUE CIERRA: al final del embudo el lead dice "gracias" y el bot o se
+ * queda mudo, o peor, lo saluda como si acabara de llegar ("¡Hola de nuevo!").
+ * Un "gracias" ahi no reabre nada: se reconoce y se cierra. UNA sola vez --
+ * despues la etapa pasa a terminal y el bot no vuelve a hablar.
+ */
+P.CIERRE_AGRADECIMIENTO = `¡Con gusto, {nombre}! Éxitos y nos vemos en la llamada 💪`;
 
-Con eso en mente, ¿cuánto pagas al mes entre todas tus cuotas?`;
+P.M2_DEUDA_TOTAL_VS_CUOTA = `Entiendo, {nombre}. Solo para no sacar la cuenta al revés: esa cifra que me das, ¿es lo que pagas CADA MES en cuotas, o es el total que debes?
+
+La operación se hace solo con la cuota mensual. Y ojo: el arriendo, los servicios y el mercado NO cuentan, esos son gastos fijos, no deudas.
+
+¿Cuánto te da entonces al mes entre todas tus cuotas?`;
 
 // ---------------------------------------------------------------------------
 // SOP DE RECUPERACION (bumps) — se disparan por tiempo, no por webhook.

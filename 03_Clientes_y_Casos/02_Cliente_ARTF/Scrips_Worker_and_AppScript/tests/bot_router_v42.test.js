@@ -17,7 +17,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseIngresoCOP, evaluarIngreso, calcularRemanente, evaluarEndeudamiento,
+  parseIngresoCOP, evaluarIngreso, calcularRemanente, evaluarEndeudamiento, topeEndeudamiento,
   decidirSiResponder, decidirTurno,
   detectarVarianteM1, detectarConfirmacionAgenda, detectarAcompanante,
   detectarUrgencia, detectarDolorLetra, detectarDolorLetras, detectarHostilidad, detectarEndeudamientoPct,
@@ -136,22 +136,33 @@ describe('Filtros del SOP V4.2', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // REGLA DEL FILTRO 2 (11-sep-2026): despues de pagar deudas le tienen que
-  // quedar >= $2.5M libres al mes. Reemplaza al tope por % segun el ingreso
-  // que rigio del 7 al 11-sep. Estos tests se REESCRIBIERON a proposito: la
-  // regla cambio por decision explicita, no para hacer pasar nada.
+  // REGLA DEL FILTRO 2 (11-sep-2026, tarde): DOS reglas y gana la mas
+  // estricta. Escalera (50% en $7M, ±5 puntos por millon) Y piso de $3M de
+  // remanente. Reescritos a proposito: la regla la cambio el fundador.
   // ═══════════════════════════════════════════════════════════════════════
-  test('Filtro 2: pasa si le quedan al menos $2.5M despues de las deudas', () => {
-    assert.equal(evaluarEndeudamiento(30, 10_000_000), 'ok');   // le quedan 7M
-    assert.equal(evaluarEndeudamiento(0, 6_000_000), 'ok');     // sin deudas
-    // El limite exacto pasa: es "al menos", no "mas de".
-    assert.equal(calcularRemanente(5_000_000, 50), 2_500_000);
-    assert.equal(evaluarEndeudamiento(50, 5_000_000), 'ok');
-    // Por debajo ya va a verificar el calculo.
-    assert.equal(evaluarEndeudamiento(51, 5_000_000), 'verificar_calculo');
+  test('la escalera: 50% en $7M, y ±5 puntos por cada millon', () => {
+    assert.equal(topeEndeudamiento(7_000_000), 50);
+    assert.equal(topeEndeudamiento(8_000_000), 55);
+    assert.equal(topeEndeudamiento(6_000_000), 45);
+    assert.equal(topeEndeudamiento(5_500_000), 42.5);
   });
 
-  test('por debajo de $2.5M NUNCA se descalifica de una: primero se verifica', () => {
+  test('el piso de $3M manda cuando el ingreso es alto', () => {
+    // A $12M las dos reglas dan lo mismo: es el punto donde se cruzan.
+    assert.equal(topeEndeudamiento(12_000_000), 75);
+    // De ahi para arriba la escalera se vuelve absurda (115% en $20M) y el
+    // piso es el que tiene sentido: le tienen que quedar $3M.
+    assert.equal(topeEndeudamiento(20_000_000), 85);
+    assert.equal(calcularRemanente(20_000_000, 85), 3_000_000);
+  });
+
+  test('el margen de tolerancia son 2 puntos, para los estimados "a ojo"', () => {
+    assert.equal(evaluarEndeudamiento(50, 7_000_000), 'ok');
+    assert.equal(evaluarEndeudamiento(52, 7_000_000), 'ok', 'justo en el margen');
+    assert.equal(evaluarEndeudamiento(53, 7_000_000), 'verificar_calculo');
+  });
+
+  test('por encima del tope NUNCA se descalifica de una: primero se verifica', () => {
     assert.equal(evaluarEndeudamiento(99, 30_000_000), 'verificar_calculo');
     assert.equal(evaluarEndeudamiento(100, 6_000_000), 'verificar_calculo');
     // `evaluarEndeudamiento` solo decide "pasa" o "hay que verificar": el
@@ -163,25 +174,16 @@ describe('Filtros del SOP V4.2', () => {
     assert.deepEqual([...salidas].sort(), ['ok', 'verificar_calculo']);
   });
 
-  test('el mismo % da distinto segun el ingreso: lo que cuenta es la plata', () => {
-    // 60% de deuda: con 6M le quedan 2.4M (verifica); con 10M le quedan 4M (pasa).
+  test('el mismo % da distinto segun el ingreso: a mayor ingreso se aguanta mas', () => {
     assert.equal(evaluarEndeudamiento(60, 6_000_000), 'verificar_calculo');
     assert.equal(evaluarEndeudamiento(60, 10_000_000), 'ok');
   });
 
-  test('es mas permisiva que el tope del 7-sep, y es a proposito', () => {
-    // Casos que con el tope por % iban a verificar y ahora pasan directo.
-    // Si alguien vuelve a meter el tope, este test es el que avisa.
-    assert.equal(evaluarEndeudamiento(55, 6_000_000), 'ok');    // 2,7M libres
-    assert.equal(evaluarEndeudamiento(65, 14_200_000), 'ok');   // 4,97M libres
-    assert.equal(evaluarEndeudamiento(75, 10_000_000), 'ok');   // 2,5M libres
-  });
-
   test('si lo dijo en plata, decide sobre la plata y no sobre el % redondeado', () => {
-    // Gana 7M y le quedan 2,49M. El % redondeado (64%) daria 2,52M y pasaria;
-    // sobre la cifra que el lead dijo, no pasa.
-    assert.equal(evaluarEndeudamiento(64, 7_000_000), 'ok');
-    assert.equal(evaluarEndeudamiento(64, 7_000_000, 2_490_000), 'verificar_calculo');
+    // Gana $7M: su tope es 50% + 2 de margen. Si dice "52%" pasa; pero si dice
+    // que le quedan $3.325.000, el % real es 52,5% y ya no pasa.
+    assert.equal(evaluarEndeudamiento(52, 7_000_000), 'ok');
+    assert.equal(evaluarEndeudamiento(52, 7_000_000, 3_325_000), 'verificar_calculo');
   });
 
   test('la cifra que se asume al confirmar el rango coincide con lo que dice el copy', () => {
@@ -357,8 +359,13 @@ describe('Convivencia bot <-> Setter humano', () => {
     // El blindaje del show-up se retiro el 3-sep: NO estaba en el SOP V4.2
     // (verificado en el PDF) y el % de asistencia ya lo marca el Closer desde
     // su dashboard. Preguntarselo al lead era fricción innecesaria.
-    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).responder, false);
+    // CAMBIO DELIBERADO (11-sep-2026): en CIERRE_PRECALL se deja pasar UN
+    // turno para poder despedirse si el lead agradece. El propio case mueve la
+    // etapa a BLINDAJE_CERRADO, que sigue mudo -- no hay forma de hacer bucle.
+    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).responder, true);
+    assert.equal(decidirSiResponder(estadoEn('CIERRE_PRECALL')).razon, 'cierre_por_gratitud');
     assert.equal(decidirSiResponder(estadoEn('BLINDAJE_CERRADO')).responder, false);
+    assert.equal(decidirSiResponder(estadoEn('BLINDAJE_ENVIADO')).responder, false);
   });
 });
 
@@ -2211,8 +2218,12 @@ describe('Fallos reportados en vivo (11-sep-2026)', () => {
     assert.equal(p.etapaNueva, 'M2_DEUDA_TOTAL');
     assert.notEqual(p.estadoDestino, 'descalificado', 'no se descarta por una cuenta mal entendida');
     const turno = p.mensajes.join('\n');
-    assert.match(turno, /cuotas mensuales/i);
-    assert.match(turno, /no con la deuda total/i);
+    // El copy se reescribio el 11-sep para resolverlo en UN solo mensaje:
+    // pregunta si es cuota o saldo, recuerda que va con la cuota mensual, y
+    // aclara que los gastos fijos no cuentan. La intencion es la misma.
+    assert.match(turno, /cuota mensual/i);
+    assert.match(turno, /el total que debes|deuda total/i);
+    assert.match(turno, /arriendo/i, 'y que los gastos fijos NO cuentan');
   });
 
   test('la aclaracion se hace UNA vez: la cifra corregida se evalua normal', () => {

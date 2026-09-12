@@ -187,3 +187,80 @@ describe('FASE 2 — el prompt sigue la metodología de la guía', () => {
     assert.match(src, /<campo nombre="respuesta_empatica">/);
   });
 });
+
+// ===========================================================================
+// Los 5 requerimientos de cierre (11-sep-2026, noche)
+// ===========================================================================
+import { decidirTurno, decidirSiResponder } from '../bot_router_v42.js';
+import { PLANTILLAS } from '../sop_v42_plantillas.js';
+
+const leadEn = (etapa, extra = {}) => ({
+  estado_codigo: 'calificado', etapa_bot: etapa, nombre: 'Ana',
+  objeciones_consecutivas: 0, ultima_objecion_codigo: null, handoff_razon: null,
+  dias_sin_actividad: 0, ...extra,
+});
+
+describe('PUNTO 1 — la compuerta de cumplimiento ya corre en producción', () => {
+  test('el Worker invoca verificarMensajes en el flujo real', () => {
+    // Existía con 69 tests y NUNCA se llamaba fuera del simulador: la única
+    // compuerta que mira el turno completo no corría contra un lead real.
+    assert.ok(src.includes('verificarMensajes, formatearFallas'), 'se importa');
+    assert.match(src, /let compliance = verificarMensajes\(mensajes, \{ nombre, generado \}\)/,
+      'y se ejecuta sobre lo que se va a enviar');
+  });
+
+  test('si falla, cae al copy aprobado en vez de enviar algo prohibido', () => {
+    assert.match(src, /const soloAprobado = \[\.\.\.plan\.mensajes\]/);
+    assert.match(src, /if \(segundo\.pasa\)/, 'y se revalida antes de enviarlo');
+  });
+
+  test('el resultado queda en la telemetría para poder verlo', () => {
+    assert.match(src, /'compliance\.pasa': compliance\.pasa/);
+    assert.match(src, /'compliance\.fallas'/);
+  });
+});
+
+describe('PUNTO 5 — un "gracias" al final cierra, no reabre', () => {
+  test('agradecer con el embudo cerrado recibe despedida, no un saludo', () => {
+    const p = decidirTurno(leadEn('CIERRE_PRECALL'), {}, 'muchas gracias!');
+    assert.equal(p.mensajes.length, 1);
+    assert.match(p.mensajes[0], /Éxitos y nos vemos en la llamada/);
+    assert.ok(!/Hola de nuevo/i.test(p.mensajes[0]), 'NUNCA saludarlo como si volviera');
+  });
+
+  test('después de despedirse, la etapa queda terminal: no hay bucle posible', () => {
+    const p = decidirTurno(leadEn('CIERRE_PRECALL'), {}, 'gracias');
+    assert.equal(p.etapaNueva, 'BLINDAJE_CERRADO');
+    // Y desde ahí el bot ya no vuelve a hablar nunca.
+    assert.equal(decidirSiResponder(leadEn('BLINDAJE_CERRADO')).responder, false);
+  });
+
+  test('si con el embudo cerrado dice algo que NO es despedida, el bot calla', () => {
+    const p = decidirTurno(leadEn('CIERRE_PRECALL'), {}, 'oye una pregunta sobre el precio');
+    assert.equal(p.mensajes.length, 0, 'eso lo atiende un humano, no el bot');
+  });
+
+  test('el prompt también se lo dice al modelo', () => {
+    assert.match(src, /<cierre_de_conversacion>/);
+    assert.match(src, /NUNCA lo saludes de nuevo/);
+  });
+});
+
+describe('PUNTO 4 — intuición del LLM sobre la cifra de deuda', () => {
+  test('un número pelado en la pregunta de deuda es un porcentaje', () => {
+    assert.match(src, /UN NUMERO PELADO EN LA PREGUNTA DE DEUDA ES UN PORCENTAJE/);
+    assert.match(src, /responde "50", "30", "70", quiere decir 50%/);
+  });
+
+  test('una cifra imposible como cuota mensual es el saldo total', () => {
+    assert.match(src, /gana \$1\.000\.000 y dice que debe \$1\.230\.000 al mes/);
+    assert.match(src, /aca no hay router que valga/i);
+  });
+
+  test('y el copy lo resuelve en UN solo mensaje', () => {
+    const t = PLANTILLAS.M2_DEUDA_TOTAL_VS_CUOTA;
+    assert.match(t, /cuota mensual/i, 'dice con qué se hace la cuenta');
+    assert.match(t, /arriendo/i, 'y que los gastos fijos no cuentan');
+    assert.match(t, /\?/, 'y pregunta, todo junto');
+  });
+});
