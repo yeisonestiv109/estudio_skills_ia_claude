@@ -34,7 +34,8 @@
  * SECRETS (Cloudflare -> Settings -> Variables and Secrets):
  *   SUPABASE_URL                 https://lrdtjsxtaadpgrzkchlw.supabase.co
  *   SUPABASE_SERVICE_ROLE_KEY    service_role (fn_bot_* solo tienen grant a service_role)
- *   GROQ_API_KEY                 clasificador
+ *   GROQ_API_KEYS                pool del LLM, separadas por coma (ver llm_groq.mjs)
+ *   GROQ_API_KEY                 respaldo: solo se usa si GROQ_API_KEYS esta vacia
  *   MANYCHAT_API_TOKEN           token de la cuenta de ManyChat DE PRUEBA
  *   WEBHOOK_SECRET               OBLIGATORIO. Sin el, el Worker no opera (500).
  *   MANYCHAT_IDS_PRUEBA          LISTA BLANCA. Si tiene valores, el Worker SOLO
@@ -71,7 +72,7 @@ import {
   verificarTextoGenerado, verificarAdaptacionObjecion, verificarRespuestaLibre,
   verificarMensajes, formatearFallas,
 } from './verificador_cumplimiento.js';
-import { pedirAGroq } from './llm_groq.mjs';
+import { pedirAGroq, llavesDeGroq } from './llm_groq.mjs';
 import { notificarSetterGoogleChat } from './notificador_google_chat.js';
 
 // Presupuesto de latencia: ManyChat corta la External Request cerca de los
@@ -1021,7 +1022,7 @@ const CONTEXTO_POR_ETAPA = {
 };
 
 async function clasificarConLLM(env, etapa, texto, det, esquemaForzado = null, ctxLLM = null, historial = '') {
-  if (!env.GROQ_API_KEY) return {};
+  if (!llavesDeGroq(env).length) return {};
   // RED DE FONDO (12-sep-2026): si mañana alguien agrega una etapa y olvida su
   // esquema, ANTES el LLM dejaba de correr ahi en silencio -- y con el se
   // apagaban crisis y hostilidad. Ya paso cuatro veces. Ahora se cae al esquema
@@ -1496,7 +1497,7 @@ export async function generarConCorreccion({ pedir, verificar, etiqueta }) {
 export async function adaptarObjecionConLLM(
   env, plantillaOriginal, textoLead, llamadaYaMencionada = true, historial = '', preguntaPendiente = '',
 ) {
-  if (!env.GROQ_API_KEY || !plantillaOriginal) return '';
+  if (!llavesDeGroq(env).length || !plantillaOriginal) return '';
 
   const notaLlamada = llamadaYaMencionada
     ? 'Contexto de la conversacion: a este lead YA se le propuso antes una llamada/reunion de diagnostico. Si la plantilla se refiere a ella (ej. "los 30 minutos"), puedes tratarla como algo ya conocido.'
@@ -1599,7 +1600,7 @@ Responde con el texto final que le llegaria al lead. NADA de JSON, NADA de comil
  * seguir con la pregunta pendiente sola, que es lo que se enviaba antes.
  */
 export async function responderPreguntaConLLM(env, pregunta, textoLead, preguntaPendiente = '') {
-  if (!env.GROQ_API_KEY || !pregunta) return '';
+  if (!llavesDeGroq(env).length || !pregunta) return '';
 
   const system = `Eres Andres, respondiendo en primera persona por Instagram DM a un lead colombiano.
 
@@ -1703,7 +1704,7 @@ Responde SOLO con el mensaje que le llegaria al lead. Nada de JSON, comillas env
  * ante la duda, y por eso cualquier fallo cae en "mantener".
  */
 export async function decidirRepregunta(env, respuestaDelTurno, preguntaPendiente, historial, textoLead, yaSeEnvioTextual = false) {
-  if (!env.GROQ_API_KEY || !preguntaPendiente) return { accion: 'mantener', texto: '' };
+  if (!llavesDeGroq(env).length || !preguntaPendiente) return { accion: 'mantener', texto: '' };
 
   const system = `Eres Andres, escribiendo por Instagram DM a un lead colombiano.
 
