@@ -1114,3 +1114,58 @@ describe('El prompt sostiene las reglas nuevas del Filtro 2', () => {
     assert.match(src, /10500000/, 'el ejemplo de 3.000 dolares');
   });
 });
+
+// ===========================================================================
+// IDEMPOTENCIA POR MENSAJE, NO POR TEXTO (13-sep-2026)
+//
+// Bug real (trazas tr_06e07bc9ae, tr_9f9dcf228f): la llave era lead + texto por
+// 60 s. El lead respondio "Si" a la urgencia (M4) y "Si" a "¿Agendamos?" (M5):
+// el segundo "Si" recibio el pitch cacheado del primero, dos veces, y nunca
+// llego al LLM. En 130 turnos la cache no atajo NI UN reintento real de
+// ManyChat; solo produjo este bug. Ahora la llave incluye `last_interaction`
+// (timestamp que ManyChat manda por mensaje) y, sin el, no hay cache.
+// ===========================================================================
+import { claveIdempotencia, CACHE_IDEMPOTENCIA_S } from '../worker_bot_setter_v42.js';
+
+describe('Idempotencia: identifica el MENSAJE, no el texto', () => {
+  test('el mismo "Si" en dos interacciones distintas NO comparte llave', async () => {
+    const a = (await claveIdempotencia('813370090', 'Si', '2026-09-13T04:05:31+00:00'))?.url;
+    const b = (await claveIdempotencia('813370090', 'Si', '2026-09-13T04:05:48+00:00'))?.url;
+    assert.ok(a && b);
+    assert.notEqual(a, b, 'dos respuestas iguales a preguntas distintas son dos mensajes');
+  });
+
+  test('un reintento del MISMO mensaje si comparte llave', async () => {
+    const a = (await claveIdempotencia('813370090', 'Si', '2026-09-13T04:05:31+00:00'))?.url;
+    const b = (await claveIdempotencia('813370090', 'Si', '2026-09-13T04:05:31+00:00'))?.url;
+    assert.equal(a, b);
+  });
+
+  test('sin last_interaction usable NO hay cache: nunca se vuelve a la llave por texto', async () => {
+    for (const v of [undefined, null, '', '   ', '{{last_ig_interaction}}']) {
+      assert.equal(await claveIdempotencia('813370090', 'Si', v), null, `valor: ${JSON.stringify(v)}`);
+    }
+  });
+
+  test('distinto lead o distinto texto, distinta llave', async () => {
+    const t = '2026-09-13T04:05:31+00:00';
+    const url = async (...a) => (await claveIdempotencia(...a))?.url;
+    const base = await url('1', 'Si', t);
+    assert.ok(base);
+    assert.notEqual(base, await url('2', 'Si', t));
+    assert.notEqual(base, await url('1', 'Dale', t));
+  });
+
+  test('la ventana es corta: solo cubre un reintento tras el timeout de 10 s de ManyChat', () => {
+    assert.ok(CACHE_IDEMPOTENCIA_S <= 15);
+  });
+
+  test('el Worker solo consulta y escribe la cache cuando hay llave', () => {
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    assert.match(fuente, /const cacheado = claveIdem \? await cache\.match\(claveIdem\) : null;/);
+    assert.match(fuente, /if \(claveIdem && ctx\?\.waitUntil\)/);
+    assert.doesNotMatch(fuente, /idem\/\$\{encodeURIComponent\(subId\)\}\/\$\{await hash\(lastText\)\}/,
+      'la llave vieja (lead + texto) no puede volver');
+    assert.match(fuente, /'webhook\.last_interaction'/, 'el valor crudo queda en la traza para verificarlo');
+  });
+});

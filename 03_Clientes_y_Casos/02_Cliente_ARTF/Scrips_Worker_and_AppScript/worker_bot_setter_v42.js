@@ -89,7 +89,10 @@ const TIMEOUT_DB_MS = 5000;
 // sin definirla nunca -- ReferenceError en CADA turno que llamaba al LLM, en
 // cuanto el bot salio de modo secretaria. Mismo timeout que el resto de RPCs.
 const TIMEOUT_RPC_MS = TIMEOUT_DB_MS;
-const CACHE_IDEMPOTENCIA_S = 60;
+// IDEMPOTENCIA (13-sep-2026): 15 s, no 60. Solo tiene que cubrir un reintento
+// que llegue justo despues del timeout de 10 s de ManyChat. Una ventana larga
+// no protege mas: solo agranda la zona donde dos mensajes reales chocan.
+export const CACHE_IDEMPOTENCIA_S = 15;
 
 // Modelo ya validado en este proyecto. NO usar openai/gpt-oss-120b: ignora
 // json_schema/strict de forma inconsistente (bug documentado en la bitacora).
@@ -165,6 +168,10 @@ async function manejar(request, env, ctx) {
 
   const subId = sanitize(payload.manychat_subscriber_id);
   const lastText = sanitize(payload.last_text);
+  // Timestamp de la interaccion que dispara ESTE request ({{last_ig_interaction}}
+  // en el Flow). Es lo que distingue dos "Si" reales de un reintento. Ver
+  // claveIdempotencia.
+  const lastInteraction = sanitize(payload.last_interaction);
 
   // Mismo guard del Worker viejo (Bug #9): un retry manual sin contexto
   // resuelto no debe gastar base de datos ni LLM.
@@ -224,16 +231,17 @@ async function manejar(request, env, ctx) {
   const tz = nuevoTrazador(env, ctx, { manychat_id: subId });
   tz.evento(NODOS.WEBHOOK, 'OK', {
     'lead.mensaje': lastText,
+    // Crudo, a proposito: sirve para verificar en produccion que ManyChat lo
+    // actualiza ANTES de la External Request (si dos mensajes seguidos traen el
+    // mismo valor, la idempotencia volveria a confundirlos).
+    'webhook.last_interaction': lastInteraction || null,
     'bot.activo': !enModoSecretaria(env),
     'bot.lista_blanca': hayListaBlanca,
   });
 
-  const cacheKey = new Request(
-    `https://bot-artf.local/idem/${encodeURIComponent(subId)}/${await hash(lastText)}`,
-    { method: 'GET' },
-  );
+  const claveIdem = await claveIdempotencia(subId, lastText, lastInteraction);
   const cache = caches.default;
-  const cacheado = await cache.match(cacheKey);
+  const cacheado = claveIdem ? await cache.match(claveIdem) : null;
   if (cacheado) {
     console.log('Respuesta idempotente servida de cache:', subId);
     tz.evento(NODOS.WEBHOOK, 'FALLBACK', { 'webhook.idempotente': true });
@@ -724,10 +732,10 @@ async function manejar(request, env, ctx) {
   });
   tz.enviar();
 
-  if (ctx?.waitUntil) {
+  if (claveIdem && ctx?.waitUntil) {
     const paraCache = respuesta.clone();
     paraCache.headers.set('Cache-Control', `max-age=${CACHE_IDEMPOTENCIA_S}`);
-    ctx.waitUntil(cache.put(cacheKey, paraCache));
+    ctx.waitUntil(cache.put(claveIdem, paraCache));
   }
   return respuesta;
 }
@@ -2452,6 +2460,33 @@ export function sanitize(value) {
   if (/^\{\{(cuf_|sys_|user_|sub_|sub_id|first_name|last_name|ig_username|user_id|last_input_text)/i.test(str)) return '';
   if (/^\{\{.+\}\}$/.test(str)) return '';
   return str;
+}
+
+/**
+ * LLAVE DE IDEMPOTENCIA: identifica el MENSAJE, no el texto (13-sep-2026).
+ *
+ * BUG QUE CIERRA (trazas tr_06e07bc9ae y tr_9f9dcf228f). La llave era lead +
+ * texto durante 60 s. El lead respondio "Si" a la pregunta de urgencia (M4) y
+ * "Si" a "¿Agendamos?" (M5): el segundo "Si" recibio el pitch cacheado del
+ * primero -- dos veces -- y nunca llego al LLM. Parecia que el bot no entendia
+ * un "Si"; en realidad nunca lo leyo. Y la cache no se habia ganado su lugar:
+ * en 130 turnos no atajo ni un reintento real de ManyChat (el unico turno que
+ * paso de 10 s no fue reintentado).
+ *
+ * ManyChat no expone un id por mensaje. `last_interaction` es el timestamp de
+ * la interaccion: igual en un reintento del mismo mensaje, distinto en dos
+ * mensajes reales. Si no llega (Flow viejo, variable sin resolver), NO hay
+ * cache -- volver a la llave por texto reabriria el bug.
+ *
+ * @returns {Promise<Request|null>}
+ */
+export async function claveIdempotencia(subId, lastText, lastInteraction) {
+  const interaccion = sanitize(lastInteraction);
+  if (!subId || !interaccion) return null;
+  return new Request(
+    `https://bot-artf.local/idem/${encodeURIComponent(subId)}/${await hash(`${interaccion}|${lastText}`)}`,
+    { method: 'GET' },
+  );
 }
 
 async function hash(texto) {
