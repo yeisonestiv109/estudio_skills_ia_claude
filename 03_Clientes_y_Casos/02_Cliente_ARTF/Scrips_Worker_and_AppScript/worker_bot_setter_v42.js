@@ -665,12 +665,30 @@ async function manejar(request, env, ctx) {
     ].filter(Boolean).join(' '),
     p_ultimo_msg_lead: lastText,
     p_ultimo_msg_bot: mensajes.join('\n---\n').slice(0, 4000),
+    // COMPARE-AND-SWAP (Fase 1, 13-sep-2026): la base solo escribe si la etapa
+    // sigue siendo la que se leyo al empezar el turno. Si otro turno del mismo
+    // lead ya la movio, no se escribe nada y este turno calla.
+    p_etapa_esperada: estado?.etapa_bot ?? null,
+    p_verificar_etapa: true,
   };
 
   let resultado;
   const spEsc = tz.inicio(NODOS.ESCRITURA, { 'db.etapa': plan.etapaNueva });
   try {
     resultado = await escribirTurno(env, rpc);
+    const conflicto = respuestaDeConflicto(resultado);
+    if (conflicto) {
+      // No es un error de base: otro turno del mismo lead gano la carrera y ya
+      // le contesto con la etapa correcta. Mandar ESTE turno le daria al lead
+      // una respuesta basada en un estado que ya no existe.
+      tz.fin(spEsc, 'FALLBACK', {
+        'db.conflicto': true,
+        'db.etapa_leida': estado?.etapa_bot ?? null,
+        'db.etapa_real': resultado?.out_etapa_bot ?? null,
+      });
+      tz.enviar();
+      return json(conflicto);
+    }
     tz.fin(spEsc, 'OK', { 'db.estado': resultado?.out_estado_codigo ?? null });
   } catch (e) {
     tz.fin(spEsc, 'ERROR', { 'error.message': e?.message });
@@ -1954,6 +1972,7 @@ export function atributosLlamadaLLM(funcion, r) {
     'llm.resultado': r?.ok ? 'ok' : (ultimo.resultado ?? r?.detalle ?? 'error'),
     'llm.tokens_entrada': r?.tokensEntrada ?? 0,
     'llm.tokens_salida': r?.tokensSalida ?? 0,
+    'llm.tokens_cacheados': r?.tokensCacheados ?? 0,
     'llm.latencia_ms': intentos.reduce((a, i) => a + (i.latenciaMs || 0), 0),
     'llm.limite_tipo': limite.tipo ?? null,
     'llm.organizacion_limitada': limite.organizacion ?? null,
@@ -1985,6 +2004,9 @@ function registrarTelemetria(env, ctxLLM, r) {
         p_limite_tipo: intento.limite?.tipo ?? null,
         p_limite_valor: intento.limite?.valor ?? null,
         p_latencia_ms: intento.latenciaMs ?? null,
+        // Groq no cuenta los tokens en cache para sus limites: van aparte al
+        // consumo diario (llm_consumo_diario).
+        p_tokens_cacheados: intento.tokensCacheados || 0,
         p_limite_requests: cap.limite_requests ?? null,
         p_restantes_requests: cap.restantes_requests ?? null,
         p_reset_requests: cap.reset_requests ?? null,
@@ -2316,6 +2338,21 @@ async function leerEstado(env, manychatId) {
     tiene_reunion: f.out_tiene_reunion === true,
     motivo_perdida: f.out_motivo_perdida,
     dias_sin_actividad: f.out_dias_sin_actividad ?? 0,
+  };
+}
+
+/**
+ * Respuesta para ManyChat cuando la escritura perdio el compare-and-swap.
+ * null si no hubo conflicto. Nunca lleva mensajes: el turno ganador ya hablo.
+ */
+export function respuestaDeConflicto(resultado) {
+  if (!resultado?.out_conflicto) return null;
+  return {
+    ok: true,
+    responder: false,
+    motivo: 'conflicto_concurrencia',
+    etapa: resultado.out_etapa_bot ?? null,
+    estado: resultado.out_estado_codigo ?? null,
   };
 }
 

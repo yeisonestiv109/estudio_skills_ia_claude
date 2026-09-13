@@ -1198,3 +1198,36 @@ describe('Fase 0: espera experimental aislada', () => {
     assert.equal(esperaDeExperimento({ ...env, EXPERIMENTO_ESPERA_MS: 'abc' }, '813370090'), 0);
   });
 });
+
+// ===========================================================================
+// FASE 1 — COMPARE-AND-SWAP DE LA ETAPA (13-sep-2026)
+// El estado se lee sin bloqueo y se escribe ~2 s despues. Si dos turnos del
+// mismo lead se solapan, el segundo pisaba al primero. Probado contra la base
+// real: 5 escrituras simultaneas -> 1 gana, 4 conflicto; lead nuevo con 4
+// primeros mensajes simultaneos -> 1 escribe, 3 conflicto, 1 sola gestion.
+// ===========================================================================
+import { respuestaDeConflicto } from '../worker_bot_setter_v42.js';
+
+describe('Fase 1: el Worker exige la etapa que leyo', () => {
+  const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+
+  test('la escritura del turno manda la etapa leida y pide verificarla', () => {
+    assert.match(fuente, /p_etapa_esperada: estado\?\.etapa_bot \?\? null,/);
+    assert.match(fuente, /p_verificar_etapa: true,/);
+  });
+
+  test('ante un conflicto el turno calla: el otro turno ya le contesto al lead', () => {
+    const r = respuestaDeConflicto({ out_conflicto: true, out_etapa_bot: 'M5_ENVIADO', out_estado_codigo: 'calificado' });
+    assert.equal(r.responder, false);
+    assert.equal(r.motivo, 'conflicto_concurrencia');
+    assert.equal(r.etapa, 'M5_ENVIADO');
+    assert.equal(r.msg, undefined, 'ningun mensaje sale hacia el lead');
+    assert.equal(respuestaDeConflicto({ out_conflicto: false }), null);
+    assert.equal(respuestaDeConflicto(null), null);
+  });
+
+  test('el conflicto queda en la traza, no se confunde con un error de base', () => {
+    assert.match(fuente, /'db\.conflicto': true/);
+    assert.match(fuente, /const conflicto = respuestaDeConflicto\(resultado\);/);
+  });
+});

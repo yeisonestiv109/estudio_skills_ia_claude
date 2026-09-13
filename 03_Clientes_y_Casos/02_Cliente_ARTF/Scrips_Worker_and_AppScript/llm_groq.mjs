@@ -121,8 +121,10 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
         const datos = await resp.json();
         const tokensSalida = datos?.usage?.completion_tokens ?? 0;
         const tokensEntrada = datos?.usage?.prompt_tokens ?? 0;
-        intentos.push({ alias, huella, resultado: 'ok', tokensSalida, tokensEntrada, capacidad, latenciaMs: Date.now() - t0 });
-        return { ok: true, datos, intentos, alias, huella, tokensSalida, tokensEntrada, capacidad };
+        // Solo los modelos con cache de prompt lo reportan (en Groq, gpt-oss-*).
+        const tokensCacheados = datos?.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+        intentos.push({ alias, huella, resultado: 'ok', tokensSalida, tokensEntrada, tokensCacheados, capacidad, latenciaMs: Date.now() - t0 });
+        return { ok: true, datos, intentos, alias, huella, tokensSalida, tokensEntrada, tokensCacheados, capacidad };
       }
 
       const detalle = (await resp.text()).slice(0, 300);
@@ -146,7 +148,7 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
 
   const ultimo = intentos[intentos.length - 1] || {};
   return {
-    ok: false, intentos, tokensSalida: 0, tokensEntrada: 0,
+    ok: false, intentos, tokensSalida: 0, tokensEntrada: 0, tokensCacheados: 0,
     estado: ultimo.estado, detalle: ultimo.detalle, capacidad: ultimo.capacidad,
   };
 }

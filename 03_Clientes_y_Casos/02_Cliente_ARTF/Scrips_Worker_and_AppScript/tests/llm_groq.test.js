@@ -254,3 +254,26 @@ describe('Observador de llamadas al LLM', () => {
     assert.ok(vistos.every(([, t]) => t === 900));
   });
 });
+
+describe('Tokens en cache (Fase 1: consumo diario)', () => {
+  test('se leen de usage.prompt_tokens_details.cached_tokens y viajan al registro', async () => {
+    const fake = async () => ({
+      ok: true, status: 200, headers: new Map(),
+      json: async () => ({ choices: [{ message: { content: '{}' } }],
+        usage: { prompt_tokens: 5000, completion_tokens: 90, prompt_tokens_details: { cached_tokens: 4096 } } }),
+    });
+    const r = await pedirAGroq({ GROQ_API_KEY: 'k' }, {}, { fetchImpl: fake });
+    assert.equal(r.tokensCacheados, 4096);
+    assert.equal(r.intentos[0].tokensCacheados, 4096);
+    assert.equal(atributosLlamadaLLM('clasificador', r)['llm.tokens_cacheados'], 4096);
+    const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    assert.match(src, /p_tokens_cacheados: intento\.tokensCacheados \|\| 0,/);
+  });
+
+  test('sin el campo (qwen no tiene cache en Groq) vale 0, no undefined', async () => {
+    const fake = async () => ({ ok: true, status: 200, headers: new Map(),
+      json: async () => ({ choices: [{ message: { content: '{}' } }], usage: { prompt_tokens: 5000 } }) });
+    const r = await pedirAGroq({ GROQ_API_KEY: 'k' }, {}, { fetchImpl: fake });
+    assert.equal(r.tokensCacheados, 0);
+  });
+});
