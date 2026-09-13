@@ -257,6 +257,18 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // 2. Reconstruccion del contexto desde Supabase (nunca desde ManyChat)
   // -------------------------------------------------------------------------
+  // FASE 0 — EXPERIMENTO (13-sep-2026). Espera SOLO para los IDs de prueba,
+  // ANTES de leer el estado: si ManyChat ejecuta en paralelo dos requests del
+  // mismo contacto, la segunda burbuja llega mientras esta espera y las trazas
+  // se solapan; si las encola, la segunda arranca al terminar esta. Se apaga
+  // borrando EXPERIMENTO_ESPERA_IDS de wrangler.toml.
+  const esperaMs = esperaDeExperimento(env, subId);
+  if (esperaMs > 0) {
+    const spEspera = tz.inicio(NODOS.WEBHOOK, { 'experimento.espera_ms': esperaMs });
+    await new Promise((r) => setTimeout(r, esperaMs));
+    tz.fin(spEspera, 'OK', { 'experimento.fase': 'espera_terminada' });
+  }
+
   const spEstado = tz.inicio(NODOS.ESTADO);
   const estado = await leerEstado(env, subId);
   tz.fin(spEstado, estado ? 'OK' : 'FALLBACK', { 'lead.nuevo': !estado });
@@ -2462,6 +2474,20 @@ export function sanitize(value) {
   if (/^\{\{(cuf_|sys_|user_|sub_|sub_id|first_name|last_name|ig_username|user_id|last_input_text)/i.test(str)) return '';
   if (/^\{\{.+\}\}$/.test(str)) return '';
   return str;
+}
+
+/**
+ * Espera del experimento de la Fase 0 (13-sep-2026): cuantos ms esperar para
+ * este subscriber. 0 si no esta en EXPERIMENTO_ESPERA_IDS o no hay duracion
+ * valida. Tope de 6 s: con el p95 del turno (4,6 s) nunca pasa el timeout de
+ * 10 s de ManyChat. No es un mecanismo de producto: se retira al decidir 2A/2B.
+ */
+export function esperaDeExperimento(env, subId) {
+  const ids = String(env?.EXPERIMENTO_ESPERA_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!subId || !ids.includes(String(subId))) return 0;
+  const ms = Number(env?.EXPERIMENTO_ESPERA_MS);
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.min(ms, 6000);
 }
 
 /**

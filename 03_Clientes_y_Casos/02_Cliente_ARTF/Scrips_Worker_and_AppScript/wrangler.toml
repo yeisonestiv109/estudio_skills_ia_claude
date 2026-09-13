@@ -36,5 +36,13 @@ compatibility_date = "2026-09-01"
 [vars]
 BOT_ACTIVO = "true"
 
+# ---------------------------------------------------------------------------
+# FASE 0 — EXPERIMENTO TEMPORAL (13-sep-2026). Espera de 5 s SOLO para el ID de
+# prueba, para ver en las trazas si ManyChat ejecuta en paralelo o encola dos
+# burbujas del mismo contacto. RETIRAR estas dos lineas al decidir Fase 2A/2B.
+# ---------------------------------------------------------------------------
+EXPERIMENTO_ESPERA_IDS = "813370090"
+EXPERIMENTO_ESPERA_MS = "5000"
+
 [observability]
 enabled = true

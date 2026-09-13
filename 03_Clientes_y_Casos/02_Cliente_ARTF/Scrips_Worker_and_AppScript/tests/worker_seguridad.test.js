@@ -1169,3 +1169,32 @@ describe('Idempotencia: identifica el MENSAJE, no el texto', () => {
     assert.match(fuente, /'webhook\.last_interaction'/, 'el valor crudo queda en la traza para verificarlo');
   });
 });
+
+// ===========================================================================
+// FASE 0 — EXPERIMENTO DE ESPERA (13-sep-2026)
+// Pregunta que responde: ¿ManyChat ejecuta en paralelo dos External Requests
+// del mismo contacto, o las encola? Con una espera de 5 s SOLO para el ID de
+// prueba, dos burbujas seguidas o se solapan en las trazas (paralelo -> Fase
+// 2A, debounce sincrono) o la segunda arranca al terminar la primera (cola ->
+// Fase 2B, Durable Object).
+// ===========================================================================
+import { esperaDeExperimento } from '../worker_bot_setter_v42.js';
+
+describe('Fase 0: espera experimental aislada', () => {
+  const env = { EXPERIMENTO_ESPERA_IDS: '813370090', EXPERIMENTO_ESPERA_MS: '5000' };
+
+  test('solo aplica a los IDs de la lista', () => {
+    assert.equal(esperaDeExperimento(env, '813370090'), 5000);
+    assert.equal(esperaDeExperimento(env, '919847119'), 0, 'un lead real jamas espera');
+  });
+
+  test('sin variables no hay espera (el experimento se apaga borrandolas)', () => {
+    assert.equal(esperaDeExperimento({}, '813370090'), 0);
+    assert.equal(esperaDeExperimento({ EXPERIMENTO_ESPERA_IDS: '813370090' }, '813370090'), 0);
+  });
+
+  test('tope duro de 6 s: con el p95 del turno no puede pasar el timeout de 10 s de ManyChat', () => {
+    assert.equal(esperaDeExperimento({ ...env, EXPERIMENTO_ESPERA_MS: '60000' }, '813370090'), 6000);
+    assert.equal(esperaDeExperimento({ ...env, EXPERIMENTO_ESPERA_MS: 'abc' }, '813370090'), 0);
+  });
+});
