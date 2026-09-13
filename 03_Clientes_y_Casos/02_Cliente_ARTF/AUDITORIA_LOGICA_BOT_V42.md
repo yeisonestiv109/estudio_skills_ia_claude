@@ -1,6 +1,6 @@
 # Auditoría de la lógica del bot V4.2 — de la arquitectura al guion
 
-> **Actualización 12-sep-2026 (noche):** el Filtro 2 ya no decide sobre la cifra que devuelve el LLM sino sobre la que escribió el lead (`lectura_deuda.js`). La sección 2 describe la regla del remanente de $2,5M, que ya no está vigente: la regla actual es escalera + piso de $3M (ver bitácora 11-sep). Detalle en `01_Gobernanza_EOS/02_backlog_y_rocas.md`, sesión 12-sep (noche).
+> **Actualización 12-sep-2026 (noche):** el Filtro 2 ya no decide sobre la cifra que devuelve el LLM sino sobre la que escribió el lead (`lectura_deuda.js`). La sección 2 describe la regla del remanente de $2,5M, que ya no está vigente. **Regla actual (13-sep): pasa si le quedan ≥ $3M; en % con 2 puntos de margen, en pesos exacto.** La escalera se retiró (ver bitácora 13-sep). Detalle en `01_Gobernanza_EOS/02_backlog_y_rocas.md`, sesión 12-sep (noche).
 
 **Fecha:** 11-sep-2026 · **Base:** código en `setup/base-conocimiento` @ `6abd18d` (incluye los fixes de Gabyota del 11-sep)
 **Todo lo que sigue sale de leer el código actual, no de la memoria de sesiones anteriores.**

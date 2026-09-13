@@ -5192,3 +5192,33 @@ Con límite por organización y cada llamada comiéndose ~73% del ITPM, repartir
 **Pendiente de verificar en vivo:** que ManyChat actualiza `last_ig_interaction` **antes** de la External Request. Si dos mensajes seguidos llegan con el mismo valor, la caché volvería a confundirlos y hay que quitarla (opción b).
 
 **Siguiente, acordado como opción:** agrupar ráfagas con una ventana de 3-4 s (no 60) detrás de un interruptor, y Cerebras para la capacidad global.
+
+## 🧱 13-sep-2026 — Filtro 2: manda el piso de $3M (cuarto cambio de la regla)
+
+**Decisión del fundador:** si al lead le quedan **≥ $3.000.000** al mes después de pagar sus cuotas, **pasa**. Se retira la escalera (50 % en $7M ± 5 puntos por millón), que llevaba vigente desde el 11-sep.
+
+**Por qué:** con "escalera Y piso, gana la más estricta", la **misma persona** pasaba o no según cómo lo dijera. Un lead de $8M con 62 % de deuda (le quedan $3,04M) iba a verificación porque la escalera frenaba en 55 %; si decía *"me quedan 3 millones"*, pasaba directo. Pasaba en todos los ingresos por debajo de $12M.
+
+**Regla vigente (`1593d79`, Worker `1e01c26f`):**
+- **Tope** = el % que deja exactamente $3M libres.
+- **En %:** +2 puntos de margen sobre ese tope (estimados "a ojo"). Confirmado por el fundador.
+- **En pesos:** ≥ $3M exacto, sin margen.
+- Por encima nunca se descalifica de una: primero verificación del cálculo, después borderline (tipo de deuda).
+
+| Ingreso | Antes pasaba directo hasta | Ahora |
+|---|---|---|
+| $6M | 47 % | 52 % |
+| $8M | 57 % | 64,5 % |
+| $10M | 67 % | 72 % |
+| $12M en adelante | igual | igual |
+
+**Blindaje:**
+- **Test invariante:** para todo ingreso de $3M a $40M y toda deuda, si en pesos le quedan ≥ $3M, dicho en % también pasa. La inconsistencia no puede volver.
+- La escalera **se retiró** del código (`UMBRALES` y router) en vez de dejarse apagada.
+
+**De paso se corrigieron tres cosas que mentían:**
+- **El contexto del LLM en `M2_VERIFICAR_CALCULO`** decía *"le dejaba menos de $2.500.000"*, un valor viejo escrito a mano. Ahora sale de `UMBRALES`, con test.
+- **Summary al pasar:** *"me quedan 3 millones"* salía como *"le quedan 2960000"* (recalculado desde el % redondeado). Ahora dice la cifra del lead y avisa cuando pasa por el margen.
+- **Summary al ratificar:** decía *"le siguen quedando menos de 3000000"* aunque no fuera cierto.
+
+⚠️ **Historia del Filtro 2:** remanente $2,5M → tope 50/60 % → remanente $2,5M → escalera + piso $3M → **piso $3M**. Antes de volver a tocarlo, preguntar.
