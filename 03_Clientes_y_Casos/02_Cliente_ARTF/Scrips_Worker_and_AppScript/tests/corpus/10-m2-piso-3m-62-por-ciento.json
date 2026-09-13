@@ -1,0 +1,39 @@
+{
+  "nombre": "10 · $8M con 62% de deuda — pasa por el piso de $3M",
+  "fuente": "Pregunta del fundador (13-sep-2026) que motivo retirar la escalera: gana 8M y debe el 62% (le quedan $3,04M).",
+  "nota": "Con la regla del 13-sep pasa directo a M3. Antes la escalera lo mandaba a verificar el calculo aunque le quedaran mas de $3M.",
+  "lead": {
+    "nombre": "Laura"
+  },
+  "turnos": [
+    {
+      "lead": "CLARIDAD",
+      "espera": {
+        "etapa": "M1_ENVIADO"
+      }
+    },
+    {
+      "lead": "soy contadora y me gano 8 millones",
+      "pista": {
+        "profesion": "Contadora",
+        "ingreso_cop": 8000000
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "estado": "contactado"
+      }
+    },
+    {
+      "lead": "62%",
+      "pista": {
+        "endeudamiento_pct": 62,
+        "deuda_literal": "62%",
+        "deuda_unidad_dicha": "porcentaje"
+      },
+      "espera": {
+        "etapa": "M3_ENVIADO",
+        "estado": "contactado"
+      }
+    }
+  ]
+}

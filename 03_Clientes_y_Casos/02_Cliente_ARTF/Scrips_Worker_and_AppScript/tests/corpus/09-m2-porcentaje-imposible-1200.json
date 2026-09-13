@@ -1,0 +1,52 @@
+{
+  "nombre": "09 · \"1200\" a la pregunta del % — la cifra que el LLM reescalaba",
+  "fuente": "Traza de produccion tr_cd45365f7f (12-sep-2026): ingreso $22M, el lead respondio \"1200\" y Qwen devolvio deuda_cop=12000000; el router lo califico.",
+  "nota": "Protege la lectura fiel del Filtro 2 (lectura_deuda.js). Un % imposible NO pasa ni descalifica: se aclara cuota vs saldo (M2_DEUDA_TOTAL). En evals mide si el modelo COPIA la cifra (deuda_literal) sin corregirla.",
+  "lead": {
+    "nombre": "Camilo"
+  },
+  "turnos": [
+    {
+      "lead": "CONTROL",
+      "espera": {
+        "etapa": "M1_ENVIADO"
+      }
+    },
+    {
+      "lead": "Soy médico, gano 22 millones al mes",
+      "pista": {
+        "profesion": "Médico",
+        "ingreso_cop": 22000000
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "estado": "contactado"
+      }
+    },
+    {
+      "lead": "1200",
+      "pista": {
+        "endeudamiento_pct": 1200,
+        "deuda_literal": "1200",
+        "deuda_unidad_dicha": "ninguna"
+      },
+      "espera": {
+        "etapa": "M2_DEUDA_TOTAL",
+        "estado": "contactado",
+        "contiene": "¿es lo que pagas CADA MES en cuotas, o es el total que debes?"
+      }
+    },
+    {
+      "lead": "ah no, eso era el total. Al mes pago como 8 millones",
+      "pista": {
+        "deuda_cop": 8000000,
+        "deuda_literal": "8 millones",
+        "deuda_unidad_dicha": "pesos"
+      },
+      "espera": {
+        "etapa": "M3_ENVIADO",
+        "estado": "contactado"
+      }
+    }
+  ]
+}

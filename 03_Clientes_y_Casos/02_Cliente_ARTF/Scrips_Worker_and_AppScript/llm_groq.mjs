@@ -98,7 +98,7 @@ const huellaDe = (llave) => String(llave || '').slice(-4);
  */
 export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fetch } = {}) {
   const llaves = llavesDeGroq(env);
-  if (!llaves.length) return { ok: false, intentos: [], tokensSalida: 0, detalle: 'sin_llaves' };
+  if (!llaves.length) return { ok: false, intentos: [], tokensSalida: 0, detalle: 'sin_llaves', modelo: cuerpo?.model };
 
   const intentos = [];
 
@@ -124,7 +124,7 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
         // Solo los modelos con cache de prompt lo reportan (en Groq, gpt-oss-*).
         const tokensCacheados = datos?.usage?.prompt_tokens_details?.cached_tokens ?? 0;
         intentos.push({ alias, huella, resultado: 'ok', tokensSalida, tokensEntrada, tokensCacheados, capacidad, latenciaMs: Date.now() - t0 });
-        return { ok: true, datos, intentos, alias, huella, tokensSalida, tokensEntrada, tokensCacheados, capacidad };
+        return { ok: true, datos, intentos, alias, huella, tokensSalida, tokensEntrada, tokensCacheados, capacidad, modelo: cuerpo?.model };
       }
 
       const detalle = (await resp.text()).slice(0, 300);
@@ -148,7 +148,7 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
 
   const ultimo = intentos[intentos.length - 1] || {};
   return {
-    ok: false, intentos, tokensSalida: 0, tokensEntrada: 0, tokensCacheados: 0,
+    ok: false, intentos, tokensSalida: 0, tokensEntrada: 0, tokensCacheados: 0, modelo: cuerpo?.model,
     estado: ultimo.estado, detalle: ultimo.detalle, capacidad: ultimo.capacidad,
   };
 }
