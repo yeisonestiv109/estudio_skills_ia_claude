@@ -5166,3 +5166,29 @@ Proveedor y modelo; cada llave con huella (últimos 4 caracteres), organización
 ### Round-robin: no
 
 Con límite por organización y cada llamada comiéndose ~73% del ITPM, repartir entre llaves de la misma organización no suma nada. Entre organizaciones distintas, el failover ya lo aprovecha: un 429 no consume cupo y cuesta un viaje HTTP. La palanca real es más cupo por organización: **Cerebras (30.000 TPM) como segundo proveedor**, que es lo siguiente.
+
+## 🔁 13-sep-2026 — El "Si" que el bot "no entendía" nunca llegó al bot
+
+**Síntoma:** tras el pitch (M5), un "Si" hacía que el bot reenviara el mismo pitch; "Dale" sí avanzaba.
+
+**Causa (trazas `tr_06e07bc9ae`, `tr_9f9dcf228f`):** la llave de idempotencia era **lead + texto** durante **60 s**. El lead contestó "Si" a la urgencia (M4) y, segundos después, "Si" a "¿Agendamos?" (M5). El segundo "Si" recibió la respuesta cacheada del primero —el pitch—, dos veces, sin pasar por estado, LLM ni router. El LLM no tuvo nada que ver: el 12-sep a las 05:03 un "Si" en M5 dio `acepta=true` y pasó a M6. El router tampoco: su reintento de M5 usa otro copy (`M5_PITCH_REINTENTO`), así que un pitch idéntico solo podía salir de la caché.
+
+**Lo que dijeron los datos antes de decidir:**
+- **La caché nunca atajó un reintento real:** hubo 3 aciertos en toda la telemetría, los tres del fundador repitiendo "Si". El único turno de más de 10 s (15,3 s) no fue reintentado.
+- ManyChat corta la External Request a los 10 s y deja la respuesta en `null`. No hay documentación de reintentos ni un ID por mensaje; lo más cercano es el timestamp de la interacción.
+- 58 % de los mensajes de un lead llegan a menos de 60 s del anterior (21 % a menos de 15 s).
+
+**Propuesta del fundador evaluada: esperar 60 s antes de cada respuesta. No se adoptó**, con estos fundamentos:
+- **No arregla el choque:** el choque es de la llave, no del tiempo.
+- **Arregla la capacidad solo a medias:** el cupo es global (3 organizaciones ≈ 3-4 clasificaciones por minuto entre todos los leads).
+- **Retrasaría el 58 % de los turnos.**
+- **Exige mandar las respuestas fuera de la External Request** (Durable Object + `sendContent`, con reportes de entregas silenciosamente fallidas en Instagram).
+
+**Arreglo (`ab62cef`, Worker `ee70ffd7`):**
+- La llave es **lead + texto + `last_interaction`** (el Flow manda `{{last_ig_interaction}}`) y dura **15 s**.
+- **Sin ese campo no hay caché:** nunca se vuelve a la llave por texto.
+- El valor crudo queda en la traza (`webhook.last_interaction`).
+
+**Pendiente de verificar en vivo:** que ManyChat actualiza `last_ig_interaction` **antes** de la External Request. Si dos mensajes seguidos llegan con el mismo valor, la caché volvería a confundirlos y hay que quitarla (opción b).
+
+**Siguiente, acordado como opción:** agrupar ráfagas con una ventana de 3-4 s (no 60) detrás de un interruptor, y Cerebras para la capacidad global.
