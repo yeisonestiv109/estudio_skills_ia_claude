@@ -70,91 +70,58 @@ export function calcularRemanente(ingreso, pct) {
 }
 
 /**
- * TOPE DE ENDEUDAMIENTO — el menor entre la escalera y el piso (11-sep-2026).
+ * TOPE DE ENDEUDAMIENTO — el % que deja exactamente $3M libres (13-sep-2026).
  *
- *   escalera: 50% en $7M, ±5 puntos por cada millon de diferencia.
- *   piso:     el % que deja exactamente UMBRALES.REMANENTE_MINIMO ($3M) libres.
- *
- * Gana el mas estricto. Ver el bloque del FILTRO 2 en sop_v42_plantillas.js
- * para la tabla completa y el porque.
+ * REGLA DEL FUNDADOR: si le quedan >= UMBRALES.REMANENTE_MINIMO al mes, pasa.
+ * Reemplaza a "escalera Y piso, gana la mas estricta" (11-sep), que hacia que
+ * la MISMA persona pasara o no segun como lo dijera: $8M con 62% (le quedan
+ * $3,04M) iba a verificacion por la escalera, pero "me quedan 3 millones"
+ * pasaba directo. La escalera se retiro del codigo, no se dejo apagada.
  *
  * @returns {number|null} el tope en %, o null si no hay ingreso con que calcular.
  */
 export function topeEndeudamiento(ingreso) {
-  return detalleTopeEndeudamiento(ingreso)?.tope ?? null;
-}
-
-/**
- * El tope con su porque: cuanto da cada regla y cual manda.
- *
- * Existe para que la traza y el summary digan QUE regla freno al lead. Bug
- * real (tr_a730817345): "66.6%" con $9M decia "le quedarian 3006000 libres
- * (< 3000000)" -- una desigualdad falsa, porque lo que freno fue la escalera
- * (tope 60%), no el piso. Un log asi manda a buscar el error donde no esta.
- */
-export function detalleTopeEndeudamiento(ingreso) {
   if (typeof ingreso !== 'number' || !Number.isFinite(ingreso) || ingreso <= 0) return null;
-  const millones = ingreso / 1_000_000;
-  const referencia = UMBRALES.INGRESO_REFERENCIA / 1_000_000;
-  const escalera = UMBRALES.TOPE_EN_REFERENCIA_PCT + (millones - referencia) * UMBRALES.PUNTOS_POR_MILLON;
-  // El % maximo que todavia deja el piso de remanente en el bolsillo.
-  const piso = (1 - UMBRALES.REMANENTE_MINIMO / ingreso) * 100;
   // Nunca menos de 0 ni mas de 100: un tope fuera de ese rango no significa nada.
-  const tope = Math.max(0, Math.min(100, Math.min(escalera, piso)));
-  return { tope, escalera, piso, reglaQueManda: escalera <= piso ? 'escalera' : 'piso' };
+  return Math.max(0, Math.min(100, (1 - UMBRALES.REMANENTE_MINIMO / ingreso) * 100));
 }
 
 const unDecimal = (n) => Math.round(n * 10) / 10;
 
 /** Atributos de la traza que explican el Filtro 2 para un ingreso dado. */
 function telemetriaFiltro2(ingreso) {
-  const d = detalleTopeEndeudamiento(ingreso);
+  const tope = topeEndeudamiento(ingreso);
   return {
     'filtro2.ingreso': ingreso ?? null,
-    'filtro2.tope_pct': d ? unDecimal(d.tope) : null,
-    'filtro2.escalera_pct': d ? unDecimal(d.escalera) : null,
-    'filtro2.piso_pct': d ? unDecimal(d.piso) : null,
-    'filtro2.regla_que_manda': d ? d.reglaQueManda : null,
+    'filtro2.tope_pct': tope === null ? null : unDecimal(tope),
+    'filtro2.remanente_minimo': UMBRALES.REMANENTE_MINIMO,
     'filtro2.margen_pct': UMBRALES.MARGEN_TOLERANCIA_PCT,
   };
-}
-
-/** Frase corta para el summary: que tope aplica y por que regla. */
-function explicarTope(ingreso) {
-  const d = detalleTopeEndeudamiento(ingreso);
-  if (!d) return 'sin ingreso para calcular el tope';
-  return d.reglaQueManda === 'escalera'
-    ? `tope ${unDecimal(d.tope)}% por la escalera de ingreso (+${UMBRALES.MARGEN_TOLERANCIA_PCT} de margen)`
-    : `tope ${unDecimal(d.tope)}% por el piso de ${UMBRALES.REMANENTE_MINIMO} libres (+${UMBRALES.MARGEN_TOLERANCIA_PCT} de margen)`;
 }
 
 /**
  * Filtro 2 — 'ok' | 'verificar_calculo' | 'no_sabe'
  *
- * REGLA (11-sep-2026): la deuda mensual no puede pasar del tope que sale de
- * `topeEndeudamiento`, con un margen de tolerancia de
- * UMBRALES.MARGEN_TOLERANCIA_PCT puntos para los estimados "a ojo" del lead.
+ * REGLA (13-sep-2026): pasa si le quedan >= UMBRALES.REMANENTE_MINIMO al mes.
+ *   · En PESOS (dijo cuanto le queda o cuanto paga): se exige exacto.
+ *   · En % : se permite UMBRALES.MARGEN_TOLERANCIA_PCT puntos sobre el tope,
+ *     el colchon para los estimados "a ojo". Nunca es mas estricto que la
+ *     plata: hay un test que lo recorre para todo ingreso y deuda.
  *
- * Por encima NUNCA se descalifica de una: se verifica la cuenta primero. Un
- * endeudamiento imposible casi siempre es el saldo total en vez de la cuota,
- * o arriendo y servicios metidos como deuda. La decision final la toman
- * M2_VERIFICAR_CALCULO y M2_BORDERLINE.
- *
- * `remanenteDeclarado`: si el lead dio la cifra en plata, se usa esa para
- * derivar el %; pasar por el porcentaje redondeado mueve el resultado unos
- * miles de pesos justo en el limite.
+ * Por encima NUNCA se descalifica de una: se verifica la cuenta primero. La
+ * decision final la toman M2_VERIFICAR_CALCULO y M2_BORDERLINE.
  */
 export function evaluarEndeudamiento(pct, ingreso, remanenteDeclarado = null) {
   const tope = topeEndeudamiento(ingreso);
   if (tope === null) return 'no_sabe';
 
-  // Si hablo en plata, el % real sale de esa cifra y no del estimado.
-  const pctReal = (typeof remanenteDeclarado === 'number' && Number.isFinite(remanenteDeclarado))
-    ? (1 - remanenteDeclarado / ingreso) * 100
-    : pct;
-  if (pctReal === null || pctReal === undefined || !Number.isFinite(pctReal)) return 'no_sabe';
-
-  return pctReal <= tope + UMBRALES.MARGEN_TOLERANCIA_PCT ? 'ok' : 'verificar_calculo';
+  // Si hablo en plata, decide la plata, sin margen: el margen es para un %
+  // estimado, y pasar por el % redondeado movia el resultado en el limite.
+  if (typeof remanenteDeclarado === 'number' && Number.isFinite(remanenteDeclarado)) {
+    return remanenteDeclarado >= UMBRALES.REMANENTE_MINIMO ? 'ok' : 'verificar_calculo';
+  }
+  if (pct === null || pct === undefined || !Number.isFinite(pct)) return 'no_sabe';
+  return pct <= tope + UMBRALES.MARGEN_TOLERANCIA_PCT ? 'ok' : 'verificar_calculo';
 }
 
 // ---------------------------------------------------------------------------
@@ -496,7 +463,7 @@ function responderEndeudamiento(estado, c, nombre, etapaEntrada, ingreso, lectur
       handoffRazon: null, motivoPerdida: null,
       campos: { endeudamiento_pct: pct },
       permitirEmpatia: false,
-      summary: `Deuda ${pct}% sobre un ingreso de ${ingreso}: supera el ${explicarTope(ingreso)}. Le quedarian ${remanenteDeclarado ?? calcularRemanente(ingreso, pct)} libres. Se verifica el calculo antes de descartar.`,
+      summary: `Deuda ${pct}% sobre un ingreso de ${ingreso}: le quedarian ${remanenteDeclarado ?? calcularRemanente(ingreso, pct)} libres, por debajo de ${UMBRALES.REMANENTE_MINIMO}${remanenteDeclarado === null ? ` (tope ${unDecimal(topeEndeudamiento(ingreso))}% +${UMBRALES.MARGEN_TOLERANCIA_PCT} de margen)` : ''}. Se verifica el calculo antes de descartar.`,
     };
   }
   if (veredicto === 'borderline') {
@@ -532,7 +499,13 @@ function responderEndeudamiento(estado, c, nombre, etapaEntrada, ingreso, lectur
     handoffRazon: null, motivoPerdida: null,
     campos: { endeudamiento_pct: pct },
     permitirEmpatia: true,
-    summary: `Filtro 2 superado: le quedan ${calcularRemanente(ingreso, pct)} libres al mes (deuda ${pct}%). Se pregunta el dolor.`,
+    // La cifra que dio el lead manda sobre la recalculada desde el % redondeado
+    // ("me quedan 3 millones" salia como "le quedan 2960000").
+    summary: (() => {
+      const queda = remanenteDeclarado ?? calcularRemanente(ingreso, pct);
+      const porMargen = queda < UMBRALES.REMANENTE_MINIMO ? `, dentro del margen de ${UMBRALES.MARGEN_TOLERANCIA_PCT} puntos` : '';
+      return `Filtro 2 superado: le quedan ${queda} libres al mes (deuda ${pct}%${porMargen}). Se pregunta el dolor.`;
+    })(),
   };
 }
 
@@ -619,7 +592,7 @@ function responderVerificacion(estado, c, nombre, lectura) {
     handoffRazon: null, motivoPerdida: null,
     campos: pctFinal !== null ? { endeudamiento_pct: pctFinal } : {},
     permitirEmpatia: false,
-    summary: `Verificacion del calculo: ratifica ${pctFinal ?? 'la cifra'}%, le siguen quedando menos de ${UMBRALES.REMANENTE_MINIMO} libres. Puede ser deuda buena: se pregunta antes de descartar.`,
+    summary: `Verificacion del calculo: ratifica ${pctFinal ?? 'la cifra'}%, le quedarian ${remanenteCorregido ?? 'sin dato de'} libres (minimo ${UMBRALES.REMANENTE_MINIMO}). Puede ser deuda buena: se pregunta antes de descartar.`,
   };
 }
 

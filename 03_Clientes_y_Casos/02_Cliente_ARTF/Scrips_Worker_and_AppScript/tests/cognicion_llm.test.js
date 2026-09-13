@@ -15,9 +15,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, formatearHistorial, generarConCorreccion,
-  validarClasificacionLLM, camposDesdeClasificacion,
+  validarClasificacionLLM, camposDesdeClasificacion, CONTEXTO_POR_ETAPA,
 } from '../worker_bot_setter_v42.js';
-import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA, UNIDAD_QUE_PIDE_LA_PREGUNTA } from '../sop_v42_plantillas.js';
+import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA, UNIDAD_QUE_PIDE_LA_PREGUNTA, UMBRALES } from '../sop_v42_plantillas.js';
 
 const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
 
@@ -284,6 +284,14 @@ describe('PUNTO 4 — intuición del LLM sobre la cifra de deuda', () => {
   test('modo secretaria: un % imposible no se guarda en la ficha del lead', () => {
     assert.equal(camposDesdeClasificacion({ endeudamiento_pct: 1200 }).endeudamiento_pct, undefined);
     assert.equal(camposDesdeClasificacion({ endeudamiento_pct: 45 }).endeudamiento_pct, 45);
+  });
+
+  test('el contexto que ve el LLM usa el piso vigente, no una cifra escrita a mano', () => {
+    // Decia "$2.500.000" cuando el piso ya era $3M (13-sep-2026).
+    const t = CONTEXTO_POR_ETAPA.M2_VERIFICAR_CALCULO;
+    const esperado = String(UMBRALES.REMANENTE_MINIMO).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    assert.ok(t.includes(`$${esperado}`), t.slice(0, 80));
+    assert.doesNotMatch(t, /2\.500\.000/);
   });
 
   test('la unidad que pide cada pregunta sigue atada a su copy', () => {

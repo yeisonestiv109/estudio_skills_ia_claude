@@ -13,7 +13,7 @@
  *    (antes era al reves).
  *  - Tope de endeudamiento condicional al ingreso (<=50% si gana ~$7M,
  *    hasta 60% si gana >$9M). ⚠️ El bot NO aplica este tope: usa
- *    UMBRALES.REMANENTE_MINIMO (le tienen que quedar >= $2.5M libres al mes).
+ *    UMBRALES.REMANENTE_MINIMO (le tienen que quedar >= $3M libres al mes).
  *  - Regla anti-descarte por ingreso ambiguo + glosario colombiano (V4.1).
  *  - RetornoLead: si un lead descartado se recalifica, se rectifica solo.
  *
@@ -270,38 +270,26 @@ export const UMBRALES = {
   INGRESO_ASUMIDO_POR_RANGO: 7_000_000,
 
   // ───────────────────────────────────────────────────────────────────────
-  // FILTRO 2 — DOS REGLAS, Y GANA LA MAS ESTRICTA (11-sep-2026, fundador).
+  // FILTRO 2 — MANDA EL PISO DE $3M (13-sep-2026, fundador).
   //
-  // 1. ESCALERA POR INGRESO. El punto de referencia es $7M = 50% de deuda.
-  //    Por cada millon por encima o por debajo, el tope sube o baja 5 puntos:
+  // Pasa si despues de pagar sus cuotas le quedan al menos $3.000.000 al mes.
+  // En % se toleran 2 puntos por encima del tope (estimados "a ojo"); si lo
+  // dice en pesos, se exige exacto.
   //
-  //      $5,5M -> 42,5%   $6M -> 45%   $7M -> 50%   $8M -> 55%   $10M -> 65%
+  //   ingreso   tope (le deja $3M)   pasa directo hasta (en %)
+  //    $6M          50,0%                 52,0%
+  //    $8M          62,5%                 64,5%
+  //   $12M          75,0%                 77,0%
+  //   $20M          85,0%                 87,0%
   //
-  //    La idea de negocio: a mayor ingreso se tolera mas deuda, porque queda
-  //    mas plata absoluta aunque el porcentaje sea alto.
-  //
-  // 2. PISO DE REMANENTE. Pase lo que pase, despues de pagar sus cuotas al
-  //    lead le tienen que quedar al menos $3.000.000 al mes.
-  //
-  // POR QUE LAS DOS: la escalera sola deja entrar a alguien de $20M con 115%
-  // de deuda (absurdo), y el piso solo ignora que a mayor ingreso se aguanta
-  // mas. Juntas se comportan bien en todo el rango, y ademas CUADRAN: a $12M
-  // las dos dan exactamente $3M. Por debajo de $12M manda la escalera; por
-  // encima, el piso.
-  //
-  //   ingreso   escalera   piso $3M   TOPE REAL
-  //    $6M        45,0%      50,0%      45,0%   <- escalera
-  //    $7M        50,0%      57,1%      50,0%   <- escalera
-  //   $12M        75,0%      75,0%      75,0%   <- empatan
-  //   $20M       115,0%      85,0%      85,0%   <- piso
-  //
-  // MARGEN DE TOLERANCIA: 2 puntos porcentuales por encima del tope siguen
-  // pasando. Es el colchon para los estimados "a ojo" que da el lead.
+  // HISTORIA (no reintroducir sin hablarlo): el 11-sep regia "escalera (50%
+  // en $7M, ±5 por millon) Y piso, gana la mas estricta". Por debajo de $12M
+  // la escalera frenaba antes que el piso, y la MISMA persona pasaba o no segun
+  // como lo dijera ("62%" vs "me quedan 3 millones"). El fundador eligio el
+  // piso y la escalera se retiro del codigo. El Filtro 2 ya cambio 4 veces:
+  // antes de tocarlo, preguntar.
   // ───────────────────────────────────────────────────────────────────────
   REMANENTE_MINIMO: 3_000_000,
-  INGRESO_REFERENCIA: 7_000_000,
-  TOPE_EN_REFERENCIA_PCT: 50,
-  PUNTOS_POR_MILLON: 5,
   MARGEN_TOLERANCIA_PCT: 2,
 
   // Umbral que separa "le sobra poco porque debe mucho" (se pregunta que tipo
@@ -376,7 +364,7 @@ P.M1_PEDIR_RANGO = `Te pregunto porque el proceso funciona mejor para personas q
 // anotado aca para que no se vuelva a proponer como si fuera un descuido.
 
 // Segundo dato del borderline. El tipo de deuda solo no alcanza: la regla del
-// fundador tambien acepta al lead si RECTIFICA que le sobran >= $2.5M.
+// fundador tambien acepta al lead si RECTIFICA que le sobran >= UMBRALES.REMANENTE_MINIMO.
 P.M2_PEDIR_SOBRANTE = `Y una última cosa para no sacar conclusiones: después de pagar todo eso, ¿cuánto te queda libre al mes, más o menos?`;
 P.M2_PEDIR_SOBRANTE_pendienteAprobacion = true;
 
@@ -422,7 +410,7 @@ P.M2_NO_SABE = `Sin presión, dame un estimado. ¿Te queda plata después de pag
  * REPREGUNTA DE CALCULO (7-sep-2026). Copy OFICIAL, entregado literal por el
  * fundador -- no se reescribe ni se "mejora".
  *
- * POR QUE EXISTE: un endeudamiento que deja menos de $2.5M libres casi siempre es un
+ * POR QUE EXISTE: un endeudamiento que deja menos de $3M libres casi siempre es un
  * error de cuentas, no una situacion real. Los dos errores medidos en
  * conversaciones reales son (1) dar la deuda TOTAL en vez de la cuota mensual,
  * y (2) meter arriendo, servicios y mercado, que son gastos fijos y NO deudas.

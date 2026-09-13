@@ -66,7 +66,7 @@ import {
 import {
   PLANTILLAS as P, render, EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA, DISPARADORES_OBJECIONES,
   CATCHALL_LLM_HABILITADO, LIMPIAR_HANDOFF, ADAPTAR_OBJECIONES_CON_LLM,
-  RESPONDER_PREGUNTAS_CON_LLM, CONOCIMIENTO_PLAYBOOK, FASE_POR_ETAPA,
+  RESPONDER_PREGUNTAS_CON_LLM, CONOCIMIENTO_PLAYBOOK, FASE_POR_ETAPA, UMBRALES,
 } from './sop_v42_plantillas.js';
 import {
   verificarTextoGenerado, verificarAdaptacionObjecion, verificarRespuestaLibre,
@@ -1028,7 +1028,7 @@ export const ESQUEMA_POR_ETAPA = {
   BLINDAJE_CERRADO: `{${CAMPO_RAZONAMIENTO}${CAMPOS_COMUNES}}`,
 };
 
-const CONTEXTO_POR_ETAPA = {
+export const CONTEXTO_POR_ETAPA = {
   M1_ENVIADO: 'Se le pregunto: "¿A que te dedicas y cuanto estas ganando al mes aproximadamente?"',
   M1_INGRESO_AMBIGUO: 'Se le pidio que confirme el numero aproximado que le queda al mes en pesos.',
   M1_RANGO_PREGUNTADO: 'Se le pregunto: "¿Estas en el rango de $7M a $15M COP o mas al mes?". Es una pregunta de SI/NO: "confirma_rango" es true si dice que si esta en ese rango (o mas), false si dice que gana menos, null si no queda claro.',
@@ -1037,7 +1037,9 @@ const CONTEXTO_POR_ETAPA = {
   M2_NO_SABE: 'No sabia su endeudamiento; se le pidio un estimado y si le queda plata despues de pagar deudas.',
   M2_BORDERLINE: 'Se le pregunto que TIPO de deudas son (consumo, hipoteca, tarjetas). "Deuda buena" = vivienda/hipoteca.',
   M2_DEUDA_TOTAL: 'El lead dio una cifra de deuda tan alta que no cabe como cuota MENSUAL (se llevaba su ingreso entero), asi que casi seguro conto el SALDO TOTAL de sus creditos. Se le aclaro que la cuenta va solo con las cuotas del mes y se le volvio a preguntar cuanto paga al mes entre todas. Este mensaje es su respuesta: extrae esa cifra en "deuda_cop" (o el porcentaje en "endeudamiento_pct" si lo da asi, o lo que le sobra en "remanente_cop"). ⚠️ NO es una objecion ni resistencia: el lead ya esta colaborando, solo habia entendido la pregunta al reves.',
-  M2_VERIFICAR_CALCULO: 'El endeudamiento que dio le dejaba menos de $2.500.000 libres al mes y se le pregunto si la cuenta esta bien hecha: si sumo las CUOTAS MENSUALES o la DEUDA TOTAL, y se le recordo que arriendo, servicios y mercado son gastos fijos y NO son deudas. Este mensaje es su respuesta. Extrae la cifra CORREGIDA: si rehace la cuenta y da un porcentaje nuevo va en "endeudamiento_pct"; si responde en plata va en "deuda_cop" (lo que paga al mes) o "remanente_cop" (lo que le queda). ⚠️ Si dice que la cuenta estaba bien o repite la MISMA cifra, devuelve esa misma cifra, no null: ratificar es un dato. Si dice que habia metido arriendo/servicios/mercado pero NO da la cifra nueva, deja todo en null para que se le vuelva a preguntar.',
+  // El monto sale de UMBRALES: estaba escrito a mano en $2.500.000 y quedo
+  // desfasado cuando el piso subio a $3M (el LLM leia una regla vieja).
+  M2_VERIFICAR_CALCULO: `El endeudamiento que dio le dejaba menos de $${String(UMBRALES.REMANENTE_MINIMO).replace(/\B(?=(\d{3})+(?!\d))/g, '.')} libres al mes y se le pregunto si la cuenta esta bien hecha: si sumo las CUOTAS MENSUALES o la DEUDA TOTAL, y se le recordo que arriendo, servicios y mercado son gastos fijos y NO son deudas. Este mensaje es su respuesta. Extrae la cifra CORREGIDA: si rehace la cuenta y da un porcentaje nuevo va en "endeudamiento_pct"; si responde en plata va en "deuda_cop" (lo que paga al mes) o "remanente_cop" (lo que le queda). ⚠️ Si dice que la cuenta estaba bien o repite la MISMA cifra, devuelve esa misma cifra, no null: ratificar es un dato. Si dice que habia metido arriendo/servicios/mercado pero NO da la cifra nueva, deja todo en null para que se le vuelva a preguntar.`,
   M3_ENVIADO: 'Se le pidio elegir su mayor frustracion: A) no me alcanza B) no se en que se va C) deberia estar mejor D) otra. PUEDE ELEGIR VARIAS ("C y B") -- devuelve TODAS en el array "dolores". Si dice "todas"/"todas las anteriores", devuelve ["A","B","C","D"]. Si incluye D, pon el texto libre en "dolor_detalle". ⚠️ "dolor_financiero" es TRUE ante CUALQUIER mencion a deudas, pagos, cuotas, tarjetas, creditos, prestamos, intereses, o a que no le alcanza / no le rinde la plata. Ejemplo real que se clasifico MAL: "D, me siento preocupada por la cantidad de deudas que tengo" -> dolor_financiero DEBE ser true. Solo es false si el tema no toca el dinero en absoluto (salud, pareja, trabajo sin componente economico).',
   M3_RECONDUCIR: 'Dijo un dolor no financiero; se le pregunto si su frustracion SI esta conectada con que su dinero no le alcanza. "dolor_financiero" es TRUE ante cualquier mencion a deudas, pagos, cuotas, tarjetas, creditos o a que no le alcanza la plata.',
   M4_ENVIADO: 'Se le pregunto si resolver esto es prioridad AHORA o algo para "cuando tenga mas tiempo/dinero".',

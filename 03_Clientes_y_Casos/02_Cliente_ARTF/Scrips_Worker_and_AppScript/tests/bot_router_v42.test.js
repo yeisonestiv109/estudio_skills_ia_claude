@@ -78,30 +78,54 @@ describe('Filtros del SOP V4.2', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════
-  // REGLA DEL FILTRO 2 (11-sep-2026, tarde): DOS reglas y gana la mas
-  // estricta. Escalera (50% en $7M, ±5 puntos por millon) Y piso de $3M de
-  // remanente. Reescritos a proposito: la regla la cambio el fundador.
+  // REGLA DEL FILTRO 2 (13-sep-2026, fundador): MANDA EL PISO DE $3M.
+  // Reescritos a proposito. La regla del 11-sep ("escalera Y piso, gana la mas
+  // estricta") hacia que la MISMA persona pasara o no segun como lo dijera:
+  // $8M con 62% (le quedan $3,04M) iba a verificacion por la escalera, pero
+  // "me quedan 3 millones" pasaba directo. Decision: si le quedan >= $3M,
+  // pasa. En % se conservan los 2 puntos de margen; en pesos, exacto.
   // ═══════════════════════════════════════════════════════════════════════
-  test('la escalera: 50% en $7M, y ±5 puntos por cada millon', () => {
-    assert.equal(topeEndeudamiento(7_000_000), 50);
-    assert.equal(topeEndeudamiento(8_000_000), 55);
-    assert.equal(topeEndeudamiento(6_000_000), 45);
-    assert.equal(topeEndeudamiento(5_500_000), 42.5);
-  });
-
-  test('el piso de $3M manda cuando el ingreso es alto', () => {
-    // A $12M las dos reglas dan lo mismo: es el punto donde se cruzan.
+  test('el tope es el % que deja exactamente $3M libres', () => {
+    assert.equal(topeEndeudamiento(8_000_000), 62.5);
+    assert.equal(topeEndeudamiento(6_000_000), 50);
     assert.equal(topeEndeudamiento(12_000_000), 75);
-    // De ahi para arriba la escalera se vuelve absurda (115% en $20M) y el
-    // piso es el que tiene sentido: le tienen que quedar $3M.
     assert.equal(topeEndeudamiento(20_000_000), 85);
     assert.equal(calcularRemanente(20_000_000, 85), 3_000_000);
+    assert.equal(topeEndeudamiento(2_000_000), 0, 'si gana menos de $3M ningun % le deja $3M');
   });
 
-  test('el margen de tolerancia son 2 puntos, para los estimados "a ojo"', () => {
-    assert.equal(evaluarEndeudamiento(50, 7_000_000), 'ok');
-    assert.equal(evaluarEndeudamiento(52, 7_000_000), 'ok', 'justo en el margen');
-    assert.equal(evaluarEndeudamiento(53, 7_000_000), 'verificar_calculo');
+  test('CASO DEL FUNDADOR: gana $8M y debe 62% -> pasa directo (le quedan $3,04M)', () => {
+    assert.equal(evaluarEndeudamiento(62, 8_000_000), 'ok');
+    const p = decidirTurno(estadoEn('M2_ENVIADO', { salario_monto: 8_000_000 }),
+      { endeudamiento_pct: 62, deuda_literal: '62%', deuda_unidad_dicha: 'porcentaje' }, '62%');
+    assert.equal(p.etapaNueva, 'M3_ENVIADO');
+  });
+
+  test('en %, 2 puntos de margen sobre el piso para los estimados "a ojo"', () => {
+    assert.equal(evaluarEndeudamiento(64.5, 8_000_000), 'ok', 'justo en el margen');
+    assert.equal(evaluarEndeudamiento(64.6, 8_000_000), 'verificar_calculo');
+  });
+
+  test('en pesos, lo que le queda se exige EXACTO: >= $3M', () => {
+    assert.equal(evaluarEndeudamiento(null, 8_000_000, 3_000_000), 'ok');
+    assert.equal(evaluarEndeudamiento(null, 8_000_000, 2_990_000), 'verificar_calculo',
+      'el margen es para porcentajes estimados, no para una cifra en plata');
+    assert.equal(evaluarEndeudamiento(62, 8_000_000, 2_990_000), 'verificar_calculo',
+      'si hablo en plata, decide la plata y no el % redondeado');
+  });
+
+  test('INVARIANTE: si en pesos le quedan >= $3M, dicho en % tambien pasa', () => {
+    // La inconsistencia que motivo el cambio no puede volver: para ningun
+    // ingreso ni deuda el % puede ser mas estricto que la plata.
+    for (let ing = 3_000_000; ing <= 40_000_000; ing += 250_000) {
+      for (let d = 0; d <= 100; d += 0.5) {
+        const rem = ing * (1 - d / 100);
+        if (rem >= 3_000_000) {
+          assert.equal(evaluarEndeudamiento(d, ing), 'ok', `ingreso ${ing}, deuda ${d}%`);
+          assert.equal(evaluarEndeudamiento(null, ing, rem), 'ok', `ingreso ${ing}, le quedan ${rem}`);
+        }
+      }
+    }
   });
 
   test('por encima del tope NUNCA se descalifica de una: primero se verifica', () => {
@@ -121,11 +145,12 @@ describe('Filtros del SOP V4.2', () => {
     assert.equal(evaluarEndeudamiento(60, 10_000_000), 'ok');
   });
 
-  test('si lo dijo en plata, decide sobre la plata y no sobre el % redondeado', () => {
-    // Gana $7M: su tope es 50% + 2 de margen. Si dice "52%" pasa; pero si dice
-    // que le quedan $3.325.000, el % real es 52,5% y ya no pasa.
-    assert.equal(evaluarEndeudamiento(52, 7_000_000), 'ok');
-    assert.equal(evaluarEndeudamiento(52, 7_000_000, 3_325_000), 'verificar_calculo');
+  test('la escalera se retiro del codigo: no queda nada que parezca vivo', () => {
+    assert.equal(UMBRALES.INGRESO_REFERENCIA, undefined);
+    assert.equal(UMBRALES.TOPE_EN_REFERENCIA_PCT, undefined);
+    assert.equal(UMBRALES.PUNTOS_POR_MILLON, undefined);
+    assert.equal(UMBRALES.REMANENTE_MINIMO, 3_000_000);
+    assert.equal(UMBRALES.MARGEN_TOLERANCIA_PCT, 2);
   });
 
   test('la cifra que se asume al confirmar el rango coincide con lo que dice el copy', () => {
@@ -1934,16 +1959,35 @@ describe('Fallos reportados en vivo (11-sep-2026)', () => {
     assert.equal(p.telemetria['deuda.anclaje'], 'literal_no_esta_en_el_mensaje');
   });
 
-  test('el summary dice QUE regla frena: escalera o piso, sin desigualdades falsas', () => {
-    // Traza real tr_a730817345: "66.6%" con $9M decia "le quedarian 3006000
-    // libres (< 3000000)". Freno la ESCALERA (tope 60%), no el piso.
-    const p = decidirTurno(st('M2_ENVIADO', { salario_monto: 9_000_000 }),
-      { endeudamiento_pct: 66.6, deuda_literal: '66.6%', deuda_unidad_dicha: 'porcentaje' }, '66.6%');
+  test('el summary y la traza dicen el tope real, sin desigualdades falsas', () => {
+    // Traza real tr_a730817345: con la regla vieja decia "le quedarian 3006000
+    // libres (< 3000000)". Ahora el tope es el piso y se dice cuanto le queda.
+    const p = decidirTurno(estadoEn('M2_ENVIADO', { salario_monto: 9_000_000 }),
+      { endeudamiento_pct: 70, deuda_literal: '70%', deuda_unidad_dicha: 'porcentaje' }, '70%');
     assert.equal(p.etapaNueva, 'M2_VERIFICAR_CALCULO');
-    assert.doesNotMatch(p.summary, /3006000 libres \(< 3000000\)/);
-    assert.match(p.summary, /escalera/);
-    assert.equal(p.telemetria['filtro2.regla_que_manda'], 'escalera');
-    assert.equal(p.telemetria['filtro2.tope_pct'], 60);
+    assert.match(p.summary, /2700000/);
+    assert.match(p.summary, /3000000/);
+    assert.equal(p.telemetria['filtro2.tope_pct'], 66.7);
+    assert.equal(p.telemetria['filtro2.remanente_minimo'], 3_000_000);
+    assert.equal(p.telemetria['filtro2.escalera_pct'], undefined);
+  });
+
+  test('al pasar, el summary dice la cifra que dio el lead, no la recalculada del % redondeado', () => {
+    const plata = decidirTurno(estadoEn('M2_ENVIADO', { salario_monto: 8_000_000 }),
+      { remanente_cop: 3_000_000, deuda_literal: '3 millones', deuda_unidad_dicha: 'pesos' }, 'me quedan 3 millones');
+    assert.equal(plata.etapaNueva, 'M3_ENVIADO');
+    assert.match(plata.summary, /le quedan 3000000 libres/);
+    const margen = decidirTurno(estadoEn('M2_ENVIADO', { salario_monto: 8_000_000 }),
+      { endeudamiento_pct: 64, deuda_literal: '64%', deuda_unidad_dicha: 'porcentaje' }, '64%');
+    assert.equal(margen.etapaNueva, 'M3_ENVIADO');
+    assert.match(margen.summary, /margen/, 'si pasa por el margen, se dice');
+  });
+
+  test('al ratificar, el summary no afirma algo falso sobre lo que le queda', () => {
+    const p = decidirTurno(estadoEn('M2_VERIFICAR_CALCULO', { salario_monto: 8_000_000 }),
+      { endeudamiento_pct: 80, deuda_literal: '80', deuda_unidad_dicha: 'ninguna' }, 'si, 80');
+    assert.equal(p.etapaNueva, 'M2_BORDERLINE');
+    assert.match(p.summary, /1600000/, 'dice cuanto le queda de verdad');
   });
 
   test('M2_DEUDA_TOTAL y M2_VERIFICAR_CALCULO tienen pregunta pendiente que reenviar', () => {
