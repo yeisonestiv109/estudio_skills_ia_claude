@@ -194,10 +194,18 @@ responder por diseño, y en la prueba de las 18:08 el handoff entró a las
 ambas cosas se ven idénticas a "no me entendió", y llevan a reescribir el
 mensaje en formato exacto.
 
-**DECISIÓN CERRADA (Yeisiton, 11-sep):** el Filtro 2 **se queda como está**. Se
-evaluó que el remanente mandara solo y se descartó: con ingresos altos casi
-cualquier porcentaje pasaría (22,5M al 88% da 2,7M de remanente y entraría sin
-que nadie verifique ese 88%). Se respeta la regla del fundador del 7-sep.
+**~~DECISIÓN CERRADA (Yeisiton, 11-sep)~~ — ⚠️ DEROGADA EL 13-SEP.** Lo que se
+decidió el 11-sep fue dejar el Filtro 2 **como estaba** (tope 50/60 % con
+repregunta), tras evaluar que el remanente mandara solo y descartarlo con el
+número delante: con ingresos altos casi cualquier porcentaje pasaría (22,5M al
+88 % da 2,7M de remanente y entraría sin que nadie verifique ese 88 %).
+
+**Dos días después el fundador cambió la regla**: el Filtro 2 pasó a **piso de
+$3M**, y la escalera se retiró (`1593d79`, `2c195eb`). La historia completa está
+más abajo en este mismo documento: remanente $2,5M → tope 50/60 % → remanente
+$2,5M → escalera + piso $3M → **piso $3M**. Vale el razonamiento del 88 % como
+antecedente, **no el veredicto**. Antes de volver a tocar el Filtro 2,
+preguntar.
 
 **PENDIENTE INMEDIATO — la prueba con `wrangler tail`.** Quedó acordado
 repetir los dos casos con el tail abierto para ver si el mensaje llega al
@@ -5373,3 +5381,101 @@ Dato previo: en 262 pares de turnos del mismo lead hubo **0 solapados**.
 1. **`R8_COPY_NO_APROBADO`** en 6 turnos de 24 h, incluida la **apertura `M1_CONTROL` de un lead real**. El verificador no reconoce copy aprobado y cae al fallback. Hay que investigar la huella de la apertura.
 2. **"Entre 7 y 15" a la pregunta del % de deuda** (Ana Milena): Qwen tomó 7 %, aplicando la regla de rangos del **ingreso** (límite inferior). En deuda lo prudente es el superior. Aquí no cambió el resultado. **Decisión de negocio pendiente.**
 3. `fn_bot_procesar_turno` sigue haciendo `limpiarHandoff` (PATCH) **antes** de escribir. Si ese turno pierde el compare-and-swap, la limpieza del handoff ya se aplicó. Riesgo bajo, pero no es atómico.
+
+## 🧪 14-sep-2026 — `gpt-oss-120b` medido y descartado; el rango de deuda arreglado de raíz
+
+### 1. El eval respondió la pregunta que abrió el plan del 13-sep: NO se cambia de modelo
+
+`EVAL_MODELO=openai/gpt-oss-120b node evals.mjs`, corpus de 10 casos, pool de 3 llaves:
+
+```
+Acierto: 43/50 = 86 %   →   NO PASA el umbral de 95 %
+Tokens de entrada: 5.963 por clasificación (en caché: 522, 9 %)
+Latencia: p50 1.515 ms · p95 1.977 ms
+Clasificaciones/día por organización: ~34
+Rebotes 429 absorbidos por el pool: 23 de 50
+```
+
+| Campo | Acierto |
+|---|---|
+| `dolor_financiero` | **2/5** |
+| `remanente_cop` | **0/1** |
+| `dolores`, `urgencia` | 4/5 |
+| `objecion_num`, `objecion_conocida` | 7/8 |
+| `ingreso_cop` | 11/12 |
+| `endeudamiento_pct` | 8/8 ✅ |
+| `deuda_literal`, `deuda_unidad_dicha` | 3/3 ✅ |
+
+**Lo que mata la propuesta no es el 86 %, es el 9 % de caché.** Toda la razón
+para cambiar de modelo era que los tokens cacheados no descuentan del cupo
+diario. Cacheando 522 de 5.963 tokens, el ahorro real es del 9 %: sería cambiar
+a un modelo peor a cambio de casi nada.
+
+**El default se queda en `qwen/qwen3.8-27b`.** El trabajo del 13-sep NO se tira:
+`PERFILES_MODELO`, el orden `cache` y la variable `EVAL_MODELO` quedan listos
+para volver a medir cuando Groq mejore la caché o aparezca otro modelo. Volver a
+medir cuesta una corrida; decidir a ciegas cuesta el embudo.
+
+⚠️ El corpus **todavía no tiene un caso de rango de deuda**, así que este eval no
+mide la regla nueva de abajo. Añadirlo antes de la próxima corrida.
+
+### 2. "Entre 7 y 15" (hallazgo abierto nº 2 del 13-sep): cerrado, y eran DOS capas
+
+La decisión de negocio la tomó el fundador: **en deuda se toma el límite
+SUPERIOR** (en ingreso se sigue tomando el inferior). Los dos criterios eligen el
+escenario menos favorable para el lead.
+
+Pero el prompt era solo la mitad del bug. `lectura_deuda.js` anclaba en la
+**primera** cifra del literal, así que aunque el LLM extrajera bien el 15, el
+ancla lo bajaba a 7 — y lo registraba como `llm_cambio_la_cifra`, **culpando al
+modelo del error de quien lo estaba leyendo**. Tocar solo el prompt habría dejado
+el bug vivo y con la traza mintiendo sobre su causa.
+
+Arreglado en las dos (`8b52786`): regla + 2 ejemplos en el few-shot, y el ancla
+toma el máximo del literal. Con una sola cifra el máximo es esa misma cifra, así
+que ningún caso previo cambia — los 30 tests que ya existían siguen verdes sin
+tocarlos. 7 tests nuevos fijan la regla. Fixtures del prompt recapturados
+(+1438 chars, solo en `system`), con la razón escrita dentro del test.
+
+### 3. Los hooks de pre-commit llevaban tiempo sin correr, en silencio (`b28a7e9`)
+
+Llamaban a `.venv/bin/ruff` y `.venv/bin/pytest`, y **no había ningún `.venv` en
+el repo**. Peor: `.venv/bin/` es la ruta de Linux; en Windows es
+`.venv/Scripts/*.exe`. Como el repo lo comparten una máquina con WSL2 y otra con
+Windows nativo, cualquier `.venv` supuesto servía en una y rompía en la otra.
+
+La solución no fue recrear el `.venv` sino **no depender de él**: `language:
+python` con versiones pineadas, y el entorno lo crea y cachea el propio
+pre-commit por plataforma. Verificado con `pre-commit run --all-files`: ruff
+Passed, pytest Passed (22/22, incluidos los 4 de invariantes de seguridad contra
+la base real).
+
+⚠️ Los tests de `Tarea_1_Migrar_DB` necesitan un `.env` en esa carpeta
+(`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`). Sin él dan `FileNotFoundError`,
+que es fácil de confundir con "todo bien".
+
+### 4. Durable Objects SÍ están en el plan gratuito — con una condición
+
+Confirmado en la documentación de Cloudflare: 100.000 peticiones/día, 13.000
+GB-s/día, 100.000 escrituras y **5 millones** de lecturas/día (no 50 millones).
+
+⚠️ **Solo con backend SQLite.** Los de key-value exigen plan de pago. En la
+práctica: la migración del `wrangler.toml` debe declararse con
+`new_sqlite_classes`, **no** con `new_classes` — con el segundo el deploy falla
+en una cuenta gratuita y el error no dice por qué.
+
+### 5. Pendiente inmediato de la Fase 2B
+
+Antes de escribir el Durable Object hay que confirmar **si el Flow de ManyChat
+condiciona por el campo `responder`**. Indicio fuerte de que sí: el Worker ya
+devuelve `responder: false` sin ningún `msg` en varios caminos reales (fuera de
+lista blanca, handoff activo, `sin_contexto`, `json_invalido`) y esos leads no
+reciben burbujas vacías. Si se confirma, la Fase 2B **no necesita tocar el
+Flow**: el Worker responde `responder: false` y el DO habla por `/sendContent`.
+
+Ventana de agrupamiento decidida por el fundador: **6-8 s**, reprogramable con
+cada burbuja nueva.
+
+⚠️ El `wrangler.toml` todavía trae el experimento de la Fase 0 activo
+(`EXPERIMENTO_ESPERA_MS = "5000"` para el ID `813370090`). La Fase 0 ya concluyó:
+retirarlo.
