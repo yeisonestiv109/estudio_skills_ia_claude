@@ -1,0 +1,39 @@
+{
+  "nombre": "12 · \"entre 40 y 60\" con $6M — aqui el techo SI cambia el desenlace",
+  "fuente": "Construido a partir de la regla del 14-sep-2026 para que el rango no sea cosmetico.",
+  "nota": "Con ingreso de $6M el tope es el % que deja $3M libres (50%, +2 puntos de margen). Tomar el PISO del rango (40%) lo dejaria pasar directo a M3 con $3,6M libres; tomar el TECHO (60%) lo deja en $2,4M, por debajo del piso, y manda a verificar el calculo antes de decidir nada. Si este caso empieza a dar M3_ENVIADO, la regla del techo se rompio.",
+  "lead": {
+    "nombre": "Camilo"
+  },
+  "turnos": [
+    {
+      "lead": "CONTROL",
+      "espera": {
+        "etapa": "M1_ENVIADO"
+      }
+    },
+    {
+      "lead": "soy docente universitario y gano 6 millones",
+      "pista": {
+        "ingreso_cop": 6000000
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "estado": "contactado"
+      }
+    },
+    {
+      "lead": "uy no se exacto, entre 40 y 60",
+      "pista": {
+        "endeudamiento_pct": 60,
+        "deuda_literal": "entre 40 y 60",
+        "deuda_unidad_dicha": "ninguna"
+      },
+      "espera": {
+        "etapa": "M2_VERIFICAR_CALCULO",
+        "estado": "contactado",
+        "handoff": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "nombre": "11 · \"Entre 7 y 15\" — un rango de DEUDA se lee por el techo",
+  "fuente": "Lead real (Ana Milena), visto en el panel de telemetria el 13-sep-2026. Qwen extrajo 7% aplicando la regla de rangos del INGRESO (limite inferior).",
+  "nota": "Regla del fundador (14-sep-2026): con el INGRESO se toma el piso y con la DEUDA el techo, porque ambos eligen el escenario MENOS favorable para el lead. Aqui el desenlace no cambia (con 7% o con 15% pasa a M3 igual): lo que este caso mide es la EXTRACCION, que es donde estaba el error. El caso 12 cubre el rango donde si cambia el resultado.",
+  "lead": {
+    "nombre": "Ana Milena"
+  },
+  "turnos": [
+    {
+      "lead": "CLARIDAD",
+      "espera": {
+        "etapa": "M1_ENVIADO"
+      }
+    },
+    {
+      "lead": "soy odontologa, gano 10 millones al mes",
+      "pista": {
+        "ingreso_cop": 10000000
+      },
+      "espera": {
+        "etapa": "M2_ENVIADO",
+        "estado": "contactado"
+      }
+    },
+    {
+      "lead": "Entre 7 y 15",
+      "pista": {
+        "endeudamiento_pct": 15,
+        "deuda_literal": "entre 7 y 15",
+        "deuda_unidad_dicha": "ninguna"
+      },
+      "espera": {
+        "etapa": "M3_ENVIADO",
+        "estado": "contactado",
+        "handoff": null
+      }
+    }
+  ]
+}
