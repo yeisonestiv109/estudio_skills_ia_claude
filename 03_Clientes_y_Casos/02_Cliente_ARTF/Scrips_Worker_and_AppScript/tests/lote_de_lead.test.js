@@ -13,7 +13,8 @@ import assert from 'node:assert/strict';
 import {
   LoteDeLead, juntarBurbujas, cuerpoSendContent, enviarBurbujas, debeProcesarYa,
   enteroDeEnv, VENTANA_MS_POR_DEFECTO, TOPE_MS_POR_DEFECTO, MAX_BURBUJAS_POR_LOTE,
-  CLAVE_MENSAJES, CLAVE_PRIMERO_EN,
+  CLAVE_MENSAJES, CLAVE_PRIMERO_EN, CLAVE_RESULTADO,
+  esFalloPermanente, esVentanaVencida, FalloDeEnvio,
 } from '../lote_de_lead.js';
 
 /** Storage en memoria con la misma forma que el de un Durable Object. */
@@ -174,9 +175,15 @@ describe('cuerpoSendContent: el contrato con la API v2 de ManyChat', () => {
     });
   });
 
-  test('message_tag solo aparece si se pide', () => {
+  test('⚠️ NUNCA lleva message_tag, y la firma ya no lo acepta', () => {
+    // Verificado contra la API real el 14-sep-2026: Meta deprecio los message
+    // tags y ManyChat responde "Message tags are no longer supported for
+    // Facebook Messenger". Si alguien "arregla" el envio añadiendolo, rompe
+    // TODOS los mensajes. Por eso el parametro se retiro de la firma.
     assert.equal('message_tag' in cuerpoSendContent('123', 'x'), false);
-    assert.equal(cuerpoSendContent('123', 'x', 'ACCOUNT_UPDATE').message_tag, 'ACCOUNT_UPDATE');
+    assert.equal('message_tag' in cuerpoSendContent('123', 'x', 'ACCOUNT_UPDATE'), false,
+      'aunque alguien pase un tercer argumento, no debe llegar al cuerpo');
+    assert.equal(cuerpoSendContent.length, 2, 'la firma solo acepta subscriberId y texto');
   });
 
   test('⚠️ UNA burbuja por llamada: R1_LINK_AISLADO', () => {
@@ -234,16 +241,39 @@ describe('enviarBurbujas: en orden, y si una falla no se siguen mandando', () =>
   });
 });
 
-describe('limpiar: el lote no deja basura', () => {
-  test('borra mensajes, marcas y alarma', async () => {
+describe('limpiar: cierra el turno sin tragarse el siguiente', () => {
+  test('sin entrada pendiente, borra todo y apaga la alarma', async () => {
     const { lote, storage } = loteFalso();
     await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'Hola' }));
+    await storage.delete(CLAVE_MENSAJES); // el turno ya se proceso
     await lote.limpiar();
 
-    assert.equal(await storage.get(CLAVE_MENSAJES), undefined);
     assert.equal(await storage.get(CLAVE_PRIMERO_EN), undefined);
     assert.equal(await storage.get('payload_base'), undefined);
     assert.equal(storage._alarma(), null);
+  });
+
+  test('⚠️ si llego una burbuja MIENTRAS se enviaba, NO se borra: es el turno siguiente', async () => {
+    // El lead escribe mientras el bot le responde. Es lo normal, no el caso
+    // raro. Borrar esa burbuja seria tragarse un mensaje sin dejar rastro.
+    const { lote, storage } = loteFalso({ LOTE_VENTANA_MS: '7000' });
+    await storage.put(CLAVE_RESULTADO, { subId: '123', burbujas: ['ya enviada'], enviadas: 1 });
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'ah espera' }));
+
+    await lote.limpiar();
+
+    assert.equal((await storage.get(CLAVE_MENSAJES)).length, 1, 'la burbuja nueva sigue ahi');
+    assert.equal(await storage.get(CLAVE_RESULTADO), undefined, 'el turno enviado si se cerro');
+    assert.ok(storage._alarma() > Date.now(), 'y queda alarma para procesarla');
+  });
+
+  test('un lote de solo stickers no deja una alarma girando para siempre', async () => {
+    const { lote, storage } = loteFalso();
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: '   ' }));
+    await lote.alarm();
+
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined);
+    assert.equal(storage._alarma(), null, 'sin texto que procesar, la alarma se apaga');
   });
 });
 
@@ -270,5 +300,152 @@ describe('la ventana por defecto respeta la decision del fundador', () => {
 
   test('el tope es varias veces la ventana: si no, el debounce no serviria', () => {
     assert.ok(TOPE_MS_POR_DEFECTO > VENTANA_MS_POR_DEFECTO * 2);
+  });
+});
+
+// ===========================================================================
+// INCIDENTE DEL 14-SEP-2026 — el bucle de reprocesamiento
+//
+// Que paso: la primera version dejaba las burbujas de ENTRADA en el storage y
+// relanzaba la excepcion cuando fallaba el envio, contando con el reintento de
+// alarma de Cloudflare. Pero la alarma se reejecuta DESDE EL PRINCIPIO: cada
+// reintento volvia a llamar al LLM y a escribir el turno en la base. En
+// produccion, el lead Vasco_ana tuvo una apertura correcta a las 16:04:05 y
+// CINCO reprocesos detras ("Repitio la palabra clave estando en M1_ENVIADO").
+//
+// La idempotencia del Worker no lo atajo porque vive en `caches.default`, y la
+// Cache API no retiene entre invocaciones de una alarma de Durable Object.
+// ===========================================================================
+
+describe('esFalloPermanente: reintentar lo irreparable es un bucle', () => {
+  test('transitorios: 429 y 5xx SI se reintentan', () => {
+    assert.equal(esFalloPermanente(429), false);
+    assert.equal(esFalloPermanente(500), false);
+    assert.equal(esFalloPermanente(503), false);
+  });
+
+  test('permanentes: el resto de 4xx NO se reintenta nunca', () => {
+    assert.equal(esFalloPermanente(400), true);
+    assert.equal(esFalloPermanente(401), true);
+    assert.equal(esFalloPermanente(404), true);
+  });
+});
+
+describe('esVentanaVencida: el 3011 de Meta se reconoce por lo que es', () => {
+  const cuerpo3011 = '{"status":"error","message":"Subscriber last interaction was over 266h ago (more than 24 hours ago)","code":3011}';
+
+  test('detecta el codigo 3011', () => {
+    assert.equal(esVentanaVencida(400, cuerpo3011), true);
+  });
+
+  test('detecta tambien por el texto, si el codigo cambiara de forma', () => {
+    assert.equal(esVentanaVencida(400, 'last interaction was more than 24 hours ago'), true);
+  });
+
+  test('un 400 cualquiera NO es ventana vencida', () => {
+    assert.equal(esVentanaVencida(400, '{"message":"Subscriber does not exist"}'), false);
+  });
+
+  test('es permanente: no hay message_tag que lo salve, Meta los deprecó', () => {
+    assert.equal(esFalloPermanente(400, cuerpo3011), true);
+  });
+});
+
+describe('enviarBurbujas: un reintento NO le duplica mensajes al lead', () => {
+  test('`desde` reanuda donde se quedo', async () => {
+    const vistas = [];
+    const fetchFalso = async (url, opts) => {
+      vistas.push(JSON.parse(opts.body).data.content.messages[0].text);
+      return { ok: true, text: async () => '' };
+    };
+    const total = await enviarBurbujas('tok', '123', ['uno', 'dos', 'tres'], fetchFalso, 2);
+
+    assert.deepEqual(vistas, ['tres'], 'las dos primeras ya habian salido: no se repiten');
+    assert.equal(total, 3, 'devuelve el total acumulado, no lo enviado en esta llamada');
+  });
+
+  test('el error dice CUANTAS salieron antes de fallar', async () => {
+    const fetchFalso = async (url, opts) => {
+      const t = JSON.parse(opts.body).data.content.messages[0].text;
+      return t === 'tres' ? { ok: false, status: 500, text: async () => 'boom' } : { ok: true, text: async () => '' };
+    };
+    const err = await enviarBurbujas('tok', '123', ['uno', 'dos', 'tres'], fetchFalso).catch((e) => e);
+
+    assert.ok(err instanceof FalloDeEnvio);
+    assert.equal(err.indice, 2, 'dos salieron; el reintento debe empezar por la tercera');
+    assert.equal(err.permanente, false, '500 es transitorio');
+  });
+});
+
+describe('las dos fases: procesar una vez, enviar las que haga falta', () => {
+  test('⚠️ con un resultado pendiente, alarm() NO vuelve a procesar', async () => {
+    // Es EL test del incidente: si esto se rompe, vuelve el gasto de tokens.
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    let envios = 0;
+    lote.enviarPendiente = async () => { envios++; };
+
+    await storage.put(CLAVE_RESULTADO, { subId: '123', burbujas: ['hola'], enviadas: 0 });
+    // Hay burbujas de entrada ademas del pendiente: no deben tocarse.
+    await storage.put(CLAVE_MENSAJES, [{ texto: 'hola' }]);
+    await lote.alarm();
+
+    assert.equal(envios, 1, 'se fue directo a enviar');
+    assert.deepEqual(await storage.get(CLAVE_MENSAJES), [{ texto: 'hola' }], 'no consumio la entrada');
+  });
+
+  test('un fallo permanente no relanza: se rinde y avisa', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    let rendido = null;
+    lote.rendirse = async (res, err, enviadas) => { rendido = { err, enviadas }; await lote.limpiar(); };
+
+    const resultado = { subId: '123', burbujas: ['a', 'b'], enviadas: 0 };
+    await storage.put(CLAVE_RESULTADO, resultado);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => '{"code":3011}' });
+    try {
+      await lote.enviarPendiente(resultado); // NO debe lanzar
+    } finally { globalThis.fetch = original; }
+
+    assert.ok(rendido, 'se rindio en vez de reintentar');
+    assert.equal(rendido.err.ventanaVencida, true);
+  });
+
+  test('un fallo transitorio SI relanza, para que Cloudflare reintente', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok', LOTE_MAX_REINTENTOS: '3' });
+    const resultado = { subId: '123', burbujas: ['a', 'b'], enviadas: 0 };
+    await storage.put(CLAVE_RESULTADO, resultado);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => 'upstream' });
+    try {
+      await assert.rejects(() => lote.enviarPendiente(resultado));
+    } finally { globalThis.fetch = original; }
+
+    const guardado = await storage.get(CLAVE_RESULTADO);
+    assert.equal(guardado.enviadas, 0, 'guarda cuantas iban para no repetirlas');
+  });
+
+  test('agotados los reintentos, se rinde en vez de seguir para siempre', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok', LOTE_MAX_REINTENTOS: '1' });
+    let rendido = false;
+    lote.rendirse = async () => { rendido = true; await lote.limpiar(); };
+
+    const resultado = { subId: '123', burbujas: ['a'], enviadas: 0 };
+    await storage.put(CLAVE_RESULTADO, resultado);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 503, text: async () => 'x' });
+    try { await lote.enviarPendiente(resultado); } finally { globalThis.fetch = original; }
+
+    assert.equal(rendido, true);
+  });
+
+  test('tras enviar bien, no queda resultado pendiente', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    const resultado = { subId: '123', burbujas: ['a'], enviadas: 0 };
+    await storage.put(CLAVE_RESULTADO, resultado);
+    const original = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, text: async () => '' });
+    try { await lote.enviarPendiente(resultado); } finally { globalThis.fetch = original; }
+
+    assert.equal(await storage.get(CLAVE_RESULTADO), undefined);
   });
 });

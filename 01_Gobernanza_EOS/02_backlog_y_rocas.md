@@ -5564,3 +5564,94 @@ en la base** pero el lead no recibió el mensaje, y eso queda en el log.
    en las trazas que sale **UN** turno, no tres.
 3. Si algo sale mal: `LOTE_AGRUPAMIENTO = "false"` y redesplegar devuelve el
    comportamiento anterior sin tocar código.
+
+## 🔥 14-sep-2026 (tarde) — El bucle de reprocesamiento de la Fase 2B
+
+**Incidente en producción causado por la Fase 2B. Corregido.** Worker desplegado
+`eae0192f`; el arreglo está en el repo, **sin desplegar**.
+
+### Qué se vio
+
+Lead **Vasco_ana** (`1906791072`): una apertura correcta a las 16:04:05 y
+**cinco reprocesos** detrás, con este patrón:
+
+```
+16:04:05  Apertura enviada (M1_CONTROL)          ← turno correcto
+16:04:09  Repitio la palabra clave...            ← +4 s
+16:04:16  Repitio la palabra clave...            ← +7 s
+16:09:19 / :24 / :31  idem, tres veces más
+```
+
+Los +4 s y +7 s son el backoff de reintento de alarma de Cloudflare. Consumo del
+día: **248.618 tokens** repartidos en 3 organizaciones (la llave principal quedó
+en 168.158 de 200.000). El lead **no recibió nada**.
+
+⚠️ El bucle **se detuvo solo** al agotar los reintentos: fue acotado, no
+infinito. No es el bucle de concurrencia del 11-sep.
+
+### Causa raíz: no separé *procesar* de *enviar*
+
+`alarm()` relanzaba la excepción cuando fallaba el envío, contando con el
+reintento de Cloudflare. Pero **la alarma se reejecuta desde el principio**: cada
+reintento volvía a llamar al LLM y a escribir el turno, cuando lo único que había
+fallado era el último paso.
+
+La idempotencia del Worker no lo atajó porque vive en `caches.default`, y **la
+Cache API no retiene entre invocaciones de una alarma de Durable Object**.
+
+### Lo que NO era (verificado antes de tocar nada)
+
+- **No era `message_tag`.** El código nunca lo enviaba: `enviarBurbujas` llamaba
+  a `cuerpoSendContent(subId, texto)` sin el tercer argumento. Probado contra la
+  API real: el payload del Worker devuelve `"Subscriber does not exist"` con un
+  id falso, o sea **pasa la validación de estructura**.
+- **No era `ultimo_msg_interaccion`.** Esa columna, ese parámetro y ese `if` no
+  existen en el repo. No hacía falta migración ni tocar las RPC: el sitio
+  correcto para no reprocesar es el storage del Durable Object, que ya es
+  durable.
+
+### Lo que SÍ era, y no estaba en el diagnóstico inicial
+
+**La ventana de 24 horas de Meta (código 3011).** Probado contra la API real:
+
+```json
+{"status":"error","code":3011,
+ "message":"Content can't be sent to the subscriber without a message tag.
+            Subscriber's last interaction was over 266h ago"}
+```
+
+Es una tenaza: **sin `message_tag` no se puede escribir fuera de la ventana, y
+los `message_tag` están deprecados por Meta**. No hay formato ni parámetro que lo
+arregle. Cuando pasa, el único camino es un humano.
+
+### El arreglo (tres cosas)
+
+1. **Dos fases.** En cuanto el turno está procesado, el resultado se guarda en
+   `resultado_pendiente` y las burbujas de entrada se borran. Un reintento
+   encuentra el pendiente y **solo reenvía**: nunca vuelve al pipeline.
+2. **Permanente vs transitorio.** 429 y 5xx se reintentan; cualquier otro 4xx
+   —el 3011 incluido— **no se reintenta jamás** y se avisa al Setter por Google
+   Chat, porque el turno quedó escrito en la base y el lead no lo recibió: el bot
+   y el lead están desincronizados y eso solo lo arregla una persona.
+   Es la misma ley del incidente de concurrencia — *un conflicto nunca se
+   reintenta con los mismos datos* — aplicada al canal de salida.
+3. **Reanudar, no reenviar.** Si salieron 2 de 4 burbujas, el reintento empieza
+   por la tercera. Antes el lead recibía las dos primeras otra vez.
+
+**Y un cuarto, encontrado revisando el arreglo:** `limpiar()` borraba las
+burbujas que hubieran llegado *mientras* se enviaba. El lead que escribe
+mientras el bot le responde es lo normal, no el caso raro: ese mensaje se perdía
+sin dejar rastro. Ahora, si queda entrada sin procesar, se reprograma la alarma
+en vez de apagarla.
+
+### Estado
+
+686 tests en verde (44 del lote), compuerta 5/5, `--dry-run` compila.
+`message_tag` **se retiró de la firma** de `cuerpoSendContent` para que nadie lo
+reintroduzca: el día que alguien "arregle" el envío añadiéndolo, rompe todo.
+
+### Antes de volver a desplegar
+
+La prueba que cierra esto: tres burbujas seguidas de un lead **que haya escrito
+hace menos de 24 h**, y confirmar en las trazas **un** turno y **un** envío. Si
+algo sale mal, `LOTE_AGRUPAMIENTO = "false"` devuelve el camino anterior.
