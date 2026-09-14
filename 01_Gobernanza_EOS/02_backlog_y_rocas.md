@@ -5222,3 +5222,60 @@ Con límite por organización y cada llamada comiéndose ~73% del ITPM, repartir
 - **Summary al ratificar:** decía *"le siguen quedando menos de 3000000"* aunque no fuera cierto.
 
 ⚠️ **Historia del Filtro 2:** remanente $2,5M → tope 50/60 % → remanente $2,5M → escalera + piso $3M → **piso $3M**. Antes de volver a tocarlo, preguntar.
+
+## 🛡️ 13-sep-2026 (noche) — Seguridad, compare-and-swap, cupo diario, panel de leads y evals listos
+
+Plan aprobado por el fundador: **(1)** medir `openai/gpt-oss-120b` antes de pagar, **(2)** experimento de la Fase 0, **(3)** compare-and-swap + contador diario, **(4)** panel de leads. Worker `90328570`. Worker 627 tests, invariantes de base 22/22 y smoke RPC 8/8 en verde.
+
+### 🚨 Hueco de seguridad cerrado (encontrado de paso)
+
+Con la llave **pública** (va dentro del dashboard) se podían ejecutar:
+- `fn_bot_procesar_turno`: escribir el estado de cualquier lead.
+- `fn_bot_get_estado`: leer salario, deudas y etapa de cualquier lead.
+- `fn_purgar_telemetry_spans`: borrar la telemetría.
+
+Las migraciones originales revocaban esos permisos. Una recreación manual del 4-sep (`mcp_req.json` en `artf-pipeline-app`, fuera del flujo de migraciones) los devolvió a `PUBLIC`, probablemente por un `REVOKE` con la firma vieja. **Revocado** (`b310fb2`); `anon` ahora recibe 401.
+
+El test que lo habría atrapado ya existía, pero **no corría: el `.venv` del repo apunta a la ruta vieja `proyecto_cliente_catalina`**, así que el hook de pytest nunca pudo ejecutarse. Hoy se corrió con `uv run --no-project --with pytest --with requests python -m pytest`. **Pendiente: rehacer el `.venv`.**
+
+### Fase 1 — Compare-and-swap de la etapa + consumo diario (`a455d5b`, `f0f3e20`)
+
+- `fn_bot_procesar_turno(p_etapa_esperada, p_verificar_etapa)`: bajo el bloqueo, si la etapa ya no es la que el Worker leyó, **no escribe nada**. Un sub-bloque con SQLSTATE `P0B01` deshace incluso el upsert de `clientes`. El Worker calla ese turno y deja `db.conflicto` en la traza.
+- La comparación va **después** del upsert de `clientes`, porque para un lead nuevo no hay fila que bloquear antes: la serialización ocurre en ese upsert.
+- **Probado con concurrencia real contra producción:**
+  - 3 rondas de 5 escrituras simultáneas: siempre 1 gana, 4 conflicto, y la etapa final es la del ganador.
+  - Lead nuevo con 4 primeros mensajes simultáneos: 1 escribe, 3 conflicto, 1 sola gestión, 0 errores.
+- `llm_consumo_diario`: tokens por día UTC y por llave (entrada, en caché, salida). `tpd_limite_conocido` se lee del 429. **Techo de Groq free (docs oficiales): 200K tokens/día por organización y por modelo.** Ayer se midieron 471K tokens de entrada con la mitad de los leads en solo registro.
+
+### Proveedor: Cerebras ya no es gratis
+
+Desde el 17-ago-2026 es una prueba de $5 con tarjeta que vence a los 30 días. Se descarta por la regla del plan gratuito. **Decisión: medir `gpt-oss-120b` en Groq**, que tiene caché de prompt y cuyos tokens en caché no cuentan para los límites.
+
+**Preparación lista (`8b9d6ad`), sin cambiar producción:**
+- `PERFILES_MODELO` y la variable `LLM_MODELO_CLASIFICADOR`: solo cambia el clasificador. Las otras 3 llamadas siguen en qwen, así que el cupo diario se reparte entre dos modelos.
+- **Prompt de qwen idéntico byte a byte** (3 fixtures capturados antes del cambio). Con gpt-oss va primero la parte fija, para aprovechar la caché, sin perder ninguna regla (con test).
+- `evals.mjs` acepta `EVAL_MODELO`, usa el pool, aborta si la llave está revocada, separa el 429 del fallo del modelo, mide caché, latencia y proyección diaria, y guarda el resultado en JSON. No escribe telemetría de producción.
+- Corpus 09 (traza real de "1200") y 10 (8M con 62 %).
+
+**Bloqueado:** la llave de `.dev.vars` sigue revocada (401). Con ~5.450 tokens por clasificación, **una corrida de qwen consume más que el cupo diario de una organización**, así que hace falta el pool completo en `GROQ_API_KEYS`.
+
+### Fase 0 — Experimento de concurrencia de ManyChat (desplegado, esperando la prueba)
+
+Espera de 5 s solo para `813370090` (`EXPERIMENTO_ESPERA_IDS` en `wrangler.toml`). Dos burbujas en menos de 2 s: si las trazas se solapan, **2A** (debounce síncrono); si la segunda arranca al terminar la primera, **2B** (Durable Object). **Retirar las dos variables al decidir.**
+
+Dato previo: en 262 pares de turnos del mismo lead hubo **0 solapados**.
+
+### Fase 4 — Panel de leads (`5ac6ec1`, `5e8d353`)
+
+- `fn_telemetria_resumen / _leads / _lead`, solo `service_role`, con índices. El resumen de 7 días tarda 15 ms.
+- Pestaña **Leads** en `telemetria/index.html`:
+  - Métricas por ventana (10 min, 1 h, 24 h, 7 días) y cupo diario.
+  - Lista de leads con búsqueda.
+  - Línea de tiempo por lead: chat, pasos, lo que entendió el LLM, rotación, router y errores.
+- Verificado renderizado con datos reales en escritorio y móvil.
+
+### Hallazgos abiertos que dejó ver el panel (no se tocaron)
+
+1. **`R8_COPY_NO_APROBADO`** en 6 turnos de 24 h, incluida la **apertura `M1_CONTROL` de un lead real**. El verificador no reconoce copy aprobado y cae al fallback. Hay que investigar la huella de la apertura.
+2. **"Entre 7 y 15" a la pregunta del % de deuda** (Ana Milena): Qwen tomó 7 %, aplicando la regla de rangos del **ingreso** (límite inferior). En deuda lo prudente es el superior. Aquí no cambió el resultado. **Decisión de negocio pendiente.**
+3. `fn_bot_procesar_turno` sigue haciendo `limpiarHandoff` (PATCH) **antes** de escribir. Si ese turno pierde el compare-and-swap, la limpieza del handoff ya se aplicó. Riesgo bajo, pero no es atómico.
