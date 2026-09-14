@@ -1357,6 +1357,17 @@ tibia puede ser un si rotundo.
   -> va en "endeudamiento_pct", NO en "deuda_cop". Solo es plata si lo dice con
   unidad ("50 mil", "2 millones") o con signo de peso.
 
+- ⚠️ RANGOS DE DEUDA: AL REVES QUE EL INGRESO. Si el lead da un rango para su
+  endeudamiento o para lo que paga al mes ("entre 7 y 15", "del 20 al 30%", "entre
+  2 y 3 millones"), extrae SIEMPRE el limite SUPERIOR: 15, 30, 3000000.
+  La razon de que sean al reves es una sola: con el ingreso se toma el PISO y con
+  la deuda el TECHO porque ambos eligen el escenario MENOS favorable para el lead.
+  Prometer que califica y descubrirlo despues es peor que pedirle que lo confirme.
+  Caso real que se clasifico MAL: a la pregunta del endeudamiento respondio
+  "Entre 7 y 15" y se extrajo 7 -> el lead paso el filtro con la MITAD de su deuda.
+  En "deuda_literal" va el texto copiado tal cual ("entre 7 y 15"), nunca el
+  numero que elegiste.
+
 - ⚠️ DEUDA TOTAL vs CUOTA MENSUAL, no lo confundas con resistencia: si el lead da
   una cifra de deuda enorme (del orden de su ingreso o mas), NO esta ocultando nada
   ni objetando. Conto el SALDO de sus creditos en vez de lo que paga al mes, que es
@@ -1443,6 +1454,18 @@ Casos limite reales. Cada uno se clasifico MAL antes de estar aqui.
     <lead>75</lead>
     <razonamiento>Es un número pelado respondiendo a la pregunta de deudas. Significa 75%.</razonamiento>
     <salida>endeudamiento_pct = 75, deuda_literal = "75", deuda_unidad_dicha = "ninguna"</salida>
+  </ejemplo>
+
+  <ejemplo>
+    <lead>Entre 7 y 15</lead>
+    <razonamiento>Es un rango de DEUDA, no de ingreso. En la deuda se toma el límite SUPERIOR (el peor caso); el límite inferior es la regla del ingreso y aquí no aplica.</razonamiento>
+    <salida>endeudamiento_pct = 15, deuda_literal = "entre 7 y 15", deuda_unidad_dicha = "ninguna"</salida>
+  </ejemplo>
+
+  <ejemplo>
+    <lead>Pago entre 2 y 3 millones al mes</lead>
+    <razonamiento>Rango de deuda expresado en plata: se toma el techo, 3 millones. Lleva palabra de escala, así que la unidad dicha es "pesos".</razonamiento>
+    <salida>deuda_cop = 3000000, deuda_literal = "entre 2 y 3 millones", deuda_unidad_dicha = "pesos"</salida>
   </ejemplo>
 
   <ejemplo>

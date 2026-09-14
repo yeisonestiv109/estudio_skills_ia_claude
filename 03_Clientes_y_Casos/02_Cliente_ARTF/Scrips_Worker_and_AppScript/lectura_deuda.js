@@ -106,7 +106,23 @@ export function leerDeuda(c = {}, textoLead = '', etapa = null, ingreso = null) 
     // se usa lo que dijo el LLM, y los chequeos de posibilidad corren igual.
     anclaje = 'sin_literal';
   } else {
-    const v = numerosDelTexto(literal)[0] ?? null;
+    // RANGOS DE DEUDA (14-sep-2026). Un literal puede traer DOS cifras porque el
+    // lead contesto con un rango: "entre 7 y 15", "del 20 al 30%".
+    //
+    // Anclar en la PRIMERA hundia la deuda a su piso, que es justo al reves de
+    // la prudencia que pide el negocio: con el ingreso se toma el piso y con la
+    // deuda el techo, porque ambos eligen el escenario MENOS favorable para el
+    // lead. Caso real: "Entre 7 y 15" entraba como 7% y el lead pasaba el filtro
+    // con la MITAD de su deuda.
+    //
+    // Y hacia algo peor que equivocarse: el LLM extraia bien el 15, el ancla lo
+    // bajaba a 7 y la traza lo registraba como `llm_cambio_la_cifra` -- culpaba
+    // al modelo del error de quien lo estaba leyendo.
+    //
+    // Con UNA sola cifra el maximo es esa misma cifra, asi que ningun caso que
+    // ya funcionaba cambia de comportamiento.
+    const cifrasDelLiteral = numerosDelTexto(literal);
+    const v = cifrasDelLiteral.length ? Math.max(...cifrasDelLiteral) : null;
     if (v === null) {
       // "setenta", "la mitad": no hay digitos que comprobar. Convertir palabras
       // en numeros es lenguaje, y eso es del LLM.

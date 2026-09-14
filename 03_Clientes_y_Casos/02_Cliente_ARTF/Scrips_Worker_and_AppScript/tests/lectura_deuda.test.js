@@ -242,3 +242,75 @@ describe('Remanente y sin datos', () => {
     assert.equal(r.diagnostico['deuda.unidad_esperada'], 'porcentaje');
   });
 });
+
+describe('CASO 9 — RANGOS DE DEUDA: manda el techo, no el piso (14-sep-2026)', () => {
+  /**
+   * Caso real reportado por el fundador: a la pregunta del endeudamiento el lead
+   * respondio "Entre 7 y 15" y entro como 7%. El lead pasaba el Filtro 2 con la
+   * MITAD de su deuda.
+   *
+   * Son DOS capas y las dos fallaban:
+   *   1. el prompt solo tenia regla de rangos para el INGRESO (tomar el piso), y
+   *      el LLM la generalizo a la deuda;
+   *   2. `leerDeuda` anclaba en la PRIMERA cifra del literal, asi que aunque el
+   *      LLM extrajera bien el 15, el ancla lo bajaba a 7 -- y encima lo
+   *      registraba como `llm_cambio_la_cifra`, culpando al modelo.
+   *
+   * La regla: con el INGRESO se toma el piso y con la DEUDA el techo. Los dos
+   * eligen el escenario menos favorable para el lead.
+   */
+  test('"Entre 7 y 15" es 15%, no 7%', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 15, deuda_literal: 'entre 7 y 15', deuda_unidad_dicha: 'ninguna' },
+      'Entre 7 y 15', 'M2_ENVIADO', I22);
+    assert.equal(r.endeudamiento_pct, 15);
+    assert.equal(r.deuda_cop, null);
+    assert.equal(r.diagnostico['deuda.anclaje'], 'ok');
+  });
+
+  test('el ancla ya no acusa al LLM de cambiar la cifra cuando dio el techo', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 15, deuda_literal: 'entre 7 y 15', deuda_unidad_dicha: 'ninguna' },
+      'Entre 7 y 15', 'M2_ENVIADO', I22);
+    assert.equal(r.diagnostico['deuda.discrepancia'], null);
+  });
+
+  test('si el LLM se queda con el piso, el ancla lo sube al techo', () => {
+    // El literal es la fuente de verdad: el lead escribio las dos cifras.
+    const r = leerDeuda(
+      { endeudamiento_pct: 7, deuda_literal: 'entre 7 y 15', deuda_unidad_dicha: 'ninguna' },
+      'Entre 7 y 15', 'M2_ENVIADO', I22);
+    assert.equal(r.endeudamiento_pct, 15);
+  });
+
+  test('"del 20 al 30%" es 30%', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 30, deuda_literal: 'del 20 al 30%', deuda_unidad_dicha: 'porcentaje' },
+      'del 20 al 30%', 'M2_ENVIADO', I22);
+    assert.equal(r.endeudamiento_pct, 30);
+  });
+
+  test('rango en PLATA: "entre 2 y 3 millones" es la cuota de $3M', () => {
+    const r = leerDeuda(
+      { deuda_cop: 3_000_000, deuda_literal: 'entre 2 y 3 millones', deuda_unidad_dicha: 'pesos' },
+      'Pago entre 2 y 3 millones al mes', 'M2_ENVIADO', I22);
+    assert.equal(r.deuda_cop, 3_000_000);
+    assert.equal(r.endeudamiento_pct, null);
+  });
+
+  test('UNA sola cifra se comporta exactamente igual que antes', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 15, deuda_literal: '15', deuda_unidad_dicha: 'ninguna' },
+      '15', 'M2_ENVIADO', I22);
+    assert.equal(r.endeudamiento_pct, 15);
+    assert.equal(r.diagnostico['deuda.discrepancia'], null);
+  });
+
+  test('un rango absurdo NO se corrige: "entre 100 y 1200" es 1200 e imposible', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 1200, deuda_literal: 'entre 100 y 1200', deuda_unidad_dicha: 'ninguna' },
+      'entre 100 y 1200', 'M2_ENVIADO', I22);
+    assert.equal(r.endeudamiento_pct, 1200);
+    assert.equal(r.plausibilidad, 'imposible');
+  });
+});

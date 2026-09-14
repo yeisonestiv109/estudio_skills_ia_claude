@@ -10,6 +10,14 @@
  * Reglas que estos tests protegen:
  *   1. Con qwen (default) el cuerpo que se manda a Groq es IDENTICO al de antes,
  *      byte a byte (fixtures capturados antes del cambio).
+ *
+ *      ⚠️ FIXTURES RECAPTURADOS EL 14-SEP-2026 (+1438 chars en los tres, solo en
+ *      `system`). NO se ablando el test: entro una regla de negocio nueva -- los
+ *      RANGOS DE DEUDA se leen por el techo y no por el piso -- y esa regla va
+ *      en el prompt, asi que el prompt de qwen tenia que cambiar. Lo que el test
+ *      sigue protegiendo es lo de siempre: que el orden 'cache' de gpt-oss no
+ *      altere ni un caracter del prompt de qwen. Si estos fixtures se vuelven a
+ *      tocar sin una regla nueva detras, el cambio esta mal.
  *   2. El cambio de modelo es una variable, solo del clasificador, y solo acepta
  *      modelos con perfil.
  *   3. Con gpt-oss la parte fija va primero y es identica entre turnos distintos.
