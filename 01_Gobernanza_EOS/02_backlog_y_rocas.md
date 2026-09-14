@@ -5752,3 +5752,60 @@ no por las dos que explotaron.
 ⚠️ El aviso al Setter ahora se dispara en las **dos** fases: si el lead escribió
 y nadie le respondió —porque no se pudo procesar o no se pudo enviar—, alguien
 se entera. Antes ese caso era mudo.
+
+## 🎚️ 14-sep-2026 (noche, 2) — Ventana a 25 s, apóstrofo colombiano y traza de recepción
+
+### ⚠️ Jean Carlo NO se perdió por la ráfaga
+
+Se atribuyó a que 7 s era poco. Los datos dicen otra cosa: sus mensajes están
+separados por **2-3 minutos**, y todos cayeron en el mismo sitio.
+
+| Hora | Escribió | Resultado |
+|---|---|---|
+| 20:44:36 | CONTROL 🔔 | ✅ Apertura enviada |
+| 21:08:35 | 45% | ⛔ `el bot no intervino (falta etiqueta V42)` |
+| 21:11 · 21:13 · 21:16 · 21:17 · 21:19 | … | ⛔ idem |
+
+Es el cortacorriente `payload.solo_registro === true`: el Flow marca así a los
+leads **sin la etiqueta V42** y el bot solo los registra. Ninguna ventana —ni de
+7 s ni de 25— habría cambiado nada. **Queda pendiente decidir por qué ese lead
+no tiene la etiqueta**, porque mientras no la tenga el bot no puede atenderlo.
+
+### Los tres cambios
+
+1. **Ventana 7 s → 25 s.** Y el tope duro sube de 25 s a **90 s**: con tope y
+   ventana iguales, el tope disparaba antes de que la ventana llegara a
+   cumplirse y el agrupamiento se cortaba siempre por el freno de emergencia.
+2. **Apóstrofo colombiano** (caso real: `$ 26'000` leído como 26 mil → lead
+   descalificada ganando 26 millones).
+3. **Traza de recepción** en `encolarEnLote`, antes del DO.
+
+### Por qué la regla de ingresos NO se implementó como se pidió
+
+La petición era *"si la cifra es absurdamente baja, asume que está abreviada y
+multiplica"*. Eso choca de frente con una ley de este repo, nacida del incidente
+del 12-sep: **el LLM no corrige la cifra del lead**, porque cuando lo hizo
+calificó gente sobre datos inventados. Se partió en dos:
+
+- **El apóstrofo SÍ convierte**, y no es una suposición: en Colombia `26'000.000`
+  son 26 millones y `26'000` es esa misma cifra escrita a medias. Lo dice la
+  notación, no el olfato.
+- **Una cifra imposible SIN apóstrofo ni escala → `ingreso_cop: null`**, que
+  dispara la regla de oro V4.1 ("nunca descalificar sobre un ingreso ambiguo") y
+  hace que el bot **pregunte**. Nadie gana $26.000 al mes, pero tampoco sabemos
+  si eran 26 millones, 2,6 millones o 260 mil: elegir por él es calificar sobre
+  un dato inventado, que es exactamente lo que la ley prohíbe.
+
+Preguntar cuesta un turno. Descalificar a quien sí califica cuesta el lead.
+
+### Lo que encontré de paso
+
+**Los leads `solo_registro` ya no entran al Durable Object.** Creaban un objeto,
+una alarma y un ciclo de vida entero para un camino que termina callando — y
+fueron los que llenaron Cloudflare de "ejecuciones fantasma" al combinarse con el
+bucle. Ahora van por el camino síncrono de siempre.
+
+### Estado
+
+708 tests, compuerta 5/5, `--dry-run` compila. Fixtures del prompt recapturados
+(+1909 chars, solo en `system`).

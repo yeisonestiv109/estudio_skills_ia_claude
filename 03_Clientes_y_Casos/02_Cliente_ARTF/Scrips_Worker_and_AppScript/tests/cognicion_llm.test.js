@@ -423,3 +423,48 @@ describe('RAÍZ 4 — la telemetría no puede mentir por omisión', () => {
     assert.match(dash, /function encolar/, 'los spans en vivo se ordenan antes de pintarse');
   });
 });
+
+// ===========================================================================
+// SENTIDO COMUN FINANCIERO EN EL INGRESO (14-sep-2026)
+//
+// Caso real: una lead escribio "los ingresos mensuales aproximados son de
+// $ 26'000". El LLM extrajo 26000 y el router la DESCALIFICO por no llegar al
+// minimo. Ganaba 26 millones y calificaba de sobra.
+//
+// La peticion original era "si la cifra es absurdamente baja, asume que esta
+// abreviada y multiplica". No se implemento asi, y la razon es una ley que ya
+// existe en este repo desde el incidente del 12-sep: el LLM NO corrige la cifra
+// del lead, porque cuando lo hizo califico gente sobre datos inventados.
+//
+// Se parte en dos reglas, y solo una convierte:
+//   1. APOSTROFO -> millones. Es notacion colombiana estandar, no una
+//      suposicion: "26'000" ES "26'000.000". Determinista y seguro.
+//   2. Cifra imposible SIN apostrofo ni escala -> `ingreso_cop: null`, que
+//      dispara la regla de oro V4.1 ("NUNCA descalificar sobre un ingreso
+//      ambiguo") y hace que el bot PREGUNTE. No inventa cual de los tres
+//      significados posibles era.
+// ===========================================================================
+describe('El prompt enseña el apóstrofo colombiano y a no adivinar', () => {
+  test('la regla del apóstrofo está escrita, con el caso real que la motivó', () => {
+    assert.match(src, /APOSTROFO ES EL SEPARADOR DE MILLONES/i);
+    assert.match(src, /26'000/, 'el caso real debe estar en el prompt');
+    assert.match(src, /26\.000\.000/, 'y la conversión correcta');
+  });
+
+  test('⚠️ la cifra imposible se deja en null, NO se multiplica a ojo', () => {
+    assert.match(src, /NO SE ADIVINA: SE DEJA EN null/i);
+    assert.match(src, /1\.420\.000/, 'el salario mínimo es la referencia de "imposible"');
+  });
+
+  test('hay few-shot de los DOS casos: el que convierte y el que pregunta', () => {
+    assert.match(src, /ingreso_cop = 26000000/, 'con apóstrofo, convierte');
+    assert.match(src, /gano 26 al mes[\s\S]{0,400}ingreso_cop = null/, 'sin apóstrofo, null');
+  });
+
+  test('no deroga la ley de NO CORREGIR la cifra del lead', () => {
+    // Las dos conviven: la del apóstrofo convierte porque la NOTACION lo dice,
+    // no porque el numero parezca raro. Si alguien borra la de abajo para
+    // "simplificar", vuelve el bug del 12-sep.
+    assert.match(src, /NO CORRIJAS LA CIFRA DEL LEAD/);
+  });
+});

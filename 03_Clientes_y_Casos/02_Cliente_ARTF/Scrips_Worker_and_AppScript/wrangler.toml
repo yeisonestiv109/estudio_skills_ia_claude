@@ -54,14 +54,24 @@ BOT_ACTIVO = "true"
 # redesplegar si algo sale mal.
 LOTE_AGRUPAMIENTO = "true"
 
-# Ventana de agrupamiento en ms. Decision del fundador: 6-8 s. Se REPROGRAMA con
-# cada burbuja nueva, asi que se cuenta desde la ULTIMA que escribio el lead.
-LOTE_VENTANA_MS = "7000"
+# Ventana de agrupamiento en ms. Se REPROGRAMA con cada burbuja nueva, asi que se
+# cuenta desde la ULTIMA que escribio el lead.
+#
+# 25 s desde el 14-sep-2026 (decision del fundador, subida desde 7 s): la gente
+# escribe por pedazos y 7 s partia mensajes que eran uno solo.
+LOTE_VENTANA_MS = "25000"
 
 # Tope duro desde la PRIMERA burbuja del lote. Sin el, un lead que escribe una
 # palabra cada 5 s renovaria la ventana para siempre y el bot no contestaria
 # nunca. Pasado el tope se procesa lo que haya.
-LOTE_TOPE_MS = "25000"
+#
+# ⚠️ TIENE QUE SER VARIAS VECES LA VENTANA, O LA ANULA. Con tope 25 s y ventana
+# 25 s, cualquier lead que escriba una segunda burbuja pasados 25 s del inicio
+# dispara el tope antes de que la ventana llegue a cumplirse: el agrupamiento se
+# cortaria siempre por el tope y la ventana no serviria de nada. Al subir la
+# ventana a 25 s, el tope sube a 90 s para que siga siendo el freno de
+# emergencia que es, y no el mecanismo normal.
+LOTE_TOPE_MS = "90000"
 
 # ---------------------------------------------------------------------------
 # FASE 0 — EXPERIMENTO RETIRADO (14-sep-2026). Cumplio su proposito: la espera

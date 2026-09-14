@@ -180,7 +180,7 @@ export default {
       // No hay recursion posible: el lote llama a `manejar` directamente, no a
       // este `fetch`, asi que el turno agrupado nunca vuelve a pasar por aqui.
       if (agrupamientoActivo(env)) {
-        const encolado = await encolarEnLote(request, env);
+        const encolado = await encolarEnLote(request, env, ctx);
         if (encolado) return encolado;
       }
       return await manejar(request, env, ctx);
@@ -235,7 +235,7 @@ export function agrupamientoActivo(env) {
  * vez, y si esta funcion devuelve null, `manejar` todavia tiene que poder
  * leerlo.
  */
-async function encolarEnLote(request, env) {
+async function encolarEnLote(request, env, ctx) {
   if (request.method !== 'POST') return null;
   if (!env.WEBHOOK_SECRET) return null;
   if (!secretoValido(request.headers.get('x-bot-secret'), env.WEBHOOK_SECRET)) return null;
@@ -253,6 +253,41 @@ async function encolarEnLote(request, env) {
   const idsPrueba = String(env.MANYCHAT_IDS_PRUEBA || '')
     .split(',').map((s) => s.trim()).filter(Boolean);
   if (idsPrueba.length && !idsPrueba.includes(subId) && !enModoSecretaria(env)) return null;
+
+  // -------------------------------------------------------------------------
+  // CORTACORRIENTE ANTES DEL LOTE: los leads sin etiqueta V42 no se agrupan.
+  // -------------------------------------------------------------------------
+  // El Flow manda `solo_registro: true` para el lead que el bot NO debe atender.
+  // Ese turno acaba registrandose y nada mas, asi que pasarlo por el Durable
+  // Object es crear un objeto, una alarma y un ciclo de vida entero para un
+  // camino que termina callando. Fue justo lo que lleno Cloudflare de
+  // "ejecuciones fantasma" el 14-sep: cada lead sin etiqueta abria su lote y
+  // entraba en el camino silencioso.
+  //
+  // Devolver null lo manda por el camino de siempre, que es sincrono, escribe el
+  // registro y se acaba.
+  if (payload.solo_registro === true) return null;
+
+  // -------------------------------------------------------------------------
+  // TRAZA DE RECEPCION (14-sep-2026)
+  // -------------------------------------------------------------------------
+  // La traza del turno nace dentro de `manejar()`, que en el camino del lote no
+  // corre hasta que vence la alarma. Entre medias hay un hueco de hasta 25
+  // segundos en el que, si el Durable Object se estrella, en el panel no queda
+  // NADA: ni se sabe si ManyChat llego a entregar el mensaje.
+  //
+  // Esta traza cierra ese hueco. Es deliberadamente minima -- un solo span -- y
+  // va en `waitUntil` para no meter latencia en el camino que tiene que
+  // responder en ~50 ms y soltar la cola de ManyChat.
+  const tzRecepcion = nuevoTrazador(env, ctx, { manychat_id: subId });
+  tzRecepcion.evento(NODOS.WEBHOOK, 'OK', {
+    'lote.encolado': true,
+    'lead.mensaje': lastText,
+    'webhook.last_interaction': sanitize(payload.last_interaction) || null,
+    'lote.ventana_ms': Number(env.LOTE_VENTANA_MS) || null,
+  });
+  if (ctx?.waitUntil) ctx.waitUntil(Promise.resolve(tzRecepcion.enviar()));
+  else await tzRecepcion.enviar();
 
   const stub = env.LOTE.get(env.LOTE.idFromName(subId));
   await stub.fetch('https://lote.interno/encolar', {
@@ -1408,6 +1443,27 @@ tibia puede ser un si rotundo.
     ni pedirle que convierta. Tasa fija: 1 USD = 3.500 COP, 1 EUR = 3.800 COP.
     Ejemplo: "gano 3.000 dolares" -> 10500000. Si la moneda no es evidente, null.
 
+- ⚠️ EL APOSTROFO ES EL SEPARADOR DE MILLONES EN COLOMBIA. "$26'000.000" son 26
+  millones, y muchisima gente lo escribe a medias: "26'000", "26'". Si la cifra
+  trae apostrofo, lo que va ANTES del apostrofo son MILLONES -> multiplica por
+  1.000.000 y devuelve el resultado.
+  Caso real que se clasifico MAL: "los ingresos mensuales aproximados son de
+  $ 26'000" se extrajo como 26000 y la lead quedo DESCALIFICADA por no llegar al
+  minimo. Son 26.000.000 y calificaba de sobra.
+  Esto NO es corregir al lead: el apostrofo es notacion colombiana estandar y
+  dice por si solo donde estan los millones.
+
+- ⚠️ UNA CIFRA IMPOSIBLE COMO SUELDO MENSUAL NO SE ADIVINA: SE DEJA EN null.
+  Si la cifra no llega ni al salario minimo colombiano (~$1.420.000) y NO trae
+  apostrofo ni palabra de escala ("mil", "millones", "palos", "lucas"), devuelve
+  "ingreso_cop": null. NO la des por buena, y NO la "arregles" multiplicando por
+  tu cuenta.
+  Nadie trabaja por $26.000 al mes -- pero tampoco sabemos si quiso decir 26
+  millones, 2,6 millones o 260 mil, y elegir por el es calificar (o descartar) a
+  alguien sobre un dato que te inventaste. Con null el sistema le pregunta a EL,
+  que es el unico que lo sabe.
+  Preguntar cuesta un turno. Descalificar a quien si califica cuesta el lead.
+
 - ⚠️ SUMA LAS FUENTES. Si el lead menciona VARIOS ingresos, "ingreso_cop" es la
   SUMA, no el primero que aparece:
   · "4 millones del trabajo, 3 del negocio y 4 de un local" -> 11000000
@@ -1526,6 +1582,18 @@ Casos limite reales. Cada uno se clasifico MAL antes de estar aqui.
     <lead>75</lead>
     <razonamiento>Es un número pelado respondiendo a la pregunta de deudas. Significa 75%.</razonamiento>
     <salida>endeudamiento_pct = 75, deuda_literal = "75", deuda_unidad_dicha = "ninguna"</salida>
+  </ejemplo>
+
+  <ejemplo>
+    <lead>los ingresos mensuales aproximados son de $ 26'000</lead>
+    <razonamiento>El apóstrofo es el separador de millones en Colombia: "26'000" es "26'000.000", o sea 26 millones. Leerlo como 26 mil descalificaría a alguien que califica de sobra.</razonamiento>
+    <salida>ingreso_cop = 26000000</salida>
+  </ejemplo>
+
+  <ejemplo>
+    <lead>gano 26 al mes</lead>
+    <razonamiento>Sin apóstrofo ni palabra de escala. 26 pesos es imposible, pero no sé si quiso decir 26 millones, 2,6 millones o 260 mil: no lo invento, que lo aclare él.</razonamiento>
+    <salida>ingreso_cop = null</salida>
   </ejemplo>
 
   <ejemplo>
