@@ -5479,3 +5479,88 @@ cada burbuja nueva.
 ⚠️ El `wrangler.toml` todavía trae el experimento de la Fase 0 activo
 (`EXPERIMENTO_ESPERA_MS = "5000"` para el ID `813370090`). La Fase 0 ya concluyó:
 retirarlo.
+
+## ⚡ 14-sep-2026 — Fase 2B: agrupamiento de burbujas con Durable Objects
+
+**Implementada y lista para desplegar. NO desplegada todavía.**
+
+### El problema, y por qué el camino fácil no servía
+
+Un lead no escribe una burbuja: escribe *"Hola"*, luego *"soy ingeniero"*, luego
+*"gano 12 millones"*. Cada una era un turno entero — tres lecturas de estado,
+tres llamadas al LLM y tres respuestas a un mensaje incompleto.
+
+El experimento de la Fase 0 midió el comportamiento real de ManyChat y **descartó
+el debounce síncrono**: con una espera de 5 s dentro del Worker, la burbuja
+siguiente no entró hasta **7 segundos después**, justo al soltar la primera.
+ManyChat **encola por contacto**. Dormir el Worker no agrupa nada: solo bloquea
+la cola y retrasa el mensaje siguiente.
+
+Para agrupar hay que **contestar rápido y pensar después**.
+
+### Cómo quedó
+
+```
+ManyChat ──webhook──> Worker
+                        ├─ autentica, valida, respeta lista blanca
+                        ├─ LOTE.get(idFromName(subscriber_id)) → encolar
+                        └─ 200 {responder:false} en ~50 ms → ManyChat libera la cola
+                                 │
+                        Durable Object "LoteDeLead" (uno por contacto)
+                        │  cada burbuja REPROGRAMA la alarma (debounce)
+                        └─ alarm() → junta burbujas → manejar() → sendContent
+```
+
+- **Ventana: 7 s** (decisión del fundador: 6-8 s), reprogramable con cada burbuja.
+- **Tope duro: 25 s** desde la primera. Sin él, quien escribe una palabra cada
+  5 s renovaría la ventana **para siempre** y no recibiría respuesta nunca.
+- **Una llamada a `sendContent` por burbuja**, secuencial. No es desperdicio:
+  `R1_LINK_AISLADO` existe por un bug confirmado en producción (Instagram
+  concatena y el link queda inválido). Una burbuja por llamada hace ese error
+  imposible por construcción, y permite reintentar solo la que falló.
+
+### Decisiones que vale la pena no volver a discutir
+
+- **El pipeline NO se duplicó.** El DO llama a `manejar()`, la misma función de
+  siempre, con una petición sintética. Copiar 600 líneas para "adaptarlas"
+  habría creado un segundo bot que se desincroniza al primer cambio de reglas.
+  Verificado en el bundle: **una sola copia** de `manejar` y del prompt.
+- **No hay recursión:** el DO llama a `manejar()`, no al `fetch` del default
+  export, que es donde vive el enrutado.
+- **El compare-and-swap de la Fase 1 NO se retira.** El DO da orden; el CAS es la
+  red para los turnos que entran por el camino viejo y para el dashboard.
+- **Las burbujas no se borran hasta que la respuesta salió.** Si el envío falla,
+  la excepción hace que Cloudflare reintente la alarma con el lote intacto.
+  Borrar antes sería perder el mensaje del lead.
+- **`LOTE_AGRUPAMIENTO` es una perilla, no un canario.** Apagada, el Worker se
+  comporta *exactamente* como antes. Permite separar el despliegue del binding
+  del cambio de comportamiento y volver atrás en caliente sin redesplegar.
+
+### ⚠️ Lo que este diseño pierde
+
+Al contestar 200 antes de pensar **se pierde el reintento de ManyChat**: ya
+recibió su OK y no vuelve a llamar. Se compensa con el reintento de la alarma
+(3 intentos, backoff de Cloudflare). Pasados los 3, el turno **sí quedó escrito
+en la base** pero el lead no recibió el mensaje, y eso queda en el log.
+
+### Estado
+
+- 671 tests en verde (29 nuevos del lote, 8 de la perilla).
+- `wrangler deploy --dry-run`: compila, binding `LOTE (LoteDeLead)` reconocido.
+- Compuerta 5/5.
+- **Fase 0 retirada**: el código de la espera y sus vars ya no están. Sus tests
+  se **reescribieron** para cubrir la perilla nueva, no se borraron.
+- El corpus tiene dos casos nuevos de rango de deuda (11 y 12). El 12 es el que
+  de verdad decide: con $6M, tomar el piso (40 %) pasaría a M3 y tomar el techo
+  (60 %) manda a verificar. Si ese caso empieza a dar `M3_ENVIADO`, la regla del
+  techo se rompió.
+
+### Antes de desplegar
+
+1. `wrangler deploy` crea la clase y aplica la migración `v1`
+   (`new_sqlite_classes`). ⚠️ **Nunca cambiar a `new_classes`**: en el plan
+   gratuito solo existen los DO con backend SQLite.
+2. Probar con un lead de prueba mandando **tres burbujas seguidas** y confirmar
+   en las trazas que sale **UN** turno, no tres.
+3. Si algo sale mal: `LOTE_AGRUPAMIENTO = "false"` y redesplegar devuelve el
+   comportamiento anterior sin tocar código.
