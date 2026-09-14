@@ -108,6 +108,29 @@ export const CLAVE_REINTENTOS = 'reintentos';
  */
 export const CLAVE_RESULTADO = 'resultado_pendiente';
 
+/**
+ * Intentos de PROCESAR este lote (fase 1), no de enviarlo.
+ *
+ * Si `manejar()` revienta -- Groq caido, Supabase caido, un bug nuestro -- la
+ * excepcion sale de `alarm()` y Cloudflare la reintenta. Sin este contador, cada
+ * reintento vuelve a llamar al LLM: exactamente el incidente del 14-sep, pero en
+ * la fase de pensar en vez de la de hablar. Ahi el tope lo pusimos y aqui
+ * faltaba.
+ */
+export const CLAVE_INTENTOS_PROCESO = 'intentos_proceso';
+
+/** Veces que se intenta PROCESAR un lote antes de rendirse y avisar. */
+export const MAX_INTENTOS_PROCESO = 3;
+
+/**
+ * Tope de caracteres del texto agrupado.
+ *
+ * Doce burbujas largas son un prompt enorme, y el prompt se paga en tokens con
+ * un cupo diario que ya nos ha mordido. Cortar por el final conserva lo ultimo
+ * que dijo el lead, que es a lo que hay que responder.
+ */
+export const MAX_CHARS_TEXTO = 4000;
+
 /** Lee un entero de env con default, ignorando basura. */
 export function enteroDeEnv(env, nombre, porDefecto) {
   const n = Number(env?.[nombre]);
@@ -125,7 +148,7 @@ export function enteroDeEnv(env, nombre, porDefecto) {
  * envia un sticker o una imagen) y se colapsan las repetidas CONSECUTIVAS, que
  * son casi siempre un doble envio del mismo mensaje.
  */
-export function juntarBurbujas(mensajes) {
+export function juntarBurbujas(mensajes, maxChars = MAX_CHARS_TEXTO) {
   const textos = [];
   for (const m of mensajes || []) {
     const t = String(m?.texto ?? '').trim();
@@ -133,7 +156,11 @@ export function juntarBurbujas(mensajes) {
     if (textos.length && textos[textos.length - 1] === t) continue;
     textos.push(t);
   }
-  return textos.join('\n');
+  const unido = textos.join('\n');
+  // Se corta por el PRINCIPIO, conservando el final: lo ultimo que dijo el lead
+  // es a lo que hay que responder. Doce burbujas largas son un prompt enorme, y
+  // el prompt se paga en tokens con un cupo diario que ya nos ha mordido.
+  return unido.length > maxChars ? unido.slice(unido.length - maxChars) : unido;
 }
 
 /**
@@ -152,12 +179,26 @@ export function juntarBurbujas(mensajes) {
  * manda. La firma ya no acepta el parametro para que nadie lo reintroduzca: el
  * dia que alguien lo "arregle" añadiendolo, rompe TODOS los envios.
  */
-export function cuerpoSendContent(subscriberId, texto) {
+export const CANAL_POR_DEFECTO = 'instagram';
+
+export function cuerpoSendContent(subscriberId, texto, canal = CANAL_POR_DEFECTO) {
   return {
     subscriber_id: subscriberId,
     data: {
       version: 'v2',
-      content: { type: 'instagram',
+      content: {
+        // ⚠️ `type` ES EL CANAL, Y SIN EL NO SE ENVIA NADA (14-sep-2026).
+        // Verificado contra la API real, mismo contacto y mismo momento:
+        //   sin type           -> 3011 "last interaction was over 267h ago"
+        //   con type:instagram -> {"status":"success"}
+        // Sin el campo, ManyChat evalua la ventana de 24 h de FACEBOOK
+        // MESSENGER -- donde un lead de Instagram no ha escrito nunca -- y Meta
+        // bloquea. El mensaje de error habla de la ventana y despista: el
+        // problema no es cuando escribio, es POR DONDE.
+        //
+        // Ojo con los dos `type` en niveles distintos: este es el canal, el de
+        // abajo es el tipo de mensaje.
+        type: canal,
         messages: [{ type: 'text', text: texto }],
       },
     },
@@ -314,6 +355,17 @@ export class LoteDeLead {
     const ventanaMs = enteroDeEnv(this.env, 'LOTE_VENTANA_MS', VENTANA_MS_POR_DEFECTO);
     const maxBurbujas = enteroDeEnv(this.env, 'LOTE_MAX_BURBUJAS', MAX_BURBUJAS_POR_LOTE);
 
+    // ⚠️ CON UN ENVIO PENDIENTE, LA ALARMA NO SE RETRASA.
+    //
+    // Si hay un turno ya procesado esperando salir, la alarma que viene es SUYA.
+    // Empujarla hacia adelante con cada burbuja nueva aplicaria el debounce a
+    // algo que ya no esta pensando, solo hablando: un lead que sigue escribiendo
+    // podria dejar su propia respuesta anterior atrapada indefinidamente. El
+    // mensaje que acaba de llegar no se pierde -- queda en la bandeja y
+    // `limpiar(false)` reprograma para el ya, en cuanto el envio termine.
+    const hayEnvioPendiente = Boolean(await this.storage.get(CLAVE_RESULTADO));
+    if (hayEnvioPendiente) return Response.json({ ok: true, burbujas: mensajes.length, envio_pendiente: true });
+
     // Con el tope alcanzado la alarma se deja donde esta (o se pone ya mismo):
     // renovarla otra vez seria justamente lo que el tope existe para impedir.
     if (debeProcesarYa(mensajes, primeroEn, ahora, topeMs, maxBurbujas)) {
@@ -360,6 +412,23 @@ export class LoteDeLead {
     const mensajes = (await this.storage.get(CLAVE_MENSAJES)) || [];
     if (!mensajes.length) return;
 
+    // ⚠️ TOPE DE LA FASE 1. Se incrementa ANTES de procesar, no despues: si
+    // `manejar()` revienta, la excepcion se lleva todo lo que venga detras, y un
+    // contador que se actualiza al final nunca llega a subir. Sin esto, un Groq
+    // o un Supabase caidos reintentan el LLM indefinidamente.
+    const intentos = ((await this.storage.get(CLAVE_INTENTOS_PROCESO)) || 0) + 1;
+    await this.storage.put(CLAVE_INTENTOS_PROCESO, intentos);
+    const maxIntentos = enteroDeEnv(this.env, 'LOTE_MAX_INTENTOS_PROCESO', MAX_INTENTOS_PROCESO);
+    if (intentos > maxIntentos) {
+      console.error(`[lote][proceso] subscriber=${(await this.storage.get('payload_base'))?.manychat_subscriber_id ?? '?'} se abandona el lote tras ${intentos - 1} intentos fallidos de procesarlo. El lead escribio y nadie le respondio.`);
+      await this.avisarAlSetter(
+        String((await this.storage.get('payload_base'))?.manychat_subscriber_id ?? ''),
+        `El bot no logro PROCESAR el mensaje tras ${intentos - 1} intentos (Groq o la base fallando). El lead escribio y no recibio respuesta. Hay que atenderlo a mano.`,
+      );
+      await this.limpiar(true);
+      return;
+    }
+
     const payloadBase = (await this.storage.get('payload_base')) || {};
     const texto = juntarBurbujas(mensajes);
     const subId = String(payloadBase.manychat_subscriber_id ?? '');
@@ -370,8 +439,7 @@ export class LoteDeLead {
       // `limpiar` la veria como un turno pendiente y reprogramaria la alarma
       // sobre un lote que nunca va a tener texto: una alarma cada 7 s, para
       // siempre.
-      await this.storage.delete(CLAVE_MENSAJES);
-      await this.limpiar();
+      await this.limpiar(true);
       return;
     }
 
@@ -384,49 +452,30 @@ export class LoteDeLead {
       last_interaction: ultima?.last_interaction ?? payloadBase.last_interaction ?? null,
     };
 
-    // Se reusa el pipeline COMPLETO del Worker (auth, estado, memoria, LLM,
-    // router, compare-and-swap, tags, alertas y telemetria) construyendo la
-    // peticion que ese pipeline espera. Duplicar 600 lineas aca para "adaptarlo"
-    // seria crear un segundo bot que se desincroniza del primero al primer
-    // cambio de reglas.
-    const { manejar } = await import('./worker_bot_setter_v42.js');
+    const datos = await this.procesarConPipeline(payload);
 
-    const pendientes = [];
-    const ctxFalso = { waitUntil: (p) => { pendientes.push(p); } };
-
-    const peticion = new Request('https://lote.interno/turno', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Bot-Secret': this.env.WEBHOOK_SECRET || '',
-      },
-      body: JSON.stringify(payload),
-    });
-
-    const respuesta = await manejar(peticion, this.env, ctxFalso);
-    const datos = await respuesta.json();
-
-    // Los efectos de fondo (tags, alerta al Setter, telemetria) se lanzaron con
-    // el waitUntil falso: aca se esperan de verdad. En el Worker los remataba
-    // el runtime despues de responder; en la alarma, si no se esperan, el
-    // objeto puede irse a dormir con las promesas a medias.
-    await Promise.allSettled(pendientes);
-
-    const burbujas = [datos.msg, datos.msg2, datos.msg3, datos.msg4]
+    // Optional chaining a proposito: si el pipeline devolviera algo inesperado,
+    // un TypeError aqui saldria de `alarm()` y Cloudflare reintentaria el turno
+    // entero -- otra vez el LLM. Mejor tratarlo como "no hay nada que decir".
+    const burbujas = [datos?.msg, datos?.msg2, datos?.msg3, datos?.msg4]
       .map((x) => String(x ?? '').trim())
       .filter(Boolean);
 
-    if (!datos.responder || !burbujas.length) {
-      await this.storage.delete(CLAVE_MENSAJES);
+    if (!datos?.responder || !burbujas.length) {
       // El pipeline decidio callar (handoff activo, fuera de lista blanca,
-      // modo secretaria...). Es una salida legitima, no un fallo.
-      await this.limpiar();
+      // modo secretaria, `solo_registro`...). Es una salida legitima, no un
+      // fallo -- pero el turno SE CONSUMIO igual: si no se cierra la entrada,
+      // la alarma se reprograma sobre los mismos mensajes cada 7 s. Fue uno de
+      // los dos bucles del 14-sep.
+      await this.limpiar(true);
       return;
     }
 
     if (!this.env.MANYCHAT_API_TOKEN) {
       console.error('[lote] MANYCHAT_API_TOKEN ausente: el turno se proceso pero el lead no recibe nada.');
-      await this.limpiar();
+      // El turno ya se gasto (LLM y escritura incluidos): cerrar la entrada.
+      // Este era el SEGUNDO bucle, el que el hotfix del primero no vio.
+      await this.limpiar(true);
       return;
     }
 
@@ -439,6 +488,8 @@ export class LoteDeLead {
     const resultado = { subId, burbujas, enviadas: 0, estado: datos?.etapa ?? null };
     await this.storage.put(CLAVE_RESULTADO, resultado);
     await this.storage.delete(CLAVE_MENSAJES);
+    // La fase 1 termino: su contador no debe arrastrarse al turno siguiente.
+    await this.storage.delete(CLAVE_INTENTOS_PROCESO);
     await this.storage.delete(CLAVE_PRIMERO_EN);
     await this.storage.delete('payload_base');
 
@@ -458,7 +509,9 @@ export class LoteDeLead {
 
     try {
       await enviarBurbujas(this.env.MANYCHAT_API_TOKEN, subId, burbujas, fetch, yaEnviadas);
-      await this.limpiar();
+      // La entrada ya se vacio en la frontera de fases; lo que haya ahora son
+      // burbujas NUEVAS del lead, que son el turno siguiente.
+      await this.limpiar(false);
       return;
     } catch (err) {
       // Lo que SI salio no se reenvia: sin esto, un fallo en la burbuja 3 hacia
@@ -513,19 +566,75 @@ export class LoteDeLead {
 
     console.error(`[lote] ${subId}: ENVIO ABANDONADO (${motivo}). Salieron ${enviadas}/${burbujas.length} burbujas. El turno esta escrito en la base pero el lead no lo recibio. ${err?.message}`);
 
+    await this.avisarAlSetter(
+      subId,
+      `No se le pudo ENVIAR la respuesta (${motivo}). Salieron ${enviadas} de ${burbujas.length} burbujas. El turno quedo escrito en la base: el bot cree que respondio y el lead no lo recibio. Hay que escribirle a mano.`,
+    );
+
+    await this.limpiar(false);
+  }
+
+  /**
+   * FASE 1: pasa el turno por el pipeline COMPLETO del Worker.
+   *
+   * Se reusa `manejar()` tal cual -- auth, estado, memoria, LLM, router,
+   * compare-and-swap, tags, alertas y telemetria -- construyendo la peticion que
+   * ese pipeline espera. Duplicar 600 lineas aca para "adaptarlo" seria crear un
+   * segundo bot que se desincroniza del primero al primer cambio de reglas.
+   *
+   * ⚠️ Esta en su propio metodo para poder SUSTITUIRLO en los tests. Sin esta
+   * costura, probar las salidas de `alarm()` exigiria Groq y Supabase de verdad,
+   * y por eso los dos bucles del 14-sep llegaron a produccion sin que ningun
+   * test los rozara: no habia forma barata de recorrer las ramas.
+   */
+  async procesarConPipeline(payload) {
+    const { manejar } = await import('./worker_bot_setter_v42.js');
+
+    const pendientes = [];
+    const ctxFalso = { waitUntil: (p) => { pendientes.push(p); } };
+
+    const peticion = new Request('https://lote.interno/turno', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Bot-Secret': this.env.WEBHOOK_SECRET || '',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const respuesta = await manejar(peticion, this.env, ctxFalso);
+    const datos = await respuesta.json();
+
+    // Los efectos de fondo (tags, alerta al Setter, telemetria) se lanzaron con
+    // el waitUntil falso: aca se esperan de verdad. En el Worker los remataba el
+    // runtime despues de responder; en la alarma, si no se esperan, el objeto
+    // puede irse a dormir con las promesas a medias.
+    await Promise.allSettled(pendientes);
+    return datos;
+  }
+
+  /**
+   * Avisa a un humano de que este lead se quedo sin respuesta.
+   *
+   * Se usa desde las DOS fases: cuando no se pudo procesar y cuando no se pudo
+   * enviar. En ambos casos el lead escribio y nadie le contesto, que es lo unico
+   * que le importa a quien tiene que arreglarlo.
+   *
+   * Nunca lanza: una alerta que falla no puede tumbar la alarma que la dispara
+   * -- eso convertiria un problema de aviso en un reintento del turno entero.
+   */
+  async avisarAlSetter(subId, mensaje) {
     try {
       const { notificarSetterGoogleChat } = await import('./notificador_google_chat.js');
       await notificarSetterGoogleChat(
         this.env,
         { nombre: `Lead ${subId}`, ig_handle: null, manychat_id: subId },
         { handoffRazon: 'error_tecnico' },
-        `No se le pudo ENVIAR la respuesta (${motivo}). Salieron ${enviadas} de ${burbujas.length} burbujas. El turno quedo escrito en la base: el bot cree que respondio y el lead no lo recibio. Hay que escribirle a mano.`,
+        mensaje,
       );
     } catch (e) {
       console.error(`[lote] ${subId}: ademas fallo la alerta al Setter. ${e?.message}`);
     }
-
-    await this.limpiar();
   }
 
   /**
@@ -538,9 +647,38 @@ export class LoteDeLead {
    * Por eso, si queda entrada sin procesar, se reprograma la alarma en vez de
    * apagarla.
    */
-  async limpiar() {
+  /**
+   * Cierra el turno y decide si queda trabajo para despues.
+   *
+   * ⚠️ `cerrarEntrada` NO TIENE VALOR POR DEFECTO, Y ES A PROPOSITO.
+   *
+   * La primera version reprogramaba la alarma siempre que viera mensajes en la
+   * bandeja, y dejaba a cada `return` la responsabilidad de acordarse de
+   * borrarlos antes. Eso costo DOS bucles infinitos en produccion -- el camino
+   * silencioso (`solo_registro`) y el de token ausente -- porque los dos
+   * llamaban a `limpiar()` con la bandeja llena: la alarma se reprogramaba cada
+   * 7 s sobre los MISMOS mensajes, que volvian a salir por el mismo camino.
+   * El segundo ni siquiera lo vio el hotfix del primero: un parche por rama no
+   * cierra una clase de error.
+   *
+   * Ahora hay que DECIRLO en cada llamada, y el parametro obliga a pensarlo:
+   *   · `true`  -> el turno se consumio; la bandeja se vacia. Si despues no
+   *                queda nada, el objeto se apaga.
+   *   · `false` -> la bandeja tiene mensajes que TODAVIA no se han procesado
+   *                (llegaron mientras se enviaba el turno anterior): son el
+   *                turno siguiente y hay que reprogramar para atenderlos.
+   *
+   * Que sea obligatorio no es ceremonia: es la unica forma de que olvidarlo sea
+   * un error visible en vez de una alarma girando en silencio.
+   */
+  async limpiar(cerrarEntrada) {
+    if (typeof cerrarEntrada !== 'boolean') {
+      throw new TypeError('limpiar(cerrarEntrada) necesita true o false explicito: ver el comentario.');
+    }
+
     await this.storage.delete(CLAVE_RESULTADO);
     await this.storage.delete(CLAVE_REINTENTOS);
+    if (cerrarEntrada) await this.storage.delete(CLAVE_MENSAJES);
 
     const pendientes = (await this.storage.get(CLAVE_MENSAJES)) || [];
     if (pendientes.length) {
@@ -551,6 +689,7 @@ export class LoteDeLead {
 
     await this.storage.delete(CLAVE_PRIMERO_EN);
     await this.storage.delete('payload_base');
+    await this.storage.delete(CLAVE_INTENTOS_PROCESO);
     await this.storage.deleteAlarm();
   }
 }

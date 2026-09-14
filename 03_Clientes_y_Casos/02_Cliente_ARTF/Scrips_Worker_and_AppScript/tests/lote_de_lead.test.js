@@ -13,8 +13,8 @@ import assert from 'node:assert/strict';
 import {
   LoteDeLead, juntarBurbujas, cuerpoSendContent, enviarBurbujas, debeProcesarYa,
   enteroDeEnv, VENTANA_MS_POR_DEFECTO, TOPE_MS_POR_DEFECTO, MAX_BURBUJAS_POR_LOTE,
-  CLAVE_MENSAJES, CLAVE_PRIMERO_EN, CLAVE_RESULTADO,
-  esFalloPermanente, esVentanaVencida, FalloDeEnvio,
+  CLAVE_MENSAJES, CLAVE_PRIMERO_EN, CLAVE_RESULTADO, CLAVE_INTENTOS_PROCESO,
+  esFalloPermanente, esVentanaVencida, FalloDeEnvio, CANAL_POR_DEFECTO,
 } from '../lote_de_lead.js';
 
 /** Storage en memoria con la misma forma que el de un Durable Object. */
@@ -171,7 +171,10 @@ describe('cuerpoSendContent: el contrato con la API v2 de ManyChat', () => {
   test('forma exacta que espera /fb/sending/sendContent', () => {
     assert.deepEqual(cuerpoSendContent('123', 'Hola Ana'), {
       subscriber_id: '123',
-      data: { version: 'v2', content: { messages: [{ type: 'text', text: 'Hola Ana' }] } },
+      data: {
+        version: 'v2',
+        content: { type: 'instagram', messages: [{ type: 'text', text: 'Hola Ana' }] },
+      },
     });
   });
 
@@ -245,8 +248,7 @@ describe('limpiar: cierra el turno sin tragarse el siguiente', () => {
   test('sin entrada pendiente, borra todo y apaga la alarma', async () => {
     const { lote, storage } = loteFalso();
     await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'Hola' }));
-    await storage.delete(CLAVE_MENSAJES); // el turno ya se proceso
-    await lote.limpiar();
+    await lote.limpiar(true); // el turno se consumio
 
     assert.equal(await storage.get(CLAVE_PRIMERO_EN), undefined);
     assert.equal(await storage.get('payload_base'), undefined);
@@ -260,7 +262,7 @@ describe('limpiar: cierra el turno sin tragarse el siguiente', () => {
     await storage.put(CLAVE_RESULTADO, { subId: '123', burbujas: ['ya enviada'], enviadas: 1 });
     await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'ah espera' }));
 
-    await lote.limpiar();
+    await lote.limpiar(false); // la burbuja nueva es el turno siguiente
 
     assert.equal((await storage.get(CLAVE_MENSAJES)).length, 1, 'la burbuja nueva sigue ahi');
     assert.equal(await storage.get(CLAVE_RESULTADO), undefined, 'el turno enviado si se cerro');
@@ -396,7 +398,7 @@ describe('las dos fases: procesar una vez, enviar las que haga falta', () => {
   test('un fallo permanente no relanza: se rinde y avisa', async () => {
     const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
     let rendido = null;
-    lote.rendirse = async (res, err, enviadas) => { rendido = { err, enviadas }; await lote.limpiar(); };
+    lote.rendirse = async (res, err, enviadas) => { rendido = { err, enviadas }; await lote.limpiar(false); };
 
     const resultado = { subId: '123', burbujas: ['a', 'b'], enviadas: 0 };
     await storage.put(CLAVE_RESULTADO, resultado);
@@ -427,7 +429,7 @@ describe('las dos fases: procesar una vez, enviar las que haga falta', () => {
   test('agotados los reintentos, se rinde en vez de seguir para siempre', async () => {
     const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok', LOTE_MAX_REINTENTOS: '1' });
     let rendido = false;
-    lote.rendirse = async () => { rendido = true; await lote.limpiar(); };
+    lote.rendirse = async () => { rendido = true; await lote.limpiar(false); };
 
     const resultado = { subId: '123', burbujas: ['a'], enviadas: 0 };
     await storage.put(CLAVE_RESULTADO, resultado);
@@ -447,5 +449,233 @@ describe('las dos fases: procesar una vez, enviar las que haga falta', () => {
     try { await lote.enviarPendiente(resultado); } finally { globalThis.fetch = original; }
 
     assert.equal(await storage.get(CLAVE_RESULTADO), undefined);
+  });
+});
+
+// ===========================================================================
+// LOS DOS BUCLES DEL 14-SEP (hotfixes 11c4796 y 9f445eb) Y SU CLASE DE ERROR
+//
+// Bucle 1 — camino silencioso (`solo_registro`): `alarm()` salia por
+//   `!datos.responder` llamando a `limpiar()` con la bandeja LLENA. `limpiar()`
+//   veia mensajes, asumia que eran nuevos y reprogramaba a 7 s. A los 7 s leia
+//   los mismos, volvia a salir por el mismo camino y se reprogramaba otra vez.
+//
+// Bucle 2 — token ausente: EXACTAMENTE el mismo fallo en otra rama. El hotfix
+//   del primero no lo cubrio, porque parcheaba la rama y no la clase de error.
+//
+// La raiz era el diseño de `limpiar()`: reprogramaba si veia mensajes y dejaba
+// a cada `return` acordarse de vaciarlos. Ahora hay que declarar la intencion
+// (`limpiar(true|false)`) y olvidarlo revienta en vez de girar en silencio.
+//
+// Estos tests recorren TODAS las salidas de `alarm()`, no las dos que
+// explotaron: la garantia que faltaba es "ninguna salida deja una alarma
+// girando sobre mensajes ya consumidos".
+// ===========================================================================
+
+describe('BUCLE 1 y 2: ninguna salida de alarm() deja la alarma girando', () => {
+  /** Monta un lote con el pipeline simulado por `respuesta`. */
+  function loteConPipeline(env, respuesta) {
+    const { lote, storage } = loteFalso(env);
+    lote.procesarConPipeline = async () => respuesta;
+    return { lote, storage };
+  }
+
+  test('camino silencioso (solo_registro): storage vacio y SIN alarma', async () => {
+    const { lote, storage } = loteConPipeline(
+      { MANYCHAT_API_TOKEN: 'tok' },
+      { responder: false, msg: '', msg2: '', msg3: '', msg4: '' },
+    );
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'CONTROL' }));
+    await lote.alarm();
+
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined, 'la bandeja quedo vacia');
+    assert.equal(await storage.get(CLAVE_RESULTADO), undefined);
+    assert.equal(storage._alarma(), null, 'NO quedo alarma reprogramada');
+  });
+
+  test('camino silencioso: una segunda alarma ya no encuentra nada que hacer', async () => {
+    // La prueba de que el bucle esta muerto: si volviera a procesar, el
+    // contador subiria.
+    const { lote, storage } = loteConPipeline(
+      { MANYCHAT_API_TOKEN: 'tok' },
+      { responder: false, msg: '' },
+    );
+    let procesos = 0;
+    const original = lote.procesarConPipeline;
+    lote.procesarConPipeline = async (...a) => { procesos++; return original(...a); };
+
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'CONTROL' }));
+    await lote.alarm();
+    await lote.alarm();
+    await lote.alarm();
+
+    assert.equal(procesos, 1, 'el turno se proceso UNA vez, no una cada 7 s');
+    assert.equal(storage._alarma(), null);
+  });
+
+  test('⚠️ token ausente: el segundo bucle, el que el hotfix del primero no vio', async () => {
+    const { lote, storage } = loteConPipeline(
+      {}, // sin MANYCHAT_API_TOKEN
+      { responder: true, msg: 'hola' },
+    );
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'hola' }));
+    await lote.alarm();
+
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined, 'la bandeja NO puede quedar llena');
+    assert.equal(storage._alarma(), null, 'ni la alarma reprogramada');
+  });
+
+  test('lote de solo stickers: tampoco deja alarma', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: '   ' }));
+    await lote.alarm();
+
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined);
+    assert.equal(storage._alarma(), null);
+  });
+
+  test('limpiar() SIN declarar la intencion es un error, no un silencio', async () => {
+    // Es lo que convierte esta clase de bug en algo que se ve. Si alguien añade
+    // una salida nueva y no lo piensa, revienta aqui y no en produccion.
+    const { lote } = loteFalso();
+    await assert.rejects(() => lote.limpiar(), TypeError);
+    await assert.rejects(() => lote.limpiar(undefined), TypeError);
+  });
+});
+
+describe('BUG del canal: ManyChat evaluaba la ventana de Facebook', () => {
+  // Verificado contra la API real el 14-sep-2026, mismo contacto y mismo
+  // momento:
+  //   sin type            -> 3011 "last interaction was over 267h ago"
+  //   con type:instagram  -> {"status":"success"}
+  // No era la ventana de 24 h: era que sin `type` ManyChat miraba la ventana de
+  // Facebook Messenger, donde ese contacto no ha escrito nunca.
+
+  test('⚠️ el payload SIEMPRE lleva type: instagram', () => {
+    const cuerpo = cuerpoSendContent('123', 'hola');
+    assert.equal(cuerpo.data.content.type, 'instagram');
+  });
+
+  test('la forma completa es la que ManyChat acepta', () => {
+    assert.deepEqual(cuerpoSendContent('123', 'Hola Ana'), {
+      subscriber_id: '123',
+      data: {
+        version: 'v2',
+        content: { type: 'instagram', messages: [{ type: 'text', text: 'Hola Ana' }] },
+      },
+    });
+  });
+
+  test('el canal se puede cambiar, pero por defecto es el del negocio', () => {
+    assert.equal(CANAL_POR_DEFECTO, 'instagram');
+    assert.equal(cuerpoSendContent('123', 'x', 'whatsapp').data.content.type, 'whatsapp');
+  });
+
+  test('el type del CANAL no se confunde con el type del MENSAJE', () => {
+    // Son dos campos distintos con el mismo nombre en niveles distintos, y
+    // confundirlos rompe el envio de una forma dificil de ver.
+    const c = cuerpoSendContent('123', 'hola');
+    assert.equal(c.data.content.type, 'instagram');
+    assert.equal(c.data.content.messages[0].type, 'text');
+  });
+});
+
+describe('FASE 1: procesar tampoco puede reintentarse para siempre', () => {
+  test('⚠️ si el pipeline revienta, se reintenta con tope y NO sin fin', async () => {
+    // El mismo incidente, en la fase de pensar: sin tope, un Groq o un Supabase
+    // caidos vuelven a llamar al LLM en cada reintento de alarma.
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok', LOTE_MAX_INTENTOS_PROCESO: '3' });
+    let llamadas = 0;
+    lote.procesarConPipeline = async () => { llamadas++; throw new Error('Groq caido'); };
+    lote.avisarAlSetter = async () => {};
+
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'hola' }));
+    for (let i = 0; i < 6; i++) {
+      await lote.alarm().catch(() => {});
+    }
+
+    assert.equal(llamadas, 3, 'se intento 3 veces y se dejo de gastar LLM');
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined, 'el lote se abandono limpio');
+    assert.equal(storage._alarma(), null);
+  });
+
+  test('al abandonar por fallo de proceso, se avisa a un humano', async () => {
+    const { lote } = loteFalso({ MANYCHAT_API_TOKEN: 'tok', LOTE_MAX_INTENTOS_PROCESO: '1' });
+    let aviso = null;
+    lote.procesarConPipeline = async () => { throw new Error('Supabase caido'); };
+    lote.avisarAlSetter = async (subId, msg) => { aviso = { subId, msg }; };
+
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'hola' }));
+    await lote.alarm().catch(() => {});
+    await lote.alarm().catch(() => {});
+
+    assert.ok(aviso, 'el lead escribio y nadie le respondio: eso lo tiene que saber alguien');
+    assert.match(aviso.msg, /no logro PROCESAR/i);
+  });
+
+  test('el contador de proceso no se arrastra al turno siguiente', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    await storage.put(CLAVE_INTENTOS_PROCESO, 2);
+    await storage.put(CLAVE_MENSAJES, []);
+    await lote.limpiar(true);
+
+    assert.equal(await storage.get(CLAVE_INTENTOS_PROCESO), undefined);
+  });
+});
+
+describe('juntarBurbujas: el prompt no puede crecer sin limite', () => {
+  test('doce burbujas larguisimas se cortan por el tope', () => {
+    const mensajes = Array.from({ length: 12 }, (_, i) => ({ texto: `${i}`.repeat(500) }));
+    const texto = juntarBurbujas(mensajes, 1000);
+    assert.equal(texto.length, 1000);
+  });
+
+  test('conserva el FINAL: lo ultimo que dijo el lead es lo que hay que responder', () => {
+    const texto = juntarBurbujas([{ texto: 'viejo'.repeat(100) }, { texto: 'LO ULTIMO' }], 50);
+    assert.ok(texto.endsWith('LO ULTIMO'));
+  });
+
+  test('un lote normal no se toca', () => {
+    assert.equal(juntarBurbujas([{ texto: 'Hola' }, { texto: 'soy ingeniero' }]), 'Hola\nsoy ingeniero');
+  });
+});
+
+describe('BARRIDO: lo que encontre revisando el resto del flujo', () => {
+  test('⚠️ una burbuja nueva NO retrasa un envio ya pendiente', async () => {
+    // Si no, un lead que sigue escribiendo deja atrapada su propia respuesta
+    // anterior: el debounce solo debe aplicarse a lo que todavia se esta
+    // pensando, no a lo que ya solo falta decir.
+    const { lote, storage } = loteFalso({ LOTE_VENTANA_MS: '7000' });
+    await storage.put(CLAVE_RESULTADO, { subId: '123', burbujas: ['ya procesada'], enviadas: 0 });
+    await storage.setAlarm(Date.now() + 100);
+    const alarmaDelEnvio = storage._alarma();
+
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'ah espera' }));
+
+    assert.equal(storage._alarma(), alarmaDelEnvio, 'la alarma del envio no se movio');
+    assert.equal((await storage.get(CLAVE_MENSAJES)).length, 1, 'y el mensaje nuevo no se perdio');
+  });
+
+  test('un pipeline que devuelve basura no reintenta el turno entero', async () => {
+    // Un TypeError dentro de alarm() sale hacia Cloudflare y provoca otro
+    // reintento con su llamada al LLM. Se trata como "no hay nada que decir".
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    lote.procesarConPipeline = async () => null;
+
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'hola' }));
+    await lote.alarm(); // no debe lanzar
+
+    assert.equal(await storage.get(CLAVE_MENSAJES), undefined);
+    assert.equal(storage._alarma(), null);
+  });
+
+  test('el estado del lote se puede consultar sin exponer lo que dijo el lead', async () => {
+    const { lote } = loteFalso();
+    await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'dato sensible del lead' }));
+    const r = await lote.fetch(new Request('https://lote.interno/estado'));
+    const cuerpo = await r.json();
+
+    assert.equal(cuerpo.burbujas, 1);
+    assert.equal(JSON.stringify(cuerpo).includes('sensible'), false, 'el texto no se expone');
   });
 });

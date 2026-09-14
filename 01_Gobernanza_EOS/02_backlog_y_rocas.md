@@ -5685,3 +5685,70 @@ reintroduzca: el día que alguien "arregle" el envío añadiéndolo, rompe todo.
 La prueba que cierra esto: tres burbujas seguidas de un lead **que haya escrito
 hace menos de 24 h**, y confirmar en las trazas **un** turno y **un** envío. Si
 algo sale mal, `LOTE_AGRUPAMIENTO = "false"` devuelve el camino anterior.
+
+## 🧯 14-sep-2026 (noche) — Los dos bucles de la Fase 2B y la clase de error detrás
+
+Intervención de emergencia de Antigravity (`11c4796`, `9f445eb`). Ambos hotfixes
+**verificados y correctos**. Lo que sigue es lo que faltaba.
+
+### El canal: la causa real del 3011, confirmada
+
+Mismo contacto, mismo momento, contra la API real:
+
+| Payload | Respuesta de ManyChat |
+|---|---|
+| **sin** `type` | `3011: last interaction was over 267h ago` |
+| **con** `type: "instagram"` | **`{"status":"success"}`** |
+
+**No era la ventana de 24 h: era el canal.** Sin `type`, ManyChat evalúa la
+ventana de **Facebook Messenger** —donde un lead de Instagram no ha escrito
+nunca— y Meta bloquea. El mensaje de error habla de la ventana y despista.
+
+⚠️ Esto **deroga** el diagnóstico que dejé escrito más arriba sobre el 3011.
+
+### Los bucles eran la misma clase de error, y el parche por rama no la cierra
+
+`limpiar()` reprogramaba la alarma si veía mensajes en la bandeja, y dejaba a
+cada `return` la responsabilidad de acordarse de vaciarla antes. Dos salidas se
+olvidaron:
+
+1. **camino silencioso** (`solo_registro`) — lo arregló el hotfix;
+2. **token ausente** — **el hotfix no lo cubrió**, y era idéntico.
+
+Y había un tercero de la misma familia que nadie había visto: **si `manejar()`
+revienta** (Groq o Supabase caídos), la excepción sale de `alarm()`, Cloudflare
+reintenta y **se vuelve a llamar al LLM, sin tope**. El mismo incidente del
+mediodía, en la fase de pensar en vez de la de hablar.
+
+**Arreglado en la raíz, no por rama:** `limpiar(cerrarEntrada)` ahora **exige**
+declarar la intención y lanza `TypeError` si se omite. Olvidarlo es un error
+visible en vez de una alarma girando en silencio. Los 5 puntos de llamada
+declaran cuál es su caso.
+
+### Por qué 686 tests no lo vieron
+
+Porque ninguno podía recorrer las salidas de `alarm()`: probarlas exigía Groq y
+Supabase reales. La llamada al pipeline no tenía costura. Ahora está en
+`procesarConPipeline()`, sustituible en test, y hay un test por **cada** salida —
+no por las dos que explotaron.
+
+### Lo demás del barrido
+
+- **Envío pendiente atrapado:** una burbuja nueva reprogramaba la alarma del
+  envío ya procesado. Un lead que sigue escribiendo podía dejar su propia
+  respuesta anterior esperando indefinidamente. Ahora, con envío pendiente, la
+  alarma no se toca.
+- **Tope de prompt:** 12 burbujas largas eran un prompt sin límite, y el prompt
+  se paga con un cupo que ya nos mordió. Tope de 4.000 caracteres, cortando por
+  el principio para conservar lo último que dijo el lead.
+- **Canal configurable** (`CANAL_POR_DEFECTO = 'instagram'`) en vez de fijo.
+- **`datos` puede venir raro:** un `TypeError` dentro de `alarm()` provocaba otro
+  reintento con su llamada al LLM. Ahora se trata como "no hay nada que decir".
+
+### Estado
+
+704 tests (62 del lote), compuerta 5/5, `--dry-run` compila.
+
+⚠️ El aviso al Setter ahora se dispara en las **dos** fases: si el lead escribió
+y nadie le respondió —porque no se pudo procesar o no se pudo enviar—, alguien
+se entera. Antes ese caso era mudo.
