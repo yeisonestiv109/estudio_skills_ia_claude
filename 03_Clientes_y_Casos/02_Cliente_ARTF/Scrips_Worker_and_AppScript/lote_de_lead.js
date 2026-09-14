@@ -417,6 +417,7 @@ export class LoteDeLead {
       .filter(Boolean);
 
     if (!datos.responder || !burbujas.length) {
+      await this.storage.delete(CLAVE_MENSAJES);
       // El pipeline decidio callar (handoff activo, fuera de lista blanca,
       // modo secretaria...). Es una salida legitima, no un fallo.
       await this.limpiar();
