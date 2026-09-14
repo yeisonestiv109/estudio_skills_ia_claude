@@ -157,7 +157,7 @@ export function cuerpoSendContent(subscriberId, texto) {
     subscriber_id: subscriberId,
     data: {
       version: 'v2',
-      content: {
+      content: { type: 'instagram',
         messages: [{ type: 'text', text: texto }],
       },
     },
