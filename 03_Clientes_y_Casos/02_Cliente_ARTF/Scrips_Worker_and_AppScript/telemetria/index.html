@@ -93,6 +93,7 @@
       <p class="text-xs text-neutral-500">Trazas en vivo · OpenTelemetry sobre Supabase Realtime</p>
     </div>
     <nav class="flex items-center gap-1 rounded-lg border border-neutral-800 p-1 text-xs" role="tablist">
+      <button data-vista="leads" role="tab" class="pestana rounded-md px-3 py-1">Leads</button>
       <button data-vista="trazas" role="tab" class="pestana rounded-md px-3 py-1">Trazas</button>
       <button data-vista="llm" role="tab" class="pestana rounded-md px-3 py-1">LLM</button>
     </nav>
@@ -122,6 +123,39 @@
   </div>
   <pre id="terminal" class="terminal h-[52vh] overflow-y-auto rounded-lg border border-neutral-800 bg-black p-4 font-mono text-[12px] leading-relaxed text-emerald-400"></pre>
 </section>
+</main>
+
+<!-- ══ VISTA LEADS: metricas por ventana + navegacion por lead (13-sep-2026) ══
+     Todo se agrega en la base (fn_telemetria_resumen / _leads / _lead): el
+     navegador no descarga trazas sueltas. El nombre del lead se une al leer. -->
+<main id="vistaLeads" class="px-6 py-5 space-y-5" hidden>
+  <section>
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-1 rounded-lg border border-neutral-800 p-1 text-xs" role="group" aria-label="Ventana de tiempo">
+        <button data-ventana="10" class="ventana rounded-md px-3 py-1">10 min</button>
+        <button data-ventana="60" class="ventana rounded-md px-3 py-1">1 h</button>
+        <button data-ventana="1440" class="ventana rounded-md px-3 py-1">24 h</button>
+        <button data-ventana="10080" class="ventana rounded-md px-3 py-1">7 días</button>
+      </div>
+      <p id="leadsActualizado" class="text-xs text-neutral-500">—</p>
+    </div>
+    <div id="leadsKpis" class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"></div>
+    <div id="leadsCupo" class="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3"></div>
+  </section>
+
+  <section class="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+    <div class="space-y-2">
+      <input id="leadsBuscar" type="search" placeholder="Buscar por nombre, @ o ID"
+             class="w-full rounded-md border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm outline-none focus:border-emerald-500">
+      <label class="flex items-center gap-2 text-xs text-neutral-500">
+        <input id="leadsOcultarPruebas" type="checkbox" class="accent-emerald-600"> ocultar cuentas de prueba
+      </label>
+      <ul id="leadsLista" class="max-h-[70vh] space-y-1 overflow-y-auto pr-1"></ul>
+    </div>
+    <div id="leadsDetalle" class="min-w-0 max-h-[80vh] overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-900/40 p-4">
+      <p class="text-sm text-neutral-500">Elige un lead para ver su recorrido completo.</p>
+    </div>
+  </section>
 </main>
 
 <!-- ══ VISTA LLM: pool de llaves, capacidad y registro de rotación (12-sep-2026) ══
@@ -346,7 +380,7 @@ async function conectar(url, key) {
   cliente.channel('telemetria')
     .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'telemetry_spans' },
-        (payload) => { encolar(payload.new); recibirSpanLLM(payload.new); })
+        (payload) => { encolar(payload.new); recibirSpanLLM(payload.new); recibirSpanLeads(payload.new); })
     .subscribe((estado) => {
       if (estado === 'SUBSCRIBED')  marcarConexion('en vivo', 'bg-emerald-500/15 text-emerald-300');
       if (estado === 'CHANNEL_ERROR') marcarConexion('sin realtime', 'bg-amber-500/15 text-amber-300');
@@ -603,8 +637,269 @@ async function cargarLLM() {
   pintarRotacion();
 }
 
+/* ===========================================================================
+   3.c VISTA LEADS — metricas por ventana y linea de tiempo por lead
+   =========================================================================== */
+const REFRESCO_LEADS_MS = 15_000;
+let ventanaMin = 60;
+let leadActivo = null;
+let temporizadorLeads = null;
+let busquedaPendiente = null;
+let refrescoDetalle = null;
+
+const ETIQUETA_NODO = {
+  MANYCHAT_WEBHOOK: 'Webhook', ESTADO_DB: 'Estado', HISTORIAL_DB: 'Memoria', GROQ_CLASIFICADOR: 'LLM',
+  ROUTER_FSM: 'Router', GENERACION_LLM: 'Redacción', COMPLIANCE_CHECK: 'Compliance',
+  SUPABASE_ESCRITURA: 'Escritura', EFECTOS_BACKGROUND: 'Efectos',
+};
+const COLOR_ESTADO = {
+  OK: 'border-emerald-700 text-emerald-300', FALLBACK: 'border-amber-600 text-amber-300',
+  ERROR: 'border-red-600 text-red-300', PENDING: 'border-amber-600 text-amber-300',
+};
+
+function haceCuanto(iso) {
+  const seg = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  if (seg < 60) return `hace ${seg} s`;
+  if (seg < 3600) return `hace ${Math.round(seg / 60)} min`;
+  if (seg < 86400) return `hace ${Math.round(seg / 3600)} h`;
+  return `hace ${Math.round(seg / 86400)} d`;
+}
+
+function kpi(etiqueta, valor, nota, alerta = false) {
+  const c = el('div', `rounded-lg border p-3 ${alerta ? 'border-amber-700 bg-amber-500/5' : 'border-neutral-800 bg-neutral-900'}`);
+  c.append(el('div', 'text-[10px] uppercase tracking-wide text-neutral-500', etiqueta));
+  c.append(el('div', 'mt-1 font-mono text-lg text-neutral-100', valor));
+  if (nota) c.append(el('div', 'text-[10px] text-neutral-500', nota));
+  return c;
+}
+
+async function cargarResumenLeads() {
+  const desde = new Date(Date.now() - ventanaMin * 60_000).toISOString();
+  const { data, error } = await cliente.rpc('fn_telemetria_resumen', { p_desde: desde });
+  if (error) { $('leadsActualizado').textContent = `No se pudo leer el resumen: ${error.message}`; return; }
+  const r = data || {};
+  const llm = (r.llm || []);
+  const llamadas = llm.reduce((a, x) => a + Number(x.llamadas || 0), 0);
+  const i429 = llm.reduce((a, x) => a + Number(x.intentos_429 || 0), 0);
+  const entrada = llm.reduce((a, x) => a + Number(x.tokens_entrada || 0), 0);
+  const cache = llm.reduce((a, x) => a + Number(x.tokens_cacheados || 0), 0);
+  const salida = llm.reduce((a, x) => a + Number(x.tokens_salida || 0), 0);
+
+  const k = $('leadsKpis');
+  k.replaceChildren(
+    kpi('Mensajes', nf.format(r.mensajes || 0), `${nf.format(r.leads || 0)} leads`),
+    kpi('Turnos con IA', nf.format(r.turnos_con_ia || 0), `${nf.format(r.solo_registro || 0)} solo registro`),
+    kpi('Calificados', nf.format(r.calificados || 0), `${nf.format(r.descalificados || 0)} descalificados`),
+    kpi('Handoffs', nf.format(r.handoffs || 0), 'pasaron a un humano'),
+    kpi('Errores', nf.format((r.turnos_con_error || 0)), `${nf.format(r.fallos_llm || 0)} sin LLM`, (r.turnos_con_error || 0) > 0),
+    kpi('Conflictos', nf.format(r.conflictos_concurrencia || 0), 'turnos simultáneos', (r.conflictos_concurrencia || 0) > 0),
+    kpi('Latencia del turno', r.latencia_turno_p50_ms != null ? `${nf.format(r.latencia_turno_p50_ms)} ms` : '—', r.latencia_turno_p95_ms != null ? `p95 ${nf.format(r.latencia_turno_p95_ms)} ms` : null, (r.latencia_turno_p95_ms || 0) > 8000),
+    kpi('Llamadas al LLM', nf.format(llamadas), `${nf.format(i429)} intentos con 429`, llamadas && i429 / llamadas > 0.2),
+    kpi('Tokens de entrada', nf.format(entrada), `${entrada ? Math.round((100 * cache) / entrada) : 0}% en caché`),
+    kpi('Tokens de salida', nf.format(salida), null),
+    kpi('Reintentos ManyChat', nf.format(r.reintentos_cache || 0), 'servidos de caché'),
+    kpi('Modelos', llm.map((x) => x.modelo).join(', ') || '—', llm.map((x) => `${x.modelo?.split('/').pop()}: p50 ${Math.round(x.latencia_p50 || 0)} ms`).join(' · ') || null),
+  );
+
+  // Cupo diario: lo que cuenta para Groq (entrada sin cache + salida) contra el
+  // limite leido del 429 de tipo TPD. Si todavia no se observo, se dice.
+  const cupo = $('leadsCupo');
+  cupo.replaceChildren();
+  for (const o of (r.cupo_hoy || [])) {
+    const t = el('div', 'rounded-lg border border-neutral-800 bg-neutral-900 p-3 space-y-2');
+    t.append(el('div', 'text-xs text-neutral-300', `${o.modelo} · ${o.organizacion}`));
+    t.append(medidor(`Cupo diario de hoy (UTC) · llaves ${o.llaves}`, Number(o.tokens_que_cuentan || 0),
+      o.tpd_limite_conocido ? Number(o.tpd_limite_conocido) : null,
+      o.tpd_limite_conocido ? `${nf.format(o.tokens_cacheados || 0)} tokens en caché no cuentan` : 'Límite aún no observado en un 429 (docs de Groq: 200.000 por organización)'));
+    cupo.append(t);
+  }
+  $('leadsActualizado').textContent = `actualizado ${new Date().toLocaleTimeString('es-CO', { hour12: false })}`;
+}
+
+async function cargarListaLeads() {
+  const desde = new Date(Date.now() - ventanaMin * 60_000).toISOString();
+  const { data, error } = await cliente.rpc('fn_telemetria_leads', {
+    p_desde: desde, p_buscar: $('leadsBuscar').value.trim() || null, p_limite: 200,
+  });
+  const lista = $('leadsLista');
+  if (error) { lista.replaceChildren(el('li', 'text-xs text-red-300', `No se pudo leer: ${error.message}`)); return; }
+  const ocultar = $('leadsOcultarPruebas').checked;
+  const filas = (data || []).filter((l) => !ocultar || !l.es_prueba);
+  if (!filas.length) { lista.replaceChildren(el('li', 'text-xs text-neutral-500', 'Sin leads en esta ventana.')); return; }
+  lista.replaceChildren(...filas.map((l) => {
+    const li = el('li');
+    const b = el('button', `w-full rounded-md border px-3 py-2 text-left ${l.manychat_id === leadActivo ? 'border-emerald-600 bg-emerald-500/10' : 'border-neutral-800 bg-neutral-900 hover:border-neutral-600'}`);
+    const fila1 = el('div', 'flex items-center justify-between gap-2');
+    fila1.append(el('span', 'truncate text-sm text-neutral-100', (l.nombre || '').trim() || `Lead ${l.manychat_id}`));
+    fila1.append(el('span', 'shrink-0 text-[10px] text-neutral-500', haceCuanto(l.ultima_actividad)));
+    b.append(fila1);
+    const fila2 = el('div', 'mt-0.5 flex flex-wrap items-center gap-1 text-[10px]');
+    if (l.ig_handle) fila2.append(el('span', 'text-neutral-500', `@${l.ig_handle}`));
+    fila2.append(el('span', 'rounded border border-neutral-700 px-1 font-mono text-neutral-300', l.etapa_bot || 'sin etapa'));
+    if (l.estado) fila2.append(el('span', 'text-neutral-400', l.estado));
+    if (l.es_prueba) fila2.append(el('span', 'rounded bg-neutral-800 px-1 text-neutral-400', 'PRUEBA'));
+    if (Number(l.con_error)) fila2.append(el('span', 'rounded border border-red-700 px-1 text-red-300', `🔴 ${l.con_error} error`));
+    if (Number(l.conflictos)) fila2.append(el('span', 'rounded border border-amber-600 px-1 text-amber-300', `⚠️ ${l.conflictos} conflicto`));
+    if (Number(l.handoffs)) fila2.append(el('span', 'rounded border border-sky-700 px-1 text-sky-300', `👤 ${l.handoffs} handoff`));
+    b.append(fila2);
+    b.append(el('div', 'mt-1 truncate text-xs text-neutral-500', `${nf.format(l.mensajes)} msj · ${nf.format(l.turnos_con_ia)} con IA · “${l.ultimo_mensaje || ''}”`));
+    b.addEventListener('click', () => abrirLead(l.manychat_id));
+    li.append(b);
+    return li;
+  }));
+}
+
+function chipNodo(sp) {
+  const nombre = ETIQUETA_NODO[sp.node_name] || sp.node_name;
+  const ms = sp.duration_ms == null ? '' : ` ${sp.duration_ms} ms`;
+  return el('span', `rounded border px-1.5 py-0.5 font-mono text-[10px] ${COLOR_ESTADO[sp.status] || 'border-neutral-700 text-neutral-400'}`, `${nombre}${ms}`);
+}
+
+function burbuja(texto, deLead) {
+  const b = el('div', `max-w-[85%] whitespace-pre-wrap break-words rounded-lg px-3 py-2 text-sm ${deLead ? 'self-start bg-neutral-800 text-neutral-100' : 'self-end bg-emerald-900/40 text-emerald-100'}`);
+  b.textContent = texto;
+  return b;
+}
+
+function tarjetaTurno(tr, mensajesBot) {
+  const spans = tr.spans || [];
+  const a = Object.assign({}, ...spans.map((s) => s.attributes || {}));
+  const card = el('article', 'space-y-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3');
+
+  const cab = el('div', 'flex flex-wrap items-center justify-between gap-2 text-[11px] text-neutral-500');
+  cab.append(el('span', 'font-mono', `${hora(tr.ini)} · ${tr.trace_id}`));
+  const marcas = el('span', 'flex flex-wrap gap-1');
+  const marca = (txt, cls) => marcas.append(el('span', `rounded px-1.5 py-0.5 text-[10px] ${cls}`, txt));
+  if (a['webhook.idempotente']) marca('↺ reintento servido de caché', 'bg-neutral-800 text-neutral-300');
+  if (a['router.decision'] === 'solo_registro_sin_ia') marca('solo registro', 'bg-neutral-800 text-neutral-300');
+  if (a['router.decision'] === 'no_responder') marca(`no responde: ${a['router.razon'] || ''}`, 'bg-neutral-800 text-neutral-300');
+  if (a['db.conflicto']) marca(`⚠️ conflicto: leyó ${a['db.etapa_leida'] || '—'}, había ${a['db.etapa_real'] || '—'}`, 'bg-amber-500/15 text-amber-300');
+  if (a['experimento.espera_ms']) marca(`⏱ experimento ${a['experimento.espera_ms']} ms`, 'bg-sky-500/15 text-sky-300');
+  if (spans.some((s) => s.status === 'ERROR')) marca('🔴 error', 'bg-red-500/15 text-red-300');
+  if (a['deuda.discrepancia']) marca(`🧮 ${a['deuda.discrepancia']}`, 'bg-amber-500/15 text-amber-300');
+  cab.append(marcas);
+  card.append(cab);
+
+  const chat = el('div', 'flex flex-col gap-1.5');
+  if (a['lead.mensaje']) chat.append(burbuja(a['lead.mensaje'], true));
+  // Mensajes del bot de ESTE turno: la fila de activity_log con el mismo texto
+  // del lead, escrita dentro de la ventana de la traza.
+  const ini = new Date(tr.ini).getTime() - 2000;
+  const fin = new Date(tr.fin || tr.ini).getTime() + 15000;
+  const suyo = mensajesBot.find((m) => m.ultimo_msg_lead === a['lead.mensaje']
+    && new Date(m.created_at).getTime() >= ini && new Date(m.created_at).getTime() <= fin);
+  if (suyo?.ultimo_msg_bot) {
+    for (const parte of suyo.ultimo_msg_bot.split('\n---\n')) chat.append(burbuja(parte, false));
+  }
+  card.append(chat);
+
+  const flujo = el('div', 'flex flex-wrap gap-1');
+  for (const sp of spans.filter((x) => !(x.node_name === 'MANYCHAT_WEBHOOK' && !x.attributes?.['experimento.espera_ms']))) flujo.append(chipNodo(sp));
+  card.append(flujo);
+
+  const lineas = [];
+  if (a['user.intent']) lineas.push(`Entendió: ${a['user.intent']}`);
+  if (a['llm.intentos']) lineas.push(`LLM: ${a['llm.modelo'] || ''} · ${a['llm.intentos']} · ${nf.format(a['llm.tokens_entrada'] || 0)} → ${nf.format(a['llm.tokens_salida'] || 0)} tokens`);
+  if (a['llm.descartes']) lineas.push(`Descartado por el validador: ${a['llm.descartes']}`);
+  if (a['router.summary']) lineas.push(`Router → ${a['router.etapa_nueva'] || '—'}: ${a['router.summary']}`);
+  if (a['router.handoff']) lineas.push(`Handoff: ${a['router.handoff']}`);
+  const errores = spans.filter((s) => s.attributes?.['error.message']).map((s) => `${ETIQUETA_NODO[s.node_name] || s.node_name}: ${s.attributes['error.message']}`);
+  for (const e of errores) lineas.push(`Error ${e}`);
+  for (const l of lineas) card.append(el('p', `text-xs ${l.startsWith('Error') ? 'text-red-300' : 'text-neutral-400'}`, l));
+
+  const det = el('details', 'text-[11px] text-neutral-500');
+  det.append(el('summary', 'cursor-pointer select-none', 'ver atributos crudos'));
+  det.append(el('pre', 'mt-1 max-h-64 overflow-auto rounded bg-black p-2 font-mono text-[10px] text-neutral-400', JSON.stringify(spans.map((x) => ({ nodo: x.node_name, status: x.status, ms: x.duration_ms, ...x.attributes })), null, 1)));
+  card.append(det);
+  return card;
+}
+
+async function abrirLead(manychatId) {
+  leadActivo = manychatId;
+  const cont = $('leadsDetalle');
+  cont.replaceChildren(el('p', 'text-sm text-neutral-500', 'Cargando…'));
+  const { data, error } = await cliente.rpc('fn_telemetria_lead', { p_manychat_id: manychatId, p_trazas: 80 });
+  if (leadActivo !== manychatId) return;   // el usuario ya eligio otro
+  if (error) { cont.replaceChildren(el('p', 'text-sm text-red-300', `No se pudo leer: ${error.message}`)); return; }
+  const lead = data?.lead || { manychat_id: manychatId };
+  const trazas = data?.trazas || [];
+  const bot = data?.bot || [];
+
+  const cab = el('div', 'space-y-2 border-b border-neutral-800 pb-3');
+  const t1 = el('div', 'flex flex-wrap items-baseline justify-between gap-2');
+  t1.append(el('h3', 'text-base font-semibold text-neutral-100', (lead.nombre || '').trim() || `Lead ${manychatId}`));
+  t1.append(el('span', 'font-mono text-[11px] text-neutral-500', `${lead.ig_handle ? '@' + lead.ig_handle + ' · ' : ''}${manychatId}`));
+  cab.append(t1);
+  const datos = el('div', 'flex flex-wrap gap-1.5 text-[11px]');
+  const d = (txt) => datos.append(el('span', 'rounded border border-neutral-700 px-1.5 py-0.5 text-neutral-300', txt));
+  d(`estado: ${lead.estado || '—'}`); d(`etapa: ${lead.etapa_bot || '—'}`);
+  if (lead.profesion) d(lead.profesion);
+  if (lead.salario_monto != null) d(`ingreso $${nf.format(lead.salario_monto)}`);
+  if (lead.endeudamiento_pct != null) d(`deuda ${lead.endeudamiento_pct}%`);
+  if (lead.dolor) d(`dolor ${lead.dolor}`);
+  if (lead.urgencia) d(`urgencia ${lead.urgencia}`);
+  if (lead.handoff_razon) d(`handoff: ${lead.handoff_razon}`);
+  if (lead.motivo_perdida) d(`perdido: ${lead.motivo_perdida}`);
+  if (lead.calendario_enviado_at) d('link enviado');
+  if (lead.es_prueba) d('PRUEBA');
+  cab.append(datos);
+  // Recorrido del embudo: cada etapa nueva que decidio el router, en orden.
+  const recorrido = [];
+  for (const tr of trazas) {
+    const e = (tr.spans || []).map((s) => s.attributes?.['router.etapa_nueva']).find(Boolean);
+    if (e && recorrido[recorrido.length - 1] !== e) recorrido.push(e);
+  }
+  if (recorrido.length) cab.append(el('p', 'font-mono text-[11px] text-neutral-400', recorrido.join(' → ')));
+  cont.replaceChildren(cab);
+
+  if (!trazas.length) { cont.append(el('p', 'mt-3 text-sm text-neutral-500', 'Sin trazas (la telemetría se purga a los 30 días).')); return; }
+  const tl = el('div', 'mt-3 space-y-3');
+  for (const tr of trazas) tl.append(tarjetaTurno(tr, bot));
+  cont.append(tl);
+  cont.append(el('p', 'mt-2 text-[11px] text-neutral-600', `${trazas.length} turno(s) · se actualiza solo cuando llega un mensaje nuevo de este lead`));
+  // Lo mas reciente abajo, como un chat: se baja DENTRO del panel, sin mover
+  // la pagina (las metricas y la lista siguen a la vista).
+  cont.scrollTop = cont.scrollHeight;
+  cargarListaLeads();
+}
+
+/* Un span nuevo por Realtime: refresca el lead abierto si es suyo. */
+function recibirSpanLeads(s) {
+  if ($('vistaLeads').hidden || !leadActivo || s?.manychat_id !== leadActivo) return;
+  clearTimeout(refrescoDetalle);
+  refrescoDetalle = setTimeout(() => abrirLead(leadActivo), 1500);
+}
+
+function pintarVentanas() {
+  document.querySelectorAll('.ventana').forEach((b) => {
+    const activa = Number(b.dataset.ventana) === ventanaMin;
+    b.className = `ventana rounded-md px-3 py-1 ${activa ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-500 hover:text-neutral-300'}`;
+    b.setAttribute('aria-pressed', String(activa));
+  });
+}
+
+function cargarLeads() {
+  cargarResumenLeads();
+  cargarListaLeads();
+}
+
+document.querySelectorAll('.ventana').forEach((b) => b.addEventListener('click', () => {
+  ventanaMin = Number(b.dataset.ventana);
+  try { localStorage.setItem('artf_telemetria_ventana', String(ventanaMin)); } catch { /* sin storage */ }
+  pintarVentanas();
+  cargarLeads();
+}));
+$('leadsBuscar').addEventListener('input', () => {
+  clearTimeout(busquedaPendiente);
+  busquedaPendiente = setTimeout(cargarListaLeads, 300);
+});
+$('leadsOcultarPruebas').addEventListener('change', cargarListaLeads);
+try { ventanaMin = Number(localStorage.getItem('artf_telemetria_ventana')) || 60; } catch { /* sin storage */ }
+pintarVentanas();
+
 function mostrarVista(vista) {
   $('vistaTrazas').hidden = vista !== 'trazas';
+  $('vistaLeads').hidden = vista !== 'leads';
   $('vistaLLM').hidden = vista !== 'llm';
   document.querySelectorAll('.pestana').forEach((b) => {
     const activa = b.dataset.vista === vista;
@@ -612,6 +907,11 @@ function mostrarVista(vista) {
     b.setAttribute('aria-selected', String(activa));
   });
   clearInterval(temporizadorLLM);
+  clearInterval(temporizadorLeads);
+  if (vista === 'leads') {
+    cargarLeads();
+    temporizadorLeads = setInterval(cargarLeads, REFRESCO_LEADS_MS);
+  }
   if (vista === 'llm') {
     cargarLLM();
     // llm_telemetria no está en Realtime: se refresca mientras la pestaña está a la vista.
