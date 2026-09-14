@@ -207,6 +207,53 @@ export default {
 };
 
 /**
+ * Repara un JSON que trae saltos de linea SIN ESCAPAR dentro de sus cadenas.
+ *
+ * Es el caso de ManyChat cuando el lead escribe con Enter (ver el comentario en
+ * `manejar`). Se recorre el texto caracter a caracter llevando la cuenta de si
+ * estamos DENTRO de una cadena, y solo ahi se escapan los saltos:
+ *
+ *   · fuera de cadenas, un salto es formato del JSON y se respeta;
+ *   · dentro, es texto del lead y tiene que viajar como \n.
+ *
+ * Se lleva la cuenta de las barras invertidas para no confundir una comilla
+ * escapada (\") con el final de la cadena -- si no, un mensaje con comillas
+ * desincronizaria el rastreo y la reparacion haria mas daño que el bug.
+ *
+ * Devuelve el objeto ya parseado, o null si ni asi es JSON valido: cuando el
+ * cuerpo esta roto por otra razon, es mejor decirlo que inventarse un payload.
+ *
+ * @returns {object|null}
+ */
+export function reparaJsonConSaltos(crudo) {
+  const texto = String(crudo ?? '');
+  if (!texto) return null;
+
+  let arreglado = '';
+  let dentroDeCadena = false;
+  let escapando = false;
+
+  for (const ch of texto) {
+    if (escapando) { arreglado += ch; escapando = false; continue; }
+    if (ch === '\\') { arreglado += ch; escapando = true; continue; }
+    if (ch === '"') { dentroDeCadena = !dentroDeCadena; arreglado += ch; continue; }
+
+    if (dentroDeCadena && (ch === '\n' || ch === '\r' || ch === '\t')) {
+      arreglado += ch === '\n' ? '\\n' : ch === '\r' ? '\\r' : '\\t';
+      continue;
+    }
+    arreglado += ch;
+  }
+
+  try {
+    const obj = JSON.parse(arreglado);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * FASE 2B — ¿este turno se agrupa en un Durable Object?
  *
  * Dos condiciones, y las dos tienen que darse:
@@ -328,9 +375,36 @@ export async function manejar(request, env, ctx) {
     return json({ ok: false, responder: false, error: 'no_autorizado' }, 401);
   }
 
+  // ---------------------------------------------------------------------------
+  // EL LEAD PULSA ENTER Y SU MENSAJE DESAPARECE (encontrado el 14-sep-2026)
+  // ---------------------------------------------------------------------------
+  // ManyChat mete el texto del lead en el JSON de la External Request SIN
+  // ESCAPARLO. Si el lead escribe en varias lineas, el salto entra crudo dentro
+  // de la cadena, el JSON deja de ser valido y este `catch` devolvia 200 con
+  // `json_invalido`: sin traza, sin registro y sin alerta. El mensaje se
+  // evaporaba y en el panel no quedaba NADA.
+  //
+  // No es un caso raro ni nuevo. Medido sobre 8.614 mensajes de la base: solo 3
+  // tienen salto de linea, y los TRES los genero el propio agrupamiento
+  // (`juntarBurbujas` une con \n). Ni un solo mensaje multilinea de un lead ha
+  // entrado nunca. Dos casos reales el 14-sep -- Jean Carlo y Juliana -- los dos
+  // empezando por "Hola!" y un Enter, los dos perdidos en silencio.
+  //
+  // El arreglo va aqui y no en ManyChat porque el Flow no siempre permite
+  // escapar el texto, y porque perder el mensaje de un lead no puede depender de
+  // como lo teclee.
   let payload;
-  try { payload = await request.json(); }
-  catch { return json({ ok: true, responder: false, error: 'json_invalido' }); }
+  try {
+    payload = await request.json();
+  } catch {
+    const crudo = await request.clone().text().catch(() => '');
+    payload = reparaJsonConSaltos(crudo);
+    if (!payload) {
+      console.error(`[webhook] JSON invalido e irreparable (${crudo.length} bytes). Un mensaje del lead se perdio.`);
+      return json({ ok: true, responder: false, error: 'json_invalido' });
+    }
+    console.warn('[webhook] JSON con saltos de linea sin escapar: reparado. El lead escribio en varias lineas.');
+  }
 
   const subId = sanitize(payload.manychat_subscriber_id);
   const lastText = sanitize(payload.last_text);

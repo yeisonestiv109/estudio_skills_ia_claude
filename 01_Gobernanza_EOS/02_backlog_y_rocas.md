@@ -5809,3 +5809,66 @@ bucle. Ahora van por el camino síncrono de siempre.
 
 708 tests, compuerta 5/5, `--dry-run` compila. Fixtures del prompt recapturados
 (+1909 chars, solo en `system`).
+
+## 🕳️ 14-sep-2026 — EL LEAD PULSA ENTER Y SU MENSAJE DESAPARECE
+
+**La causa de los mensajes perdidos. No la trajo la Fase 2B: lleva ahí desde el
+principio.**
+
+### La medición que lo delata
+
+| | |
+|---|---|
+| Mensajes en `activity_log` | **8.614** |
+| Con salto de línea | **3** (0,03 %) |
+| Origen de esos 3 | `worker_ia` — **los generó `juntarBurbujas`**, que une burbujas con `\n` |
+
+**Ni un solo mensaje multilínea de un lead ha entrado jamás.** Los únicos saltos
+de línea de la base los escribimos nosotros.
+
+### El mecanismo, probado contra el Worker en producción
+
+```
+A) JSON con el salto escapado (\n)  →  {"ok":true,"responder":false,"action":"encolado"}  ✅
+B) JSON con el salto LITERAL        →  {"ok":true,"responder":false,"error":"json_invalido"} ⛔
+```
+
+ManyChat inserta el texto del lead en el JSON de la External Request **sin
+escaparlo**. Si el lead escribe con Enter, el JSON deja de ser válido y el
+`catch` devolvía **200 OK con `json_invalido`: sin traza, sin registro, sin
+alerta**. El mensaje se evaporaba y en el panel no quedaba nada.
+
+### Los dos casos del 14-sep
+
+Ambos empiezan por "Hola!" y un Enter. Ambos desaparecidos:
+
+- **Jean Carlo** (`1819385463`): *"Hola! ⏎⏎ Yo trabajo en la industria tec… gano
+  5000000 y 1100 dólares"*. Hueco de 24 min sin una sola traza entre la apertura
+  y el siguiente mensaje.
+- **Juliana** (`jbermejoo`, `708609479`): *"Hola! ⏎ Yo soy Benefits administrador…
+  4'100.000"*. Su último registro es la apertura.
+
+⚠️ **No era el tamaño**: el mensaje más largo que sí llegó tiene 520 caracteres.
+
+⚠️ **Corrección de un diagnóstico anterior:** se escribió que a Jean Carlo lo
+paró la falta de etiqueta V42. Fue al revés — **el bot falló primero y el
+fundador quitó la etiqueta para tomar el control**. La etiqueta fue la
+consecuencia, no la causa.
+
+### El arreglo
+
+`reparaJsonConSaltos()`: si `JSON.parse` falla, se recorre el cuerpo carácter a
+carácter llevando la cuenta de si se está **dentro de una cadena**, y solo ahí se
+escapan `\n`, `\r` y `\t`. Fuera de cadenas el salto es formato del JSON y se
+respeta. Se cuentan las barras invertidas para que una comilla escapada (`\"`) no
+desincronice el rastreo.
+
+Va en el Worker y no en ManyChat porque el Flow no siempre permite escapar el
+texto — y porque **perder el mensaje de un lead no puede depender de cómo lo
+teclee**.
+
+Si aun así el cuerpo es irreparable, ahora queda un `console.error` diciéndolo.
+Antes ese camino era mudo del todo.
+
+9 tests nuevos, incluido el de la comilla escapada y el de que un JSON válido
+pasa intacto (la reparación no puede inventar nada).

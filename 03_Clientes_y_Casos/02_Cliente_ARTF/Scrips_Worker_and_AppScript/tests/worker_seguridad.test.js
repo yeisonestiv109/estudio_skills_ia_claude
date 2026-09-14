@@ -1240,3 +1240,70 @@ describe('Fase 1: el Worker exige la etapa que leyo', () => {
     assert.match(fuente, /const conflicto = respuestaDeConflicto\(resultado\);/);
   });
 });
+
+// ===========================================================================
+// EL LEAD PULSA ENTER Y SU MENSAJE DESAPARECE (14-sep-2026)
+//
+// ManyChat mete el texto del lead en el JSON de la External Request sin
+// escaparlo. Si el lead escribe en varias lineas, el JSON deja de ser valido y
+// el Worker devolvia 200 con `json_invalido`: sin traza, sin registro y sin
+// alerta. El mensaje se evaporaba.
+//
+// Medido sobre 8.614 mensajes de la base: solo 3 tienen salto de linea, y los
+// TRES los genero el propio agrupamiento (juntarBurbujas une con \n). Ni un
+// solo mensaje multilinea de un lead habia entrado nunca. Dos casos reales el
+// mismo dia -- Jean Carlo y Juliana -- los dos empezando por "Hola!" y un
+// Enter, los dos perdidos en silencio.
+// ===========================================================================
+import { reparaJsonConSaltos } from '../worker_bot_setter_v42.js';
+
+describe('reparaJsonConSaltos: un Enter no puede costar un lead', () => {
+  test('⚠️ el caso real: "Hola!" + Enter + el resto', () => {
+    const crudo = '{"manychat_subscriber_id":"708609479","last_text":"Hola!\nYo soy Benefits administrador. Gano 4\'100.000"}';
+    const p = reparaJsonConSaltos(crudo);
+    assert.ok(p, 'el mensaje NO se puede perder');
+    assert.equal(p.manychat_subscriber_id, '708609479');
+    assert.match(p.last_text, /^Hola!\nYo soy Benefits/);
+  });
+
+  test('varios saltos seguidos (el caso de Jean Carlo)', () => {
+    const crudo = '{"last_text":"Hola! \n\nYo trabajo en la industria tec, gano 5000000 y 1100 dolares"}';
+    const p = reparaJsonConSaltos(crudo);
+    assert.match(p.last_text, /industria tec/);
+  });
+
+  test('respeta el formato: un salto FUERA de cadena no es texto del lead', () => {
+    const p = reparaJsonConSaltos('{\n  "last_text": "hola"\n}');
+    assert.equal(p.last_text, 'hola');
+  });
+
+  test('⚠️ una comilla escapada no desincroniza el rastreo', () => {
+    // Sin llevar la cuenta de las barras, \" se leeria como fin de cadena y a
+    // partir de ahi la reparacion escaparia lo que no debe.
+    const crudo = '{"last_text":"me dijo \\"listo\\"\ny me fui"}';
+    const p = reparaJsonConSaltos(crudo);
+    assert.equal(p.last_text, 'me dijo "listo"\ny me fui');
+  });
+
+  test('tabuladores y retornos de carro tambien', () => {
+    const p = reparaJsonConSaltos('{"last_text":"uno\tdos\r\ntres"}');
+    assert.match(p.last_text, /uno\tdos/);
+  });
+
+  test('un JSON valido pasa intacto: la reparacion no inventa nada', () => {
+    const original = { manychat_subscriber_id: '1', last_text: 'todo bien', n: 42, b: true, nulo: null };
+    assert.deepEqual(reparaJsonConSaltos(JSON.stringify(original)), original);
+  });
+
+  test('si esta roto por otra razon, devuelve null en vez de inventarse un payload', () => {
+    assert.equal(reparaJsonConSaltos('{"last_text": '), null);
+    assert.equal(reparaJsonConSaltos('esto no es json'), null);
+    assert.equal(reparaJsonConSaltos(''), null);
+    assert.equal(reparaJsonConSaltos(null), null);
+  });
+
+  test('un JSON que no es objeto tampoco vale como payload', () => {
+    assert.equal(reparaJsonConSaltos('"solo una cadena"'), null);
+    assert.equal(reparaJsonConSaltos('123'), null);
+  });
+});
