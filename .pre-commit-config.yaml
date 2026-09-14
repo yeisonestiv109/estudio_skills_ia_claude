@@ -10,18 +10,45 @@
 # Saltar en un caso excepcional: `git commit --no-verify` (evitar, es
 # exactamente lo que este hook existe para prevenir).
 repos:
+# ---------------------------------------------------------------------------
+# PORTABILIDAD ENTRE LAS DOS MAQUINAS (14-sep-2026).
+#
+# Hasta hoy los dos hooks llamaban a `.venv/bin/ruff` y `.venv/bin/pytest` con
+# `language: system`. Eso ataba el repo a UN entorno concreto y de UN solo
+# sistema operativo:
+#   · en Linux/WSL los ejecutables viven en `.venv/bin/`,
+#   · en Windows viven en `.venv/Scripts/` y terminan en `.exe`.
+# Como este repo lo comparten dos maquinas -- una con WSL2 y otra con Windows
+# nativo -- cualquier `.venv` que se comiteara o se diera por supuesto iba a
+# funcionar en una y fallar en la otra. Y de hecho no existia ninguno: los
+# hooks llevaban tiempo sin correr, en silencio, que es el peor modo de fallar
+# para un hook de seguridad.
+#
+# La solucion no es arreglar el `.venv`: es no depender de el. Con
+# `language: python` lo crea y lo cachea el propio pre-commit, por plataforma,
+# con las versiones pineadas de abajo. Funciona igual en WSL y en Windows y no
+# hace falta activar nada.
+#
+# Instalar una sola vez por clon: `pre-commit install`
+#   (si falta la herramienta: `uv tool install pre-commit`)
+# ---------------------------------------------------------------------------
   - repo: local
     hooks:
       - id: ruff-artf
         name: ruff (scripts de migracion ARTF)
-        entry: .venv/bin/ruff check 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/
-        language: system
+        entry: ruff check 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/
+        language: python
+        additional_dependencies: ["ruff==0.15.21"]
         files: ^03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.*\.py$
         pass_filenames: false
 
+      # ⚠️ Estos tests hablan con la base REAL: necesitan
+      # `Tarea_1_Migrar_DB/.env` con SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.
+      # Sin ese archivo dan FileNotFoundError, no "todo bien".
       - id: pytest-artf
         name: pytest (scripts de migracion ARTF)
-        entry: .venv/bin/pytest 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests/ -q
-        language: system
+        entry: pytest 03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/tests/ -q
+        language: python
+        additional_dependencies: ["pytest==9.1.1", "requests==2.34.2"]
         files: ^03_Clientes_y_Casos/02_Cliente_ARTF/Tarea_1_Migrar_DB/.*\.py$
         pass_filenames: false
