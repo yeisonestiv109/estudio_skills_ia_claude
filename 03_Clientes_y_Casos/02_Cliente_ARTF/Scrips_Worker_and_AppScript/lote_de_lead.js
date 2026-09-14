@@ -227,8 +227,15 @@ export async function enviarBurbujas(token, subscriberId, burbujas, fetchImpl = 
     });
     if (!r.ok) {
       const detalle = await r.text().catch(() => '');
+      // ⚠️ EL CUERPO ENTERO EN EL LOG, NO UN RECORTE (14-sep-2026). La primera
+      // version recortaba a 200 caracteres y el diagnostico del incidente se
+      // fue en adivinar: el motivo real de ManyChat viaja dentro de
+      // `details.messages[].message`, que es justo lo que el recorte se comia.
+      // Un fallo de envio deja al lead sin respuesta: no puede costar dos
+      // rondas de hipotesis averiguar por que.
+      console.error(`[lote][envio] subscriber=${subscriberId} status=${r.status} burbuja=${i + 1}/${burbujas.length} respuesta=${detalle}`);
       throw new FalloDeEnvio(
-        `sendContent ${r.status}: ${detalle.slice(0, 200)} (burbuja ${i + 1}/${burbujas.length})`,
+        `sendContent ${r.status}: ${detalle.slice(0, 300)} (burbuja ${i + 1}/${burbujas.length})`,
         { status: r.status, cuerpo: detalle, indice: enviadas, total: burbujas.length },
       );
     }
@@ -496,9 +503,12 @@ export class LoteDeLead {
    */
   async rendirse(resultado, err, enviadas) {
     const { subId, burbujas } = resultado;
+    // El motivo que se le cuenta al humano sale de lo que DIJO ManyChat, no de
+    // lo que supongamos nosotros. El 3011 se nombra aparte solo porque no tiene
+    // arreglo tecnico posible; el resto va con la respuesta cruda.
     const motivo = err?.ventanaVencida
       ? 'ventana de 24 h vencida (codigo 3011): Meta no permite escribir por API y los message tags estan deprecados'
-      : `${err?.status ?? 'sin status'} permanente`;
+      : `HTTP ${err?.status ?? '?'} de ManyChat: ${String(err?.cuerpo ?? '').slice(0, 300) || 'sin cuerpo'}`;
 
     console.error(`[lote] ${subId}: ENVIO ABANDONADO (${motivo}). Salieron ${enviadas}/${burbujas.length} burbujas. El turno esta escrito en la base pero el lead no lo recibio. ${err?.message}`);
 

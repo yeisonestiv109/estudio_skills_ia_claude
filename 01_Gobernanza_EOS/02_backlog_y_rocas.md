@@ -5610,9 +5610,39 @@ Cache API no retiene entre invocaciones de una alarma de Durable Object**.
   correcto para no reprocesar es el storage del Durable Object, que ya es
   durable.
 
-### Lo que SÍ era, y no estaba en el diagnóstico inicial
+### ⚠️ CORRECCIÓN (misma tarde): la ventana de 24 h NO fue la causa
 
-**La ventana de 24 horas de Meta (código 3011).** Probado contra la API real:
+Lo de abajo se escribió como causa del fallo de Vasco_ana **y era falso**. El
+3011 salió de probar la API con `813370090`, un id viejo de
+`MANYCHAT_IDS_PRUEBA` que llevaba 266 h sin interactuar — no con el lead real.
+ManyChat confirma que Vasco_ana estaba **dentro** de la ventana:
+
+```
+ig_last_interaction: 2026-09-14T10:59:25-05:00
+fallo del envío:     11:04:05   →  4 min 40 s después
+```
+
+**La causa del fallo de envío sigue sin determinarse.** Descartados el
+`message_tag` (verificado en el commit desplegado `9c9d3ca`: `enviarBurbujas`
+llamaba a `cuerpoSendContent(subId, texto)` sin el tercer argumento, así que el
+campo nunca viajó) y la ventana de 24 h. El error exacto está en los logs de
+Cloudflare del Worker, filtrando por `[lote]`.
+
+Que hiciera falta adivinar es un defecto del código, no mala suerte: el log
+recortaba la respuesta de ManyChat a 200 caracteres y se comía justo
+`details.messages[].message`, que es donde viaja el motivo. Corregido: ahora se
+registra el cuerpo entero con `subscriber`, `status` y número de burbuja.
+
+Un dato que puede ser la pista: el contacto trae `last_interaction: None` y solo
+`ig_last_interaction` poblado — es de **Instagram**, no de Messenger.
+
+**Nada del comportamiento dependía de la premisa falsa:** `esVentanaVencida` solo
+elige el TEXTO del aviso al Setter; el 3011 se trata como permanente por ser
+4xx, igual que cualquier otro. Lo que estaba mal era este documento.
+
+### Lo que se probó sobre la ventana de 24 h (cierto, pero de OTRO contacto)
+
+**Código 3011.** Probado contra la API real con un id fuera de ventana:
 
 ```json
 {"status":"error","code":3011,
