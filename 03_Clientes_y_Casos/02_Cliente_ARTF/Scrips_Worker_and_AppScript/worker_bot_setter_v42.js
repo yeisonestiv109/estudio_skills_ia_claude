@@ -164,9 +164,25 @@ export function modeloClasificador(env) {
   return pedido;
 }
 
+// FASE 2B: la clase vive en su propio archivo, pero Cloudflare la busca como
+// export del modulo que declara `main` en wrangler.toml.
+export { LoteDeLead } from './lote_de_lead.js';
+
 export default {
   async fetch(request, env, ctx) {
     try {
+      // FASE 2B — agrupamiento de burbujas.
+      //
+      // Va ANTES del pipeline y no dentro: el objetivo es contestarle a ManyChat
+      // en ~50 ms para que suelte la cola (la Fase 0 demostro que encola por
+      // contacto y no manda la burbuja siguiente hasta que esta se contesta).
+      //
+      // No hay recursion posible: el lote llama a `manejar` directamente, no a
+      // este `fetch`, asi que el turno agrupado nunca vuelve a pasar por aqui.
+      if (agrupamientoActivo(env)) {
+        const encolado = await encolarEnLote(request, env);
+        if (encolado) return encolado;
+      }
       return await manejar(request, env, ctx);
     } catch (err) {
       console.error('UNCAUGHT bot v4.2:', err?.stack || err);
@@ -190,7 +206,68 @@ export default {
   },
 };
 
-async function manejar(request, env, ctx) {
+/**
+ * FASE 2B — ¿este turno se agrupa en un Durable Object?
+ *
+ * Dos condiciones, y las dos tienen que darse:
+ *   · que exista el binding (si se despliega sin la migracion, no existe);
+ *   · que LOTE_AGRUPAMIENTO sea "true".
+ *
+ * La segunda es una perilla, no un canario: permite desplegar el binding y el
+ * codigo por separado del cambio de comportamiento, y apagarlo en caliente sin
+ * redesplegar si algo sale mal. Apagada, el Worker se comporta EXACTAMENTE como
+ * antes -- el camino viejo no se toca.
+ */
+export function agrupamientoActivo(env) {
+  return Boolean(env?.LOTE) && String(env?.LOTE_AGRUPAMIENTO || '').trim() === 'true';
+}
+
+/**
+ * Mete la burbuja en el lote del lead y contesta a ManyChat de inmediato.
+ *
+ * Devuelve `null` cuando este turno NO debe agruparse; el que llama sigue por
+ * el camino de siempre. Se devuelve null -- en vez de resolverlo aca -- en todo
+ * caso raro (sin secreto, sin subscriber, JSON roto): `manejar` ya sabe
+ * responder a cada uno de esos, y tener UN solo sitio que decida eso vale mas
+ * que ahorrarse una pasada.
+ *
+ * ⚠️ Se lee el body de un CLON. El cuerpo de un Request se consume una sola
+ * vez, y si esta funcion devuelve null, `manejar` todavia tiene que poder
+ * leerlo.
+ */
+async function encolarEnLote(request, env) {
+  if (request.method !== 'POST') return null;
+  if (!env.WEBHOOK_SECRET) return null;
+  if (!secretoValido(request.headers.get('x-bot-secret'), env.WEBHOOK_SECRET)) return null;
+
+  let payload;
+  try { payload = await request.clone().json(); } catch { return null; }
+
+  const subId = sanitize(payload.manychat_subscriber_id);
+  const lastText = sanitize(payload.last_text);
+  if (!subId || !lastText) return null;
+
+  // La lista blanca se respeta ANTES de crear el objeto: si el lead no esta en
+  // ella, el bot no debe ni tocar su conversacion. Crear un Durable Object por
+  // cada lead real de la cuenta seria justo lo que la lista blanca evita.
+  const idsPrueba = String(env.MANYCHAT_IDS_PRUEBA || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
+  if (idsPrueba.length && !idsPrueba.includes(subId) && !enModoSecretaria(env)) return null;
+
+  const stub = env.LOTE.get(env.LOTE.idFromName(subId));
+  await stub.fetch('https://lote.interno/encolar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  // `responder: false` es lo que hace que el Flow de ManyChat no mande nada y
+  // cierre el webhook. La respuesta de verdad sale por `/fb/sending/sendContent`
+  // cuando vence la alarma del lote.
+  return json({ ok: true, responder: false, action: 'encolado', bot_activo: env.BOT_ACTIVO === 'true' });
+}
+
+export async function manejar(request, env, ctx) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors() });
   if (request.method !== 'POST') return json({ ok: false, error: 'usa POST' }, 405);
 
@@ -311,17 +388,12 @@ async function manejar(request, env, ctx) {
   // -------------------------------------------------------------------------
   // 2. Reconstruccion del contexto desde Supabase (nunca desde ManyChat)
   // -------------------------------------------------------------------------
-  // FASE 0 — EXPERIMENTO (13-sep-2026). Espera SOLO para los IDs de prueba,
-  // ANTES de leer el estado: si ManyChat ejecuta en paralelo dos requests del
-  // mismo contacto, la segunda burbuja llega mientras esta espera y las trazas
-  // se solapan; si las encola, la segunda arranca al terminar esta. Se apaga
-  // borrando EXPERIMENTO_ESPERA_IDS de wrangler.toml.
-  const esperaMs = esperaDeExperimento(env, subId);
-  if (esperaMs > 0) {
-    const spEspera = tz.inicio(NODOS.WEBHOOK, { 'experimento.espera_ms': esperaMs });
-    await new Promise((r) => setTimeout(r, esperaMs));
-    tz.fin(spEspera, 'OK', { 'experimento.fase': 'espera_terminada' });
-  }
+  // FASE 0 — EXPERIMENTO RETIRADO el 14-sep-2026. La espera de 5 s cumplio su
+  // proposito: midio que ManyChat ENCOLA los webhooks por contacto (la burbuja
+  // siguiente no entro hasta 7 s despues, justo al soltar la primera), y eso
+  // descarto el debounce sincrono y aprobo la Fase 2B. Dormir el Worker con
+  // leads reales ya no aporta nada: solo retrasa la cola. El agrupamiento vive
+  // ahora en `lote_de_lead.js`.
 
   const spEstado = tz.inicio(NODOS.ESTADO);
   const estado = await leerEstado(env, subId);
@@ -2595,20 +2667,6 @@ export function sanitize(value) {
   if (/^\{\{(cuf_|sys_|user_|sub_|sub_id|first_name|last_name|ig_username|user_id|last_input_text)/i.test(str)) return '';
   if (/^\{\{.+\}\}$/.test(str)) return '';
   return str;
-}
-
-/**
- * Espera del experimento de la Fase 0 (13-sep-2026): cuantos ms esperar para
- * este subscriber. 0 si no esta en EXPERIMENTO_ESPERA_IDS o no hay duracion
- * valida. Tope de 6 s: con el p95 del turno (4,6 s) nunca pasa el timeout de
- * 10 s de ManyChat. No es un mecanismo de producto: se retira al decidir 2A/2B.
- */
-export function esperaDeExperimento(env, subId) {
-  const ids = String(env?.EXPERIMENTO_ESPERA_IDS || '').split(',').map((x) => x.trim()).filter(Boolean);
-  if (!subId || !ids.includes(String(subId))) return 0;
-  const ms = Number(env?.EXPERIMENTO_ESPERA_MS);
-  if (!Number.isFinite(ms) || ms <= 0) return 0;
-  return Math.min(ms, 6000);
 }
 
 /**

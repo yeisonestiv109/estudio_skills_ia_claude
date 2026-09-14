@@ -1171,31 +1171,40 @@ describe('Idempotencia: identifica el MENSAJE, no el texto', () => {
 });
 
 // ===========================================================================
-// FASE 0 — EXPERIMENTO DE ESPERA (13-sep-2026)
-// Pregunta que responde: ¿ManyChat ejecuta en paralelo dos External Requests
-// del mismo contacto, o las encola? Con una espera de 5 s SOLO para el ID de
-// prueba, dos burbujas seguidas o se solapan en las trazas (paralelo -> Fase
-// 2A, debounce sincrono) o la segunda arranca al terminar la primera (cola ->
-// Fase 2B, Durable Object).
+// FASE 2B — LA PERILLA DEL AGRUPAMIENTO (14-sep-2026)
+//
+// Estos tests REEMPLAZAN a los de la Fase 0 (`esperaDeExperimento`), que se
+// retiro junto con su codigo. No se borraron para que algo pasara: el
+// experimento respondio su pregunta -- ManyChat ENCOLA los webhooks por
+// contacto, la burbuja siguiente no entro hasta 7 s despues, justo al soltar la
+// primera -- y esa respuesta descarto el debounce sincrono y aprobo el Durable
+// Object. Lo que hay que proteger ya no es la espera, es la perilla.
 // ===========================================================================
-import { esperaDeExperimento } from '../worker_bot_setter_v42.js';
+import { agrupamientoActivo } from '../worker_bot_setter_v42.js';
 
-describe('Fase 0: espera experimental aislada', () => {
-  const env = { EXPERIMENTO_ESPERA_IDS: '813370090', EXPERIMENTO_ESPERA_MS: '5000' };
+describe('Fase 2B: la perilla del agrupamiento', () => {
+  const bindingFalso = { get: () => ({}), idFromName: () => 'x' };
 
-  test('solo aplica a los IDs de la lista', () => {
-    assert.equal(esperaDeExperimento(env, '813370090'), 5000);
-    assert.equal(esperaDeExperimento(env, '919847119'), 0, 'un lead real jamas espera');
+  test('hacen falta LAS DOS cosas: binding y perilla en "true"', () => {
+    assert.equal(agrupamientoActivo({ LOTE: bindingFalso, LOTE_AGRUPAMIENTO: 'true' }), true);
+    assert.equal(agrupamientoActivo({ LOTE_AGRUPAMIENTO: 'true' }), false, 'sin binding no se agrupa');
+    assert.equal(agrupamientoActivo({ LOTE: bindingFalso }), false, 'con binding pero sin perilla, tampoco');
   });
 
-  test('sin variables no hay espera (el experimento se apaga borrandolas)', () => {
-    assert.equal(esperaDeExperimento({}, '813370090'), 0);
-    assert.equal(esperaDeExperimento({ EXPERIMENTO_ESPERA_IDS: '813370090' }, '813370090'), 0);
+  test('⚠️ apagada, el Worker se comporta EXACTAMENTE como antes', () => {
+    // Es la garantia de poder volver atras en caliente sin redesplegar.
+    assert.equal(agrupamientoActivo({ LOTE: bindingFalso, LOTE_AGRUPAMIENTO: 'false' }), false);
+    assert.equal(agrupamientoActivo({}), false);
+    assert.equal(agrupamientoActivo(null), false);
   });
 
-  test('tope duro de 6 s: con el p95 del turno no puede pasar el timeout de 10 s de ManyChat', () => {
-    assert.equal(esperaDeExperimento({ ...env, EXPERIMENTO_ESPERA_MS: '60000' }, '813370090'), 6000);
-    assert.equal(esperaDeExperimento({ ...env, EXPERIMENTO_ESPERA_MS: 'abc' }, '813370090'), 0);
+  test('solo el literal "true" enciende: nada de valores ambiguos', () => {
+    // Un "1" o un "TRUE" en el toml no deben encender medio sistema por
+    // accidente. Si alguien lo escribe asi, que falle visible y no a medias.
+    for (const valor of ['1', 'TRUE', 'True', 'si', 'yes', '']) {
+      assert.equal(agrupamientoActivo({ LOTE: bindingFalso, LOTE_AGRUPAMIENTO: valor }), false, `"${valor}" no debe encender`);
+    }
+    assert.equal(agrupamientoActivo({ LOTE: bindingFalso, LOTE_AGRUPAMIENTO: ' true ' }), true, 'los espacios si se toleran');
   });
 });
 

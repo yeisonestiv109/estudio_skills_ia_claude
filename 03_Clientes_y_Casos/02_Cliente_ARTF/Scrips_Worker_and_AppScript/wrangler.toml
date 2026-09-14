@@ -37,12 +37,56 @@ compatibility_date = "2026-09-01"
 BOT_ACTIVO = "true"
 
 # ---------------------------------------------------------------------------
-# FASE 0 — EXPERIMENTO TEMPORAL (13-sep-2026). Espera de 5 s SOLO para el ID de
-# prueba, para ver en las trazas si ManyChat ejecuta en paralelo o encola dos
-# burbujas del mismo contacto. RETIRAR estas dos lineas al decidir Fase 2A/2B.
+# FASE 2B — AGRUPAMIENTO DE BURBUJAS (14-sep-2026)
 # ---------------------------------------------------------------------------
-EXPERIMENTO_ESPERA_IDS = "813370090"
-EXPERIMENTO_ESPERA_MS = "5000"
+# El experimento de la Fase 0 (retirado abajo) demostro que ManyChat ENCOLA los
+# webhooks por contacto: con una espera de 5 s en el Worker, la burbuja
+# siguiente no entro hasta 7 s despues, justo al soltar la primera. Por eso el
+# debounce sincrono era inutil y se aprobo la asincronia real.
+#
+# "true"  = la burbuja se guarda en el Durable Object del lead, se le contesta
+#           `responder:false` a ManyChat en ~50 ms y el turno se procesa cuando
+#           vence la alarma, respondiendo por /fb/sending/sendContent.
+# "false" = el Worker se comporta EXACTAMENTE como antes (camino intacto).
+#
+# Es una perilla de apagado en caliente, no un canario: permite separar el
+# despliegue del binding del cambio de comportamiento, y volver atras sin
+# redesplegar si algo sale mal.
+LOTE_AGRUPAMIENTO = "true"
+
+# Ventana de agrupamiento en ms. Decision del fundador: 6-8 s. Se REPROGRAMA con
+# cada burbuja nueva, asi que se cuenta desde la ULTIMA que escribio el lead.
+LOTE_VENTANA_MS = "7000"
+
+# Tope duro desde la PRIMERA burbuja del lote. Sin el, un lead que escribe una
+# palabra cada 5 s renovaria la ventana para siempre y el bot no contestaria
+# nunca. Pasado el tope se procesa lo que haya.
+LOTE_TOPE_MS = "25000"
+
+# ---------------------------------------------------------------------------
+# FASE 0 — EXPERIMENTO RETIRADO (14-sep-2026). Cumplio su proposito: la espera
+# de 5 s midio que ManyChat encola por contacto, lo que aprobo la Fase 2B. Se
+# retira porque dormir el Worker con leads reales ya no aporta nada y solo
+# retrasa la cola.
+# ---------------------------------------------------------------------------
 
 [observability]
 enabled = true
+
+# ---------------------------------------------------------------------------
+# FASE 2B — DURABLE OBJECT DEL LOTE
+# ---------------------------------------------------------------------------
+# Uno por `subscriber_id`: Cloudflare garantiza una sola instancia por nombre y
+# ejecucion de un solo hilo, asi que los turnos de un mismo lead quedan
+# serializados por construccion.
+[[durable_objects.bindings]]
+name = "LOTE"
+class_name = "LoteDeLead"
+
+# ⚠️ `new_sqlite_classes` Y NO `new_classes`. En el plan gratuito de Cloudflare
+# solo existen los Durable Objects con backend SQLite; los de key-value exigen
+# plan de pago. Con `new_classes` el deploy falla en una cuenta Free y el error
+# no explica por que. Esta linea no se cambia sin leer eso primero.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LoteDeLead"]
