@@ -1582,7 +1582,8 @@ tibia puede ser un si rotundo.
     "ingreso_cop" y NUNCA lo leas como ~1.4 millones.
   · "SMLV" / "salario minimo" (sin "integral") si es el minimo colombiano:
     ~1.400.000 en 2026.
-  · "un palo" = 1 millon. "luca" = mil.
+  · "un palo" = 1 millon. "luca" = mil. Abreviaturas de millones que se ven en
+    los DM: "Mlls", "Mll", "M", "mm" ("16 Mlls" = 16.000.000). "k" = mil.
   · MONEDA EXTRANJERA: si da el ingreso en dolares, euros u otra moneda evidente,
     conviertelo TU a pesos y devuelve el resultado en "ingreso_cop", sin comentarlo
     ni pedirle que convierta. Tasa fija: 1 USD = 3.500 COP, 1 EUR = 3.800 COP.

@@ -5992,3 +5992,62 @@ confirmarlo con una prueba real**: un mensaje que empiece con "Hola!" + Enter.
 - **Qué devolvió exactamente `respaldo_1`**: la traza guarda el `detalle` del
   error. Saberlo diría si esa llave tiene cuota diaria agotada, el modelo no
   habilitado o está suspendida — y eso se arregla en la cuenta, no en el código.
+
+## 📉 15-sep-2026 — El cuello de botella real: el prompt no cabe en el límite por minuto
+
+**Medido, no estimado.**
+
+| | |
+|---|---|
+| Prompt del clasificador (`system`) | **20.847 chars ≈ 5.800 tokens** |
+| Entrada real por turno (trazas de producción) | **6.800 – 6.930 tokens** |
+| **Límite ITPM de Groq (free)** | **7.000** |
+
+**Una sola clasificación consume el 98 % de la ventana del minuto.** De ahí el
+28 % de rebotes 429 del panel: cualquier segunda llamada dentro del mismo minuto
+no cabe, y el bot hace hasta 4 llamadas por turno.
+
+⚠️ **Parte de esto lo causé el 14-15 de sep**: las reglas de rangos de deuda
+(+1.438 chars) y del apóstrofo (+1.909) sumaron **≈930 tokens** a un prompt que
+ya estaba justo debajo del techo.
+
+### El cupo diario, del panel del 15-sep
+
+| Llave | Organización | Consumo hoy | Estado |
+|---|---|---|---|
+| principal | `org_01kyebn…` | 179.477 / 200.000 (90 %) | rebota por **TPD** |
+| **respaldo_1** | `org_01kksfh…` | **207.779** | **pasado del límite diario** |
+| respaldo_2 | `org_01krccx…` | 21.266 | 🟢 **178.000 libres** |
+
+**Eso era el `respaldo_1:error`**: no un error raro, sino su cupo del día
+agotado. Y con el `break` que había, `respaldo_2` **nunca se probaba**: 178.000
+tokens sin tocar mientras los leads se iban a handoff. El arreglo de `c7837e7`
+usa esa tercera llave justo en este caso.
+
+### La cuenta que hay que mirar
+
+Con ~6.900 tokens por clasificación y 200.000 de TPD por organización:
+
+```
+≈ 29 clasificaciones por día y organización  ×  3 organizaciones  ≈  87 al día
+```
+
+El panel del 15-sep: **102 leads, 450.122 tokens de entrada, 0 % en caché**. El
+cupo se agota antes de que termine el día, y a partir de ahí **todo lead nuevo
+cae en `error_tecnico` → HANDOFF**. No es un fallo del bot: es que no cabe.
+
+### ⚠️ Decisión pendiente (no se toca sin aprobación)
+
+Cuatro caminos, y solo uno es gratis:
+
+1. **Prompt por etapa.** Hoy se mandan TODAS las reglas en TODAS las etapas: en
+   M3 (elegir A/B/C/D) viajan el glosario de ingresos, el apóstrofo, los rangos
+   de deuda y la deuda total. Filtrar `campos_a_extraer` por etapa —la
+   infraestructura ya existe, `ESQUEMA_POR_ETAPA` y `CONTEXTO_POR_ETAPA`—
+   podría bajar las etapas simples de ~5.800 a ~2.000 tokens. **Es el único que
+   ataca la causa y no cuesta dinero.** Toca el corazón del clasificador y
+   obliga a repetir el eval.
+2. **Subir de tier en Groq** (el ITPM de 7.000 es del plan gratuito).
+3. **Más organizaciones** en el pool: cada una son 200.000 TPD más.
+4. **Modelo con caché de prompt**: medido el 14-sep, `gpt-oss-120b` da 86 % de
+   acierto y solo 9 % de caché. Hoy no compensa.
