@@ -215,6 +215,47 @@ bot no le responderá. Hay que usar otra cuenta o liberar el handoff a mano.
 
 ## Pendientes concretos
 
+0. 🔴 **CUPO DE GROQ — lo que más duele hoy (15-sep-2026).** Decisión del
+   fundador: **primero el pool, el prompt por etapa más adelante y con calma.**
+
+   **(a) AHORA — sumar una organización al pool.** Cada cuenta nueva son
+   **200.000 tokens/día** más. Es lo único que da capacidad sin tocar código:
+
+   ```bash
+   # 1. Crear la cuenta en console.groq.com (organizacion NUEVA, no una llave
+   #    mas de una que ya este en el pool: el cupo es POR ORGANIZACION).
+   # 2. Añadirla al final de la lista que ya existe, separada por coma:
+   cd .../Scrips_Worker_and_AppScript
+   npx wrangler secret put GROQ_API_KEYS
+   #    -> pegar: <llave_principal>,<respaldo_1>,<respaldo_2>,<LA_NUEVA>
+   # 3. Comprobar en el panel (pestaña LLM) que aparecen 4 llaves en el pool.
+   ```
+
+   ⚠️ **El orden importa**: es failover, no round-robin. La primera de la lista
+   atiende siempre y las demás solo entran cuando esa falla. Poner la nueva al
+   final la deja como reserva; ponerla primera la gasta antes.
+
+   ⚠️ **Dos llaves de la MISMA cuenta no suman nada**: comparten cupo. Tiene que
+   ser otra organización.
+
+   **(b) MÁS ADELANTE — prompt por etapa (NO empezar sin hablarlo).** Hoy se
+   mandan TODAS las reglas en TODAS las etapas: cuando el lead responde "A" a la
+   pregunta de los dolores viajan el glosario de ingresos, el apóstrofo, los
+   rangos de deuda y la deuda total — nada de eso sirve en M3. Filtrando
+   `campos_a_extraer` por etapa (la infraestructura ya existe:
+   `ESQUEMA_POR_ETAPA` y `CONTEXTO_POR_ETAPA`) las etapas simples bajarían de
+   ~5.800 a ~2.000 tokens: **triplicaría la capacidad diaria sin pagar**.
+
+   Por qué NO se hizo ya, y es criterio del fundador: *"con lo que tiene
+   funciona bien, vamos más suave"*. Toca el corazón del clasificador, obliga a
+   repetir el eval (~113K tokens) y ahora mismo hay cuatro arreglos recién
+   desplegados que todavía no se han visto funcionar. Una cosa cada vez.
+
+   **El número que justifica todo esto:** ~6.900 tokens por clasificación contra
+   un ITPM de 7.000 y un TPD de 200.000 = **~29 clasificaciones por día y
+   organización**. Con 102 leads al día, el cupo se agota antes que el día y a
+   partir de ahí **todo lead nuevo cae en `error_tecnico` → HANDOFF**.
+
 1. ~~Desplegar `88097dd`~~ ✅ hecho el 11-sep (versión `6236373f`). Queda
    **probar los casos de "75" y "Si" con `wrangler tail` abierto** (ver arriba).
 2. **Copy sin aprobar de Javier**: `P.M1_PREGUNTAR_VARIABLES` (rescate por
