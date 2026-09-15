@@ -179,11 +179,41 @@ export default {
       //
       // No hay recursion posible: el lote llama a `manejar` directamente, no a
       // este `fetch`, asi que el turno agrupado nunca vuelve a pasar por aqui.
+      // ⚠️ EL CUERPO SE LEE UNA SOLA VEZ, AQUI. No se clona el Request.
+      //
+      // BUG QUE ESTO CIERRA (14-sep-2026, visto en los logs de produccion):
+      //   TypeError: This ReadableStream is currently locked to a reader
+      //     at manejar (...)
+      //
+      // `encolarEnLote` leia el payload con `request.clone().json()`. En Node
+      // eso es inofensivo -- lo probe y el original quedaba intacto -- pero en
+      // Cloudflare Workers el clon BLOQUEA el stream del original. Asi que cada
+      // vez que el lote decidia no encargarse del turno (JSON roto, sin
+      // subscriber, fuera de la lista blanca), `manejar()` ya no podia leer el
+      // cuerpo y reventaba ANTES de crear la traza: el mensaje del lead moria
+      // sin dejar ni rastro en el panel.
+      //
+      // Leer una vez y repartir el resultado hace imposible ese error, y de paso
+      // ahorra un parseo por turno.
+      const payload = await leerPayload(request);
+      if (!payload) {
+        console.error('[webhook] cuerpo ilegible o irreparable: un mensaje del lead se perdio.');
+        return json({ ok: true, responder: false, error: 'json_invalido' });
+      }
+
+      // FASE 2B — agrupamiento de burbujas.
+      //
+      // Va ANTES del pipeline y no dentro: el objetivo es contestarle a ManyChat
+      // en ~50 ms para que suelte la cola (la Fase 0 demostro que encola por
+      // contacto y no manda la burbuja siguiente hasta que esta se contesta).
+      //
+      // No hay recursion posible: el lote llama a `manejar` directamente, no a
+      // este `fetch`, asi que el turno agrupado nunca vuelve a pasar por aqui.
       if (agrupamientoActivo(env)) {
-        const encolado = await encolarEnLote(request, env, ctx);
+        const encolado = await encolarEnLote(request, env, ctx, payload);
         if (encolado) return encolado;
       }
-      return await manejar(request, env, ctx);
+      return await manejar(request, env, ctx, payload);
     } catch (err) {
       console.error('UNCAUGHT bot v4.2:', err?.stack || err);
       // El caso mas grave de todos: el bot se colgo. Aca no hay `estado` ni
@@ -254,6 +284,37 @@ export function reparaJsonConSaltos(crudo) {
 }
 
 /**
+ * Lee el cuerpo del webhook UNA sola vez y lo deja parseado.
+ *
+ * ⚠️ NUNCA CLONAR EL REQUEST PARA ESTO. En Cloudflare Workers, leer un clon
+ * BLOQUEA el stream del original (`TypeError: This ReadableStream is currently
+ * locked to a reader`), y quien lo lea despues revienta. En Node no pasa, asi
+ * que el bug no aparece en los tests: hay que saberlo.
+ *
+ * Se lee como TEXTO y se parsea a mano para poder reparar los saltos de linea
+ * sin escapar que manda ManyChat cuando el lead escribe con Enter.
+ *
+ * @returns {Promise<object|null>} null si el cuerpo no es un objeto JSON ni
+ *   siquiera tras reparar los saltos.
+ */
+export async function leerPayload(request) {
+  let crudo;
+  try { crudo = await request.text(); } catch { return null; }
+  if (!crudo) return null;
+
+  try {
+    const obj = JSON.parse(crudo);
+    return obj && typeof obj === 'object' ? obj : null;
+  } catch {
+    const reparado = reparaJsonConSaltos(crudo);
+    if (reparado) {
+      console.warn('[webhook] JSON con saltos de linea sin escapar: reparado. El lead escribio en varias lineas.');
+    }
+    return reparado;
+  }
+}
+
+/**
  * FASE 2B — ¿este turno se agrupa en un Durable Object?
  *
  * Dos condiciones, y las dos tienen que darse:
@@ -282,13 +343,11 @@ export function agrupamientoActivo(env) {
  * vez, y si esta funcion devuelve null, `manejar` todavia tiene que poder
  * leerlo.
  */
-async function encolarEnLote(request, env, ctx) {
+async function encolarEnLote(request, env, ctx, payload) {
   if (request.method !== 'POST') return null;
   if (!env.WEBHOOK_SECRET) return null;
   if (!secretoValido(request.headers.get('x-bot-secret'), env.WEBHOOK_SECRET)) return null;
-
-  let payload;
-  try { payload = await request.clone().json(); } catch { return null; }
+  if (!payload || typeof payload !== 'object') return null;
 
   const subId = sanitize(payload.manychat_subscriber_id);
   const lastText = sanitize(payload.last_text);
@@ -349,7 +408,7 @@ async function encolarEnLote(request, env, ctx) {
   return json({ ok: true, responder: false, action: 'encolado', bot_activo: env.BOT_ACTIVO === 'true' });
 }
 
-export async function manejar(request, env, ctx) {
+export async function manejar(request, env, ctx, payloadPrevio = null) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors() });
   if (request.method !== 'POST') return json({ ok: false, error: 'usa POST' }, 405);
 
@@ -393,17 +452,15 @@ export async function manejar(request, env, ctx) {
   // El arreglo va aqui y no en ManyChat porque el Flow no siempre permite
   // escapar el texto, y porque perder el mensaje de un lead no puede depender de
   // como lo teclee.
-  let payload;
-  try {
-    payload = await request.json();
-  } catch {
-    const crudo = await request.clone().text().catch(() => '');
-    payload = reparaJsonConSaltos(crudo);
-    if (!payload) {
-      console.error(`[webhook] JSON invalido e irreparable (${crudo.length} bytes). Un mensaje del lead se perdio.`);
-      return json({ ok: true, responder: false, error: 'json_invalido' });
-    }
-    console.warn('[webhook] JSON con saltos de linea sin escapar: reparado. El lead escribio en varias lineas.');
+  //
+  // `payloadPrevio` llega del `fetch`, que ya leyo el cuerpo UNA vez (ver el
+  // comentario del ReadableStream bloqueado). Cuando el turno viene del Durable
+  // Object no hay payload previo: el lote construye su propia peticion y este es
+  // el unico sitio que la lee.
+  const payload = payloadPrevio ?? await leerPayload(request);
+  if (!payload) {
+    console.error('[webhook] cuerpo ilegible o irreparable. Un mensaje del lead se perdio.');
+    return json({ ok: true, responder: false, error: 'json_invalido' });
   }
 
   const subId = sanitize(payload.manychat_subscriber_id);

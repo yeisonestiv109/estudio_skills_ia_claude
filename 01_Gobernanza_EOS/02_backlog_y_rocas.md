@@ -5872,3 +5872,55 @@ Antes ese camino era mudo del todo.
 
 9 tests nuevos, incluido el de la comilla escapada y el de que un JSON válido
 pasa intacto (la reparación no puede inventar nada).
+
+## 🧨 14-sep-2026 — `request.clone()` bloqueaba el cuerpo: el bug que mataba el turno antes de existir
+
+**Tercer caso reportado** (una empleada del sector privado, *"Hola! ⏎ Soy empleada…
+$16 Mlls…"*), mismo patrón que Jean Carlo y Juliana. Al perseguirlo apareció algo
+peor que el JSON roto.
+
+### El log que lo delata
+
+```
+UNCAUGHT bot v4.2: TypeError: This ReadableStream is currently locked to a reader
+    at manejar (worker_bot_setter_v42.js:3303)
+```
+
+`encolarEnLote` leía el payload con **`request.clone().json()`**. En Node eso es
+inofensivo —lo probé y el original quedaba intacto— pero **en Cloudflare Workers
+el clon BLOQUEA el stream del original**.
+
+Consecuencia: **cada vez que el lote decidía no encargarse del turno** —JSON
+roto, sin subscriber, fuera de la lista blanca— `manejar()` ya no podía leer el
+cuerpo y reventaba **antes de crear la traza**. El mensaje moría sin dejar nada
+en el panel, y el lead recibía un `error_tecnico` con handoff.
+
+⚠️ **Esto no lo veían los tests y no era descuido**: en Node el bug no existe. Es
+una diferencia de runtime que hay que saberse.
+
+### Por qué explica los tres casos mejor que el JSON roto
+
+El JSON roto era real (probado: salto literal → `json_invalido`), pero **era el
+disparador, no la causa**. La secuencia completa era:
+
+1. el lead escribe con Enter → ManyChat manda el JSON sin escapar;
+2. `encolarEnLote` clona para leerlo → falla el parseo → devuelve `null`;
+3. **el clon deja el cuerpo bloqueado**;
+4. `manejar()` intenta leerlo → `TypeError` → excepción no capturada;
+5. sin traza, sin registro, sin rastro.
+
+### El arreglo: el cuerpo se lee UNA vez
+
+`leerPayload()` en el `fetch`, y el resultado se reparte a `encolarEnLote` y a
+`manejar`. **No queda ningún `request.clone()` en el código.** De paso se ahorra
+un parseo por turno.
+
+Un test lee el propio fuente y **falla si alguien reintroduce un `clone()`** —
+como el bug no se reproduce en Node, la única defensa posible es prohibirlo.
+
+`manejar()` acepta `payloadPrevio`; cuando el turno viene del Durable Object no
+lo hay, y entonces es el único sitio que lee la petición.
+
+### Estado
+
+720 tests, compuerta 5/5, `--dry-run` compila.

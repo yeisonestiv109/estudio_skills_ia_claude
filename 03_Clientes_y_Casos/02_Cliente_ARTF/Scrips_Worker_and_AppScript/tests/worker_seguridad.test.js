@@ -1307,3 +1307,56 @@ describe('reparaJsonConSaltos: un Enter no puede costar un lead', () => {
     assert.equal(reparaJsonConSaltos('123'), null);
   });
 });
+
+// ===========================================================================
+// EL CLON QUE BLOQUEABA EL CUERPO (14-sep-2026)
+//
+// Visto en los logs de produccion:
+//   TypeError: This ReadableStream is currently locked to a reader
+//     at manejar (...)
+//
+// `encolarEnLote` leia el payload con `request.clone().json()`. En Node eso es
+// inofensivo -- el original queda intacto, lo comprobe -- pero en Cloudflare
+// Workers el clon BLOQUEA el stream del original. Cada vez que el lote decidia
+// no encargarse del turno (JSON roto, sin subscriber, fuera de lista blanca),
+// `manejar()` ya no podia leer el cuerpo y reventaba ANTES de crear la traza:
+// el mensaje del lead moria sin dejar rastro en el panel.
+//
+// ⚠️ Estos tests NO reproducen el bloqueo (en Node no ocurre). Lo que fijan es
+// la regla que lo hace imposible: el cuerpo se lee UNA vez y se reparte.
+// ===========================================================================
+import { leerPayload } from '../worker_bot_setter_v42.js';
+
+describe('leerPayload: el cuerpo se lee UNA vez', () => {
+  const pedir = (cuerpo) => new Request('https://x/', { method: 'POST', body: cuerpo });
+
+  test('un JSON normal se parsea', async () => {
+    const p = await leerPayload(pedir('{"manychat_subscriber_id":"1","last_text":"hola"}'));
+    assert.equal(p.manychat_subscriber_id, '1');
+  });
+
+  test('⚠️ un JSON con saltos sin escapar se repara en vez de perderse', async () => {
+    const p = await leerPayload(pedir('{"manychat_subscriber_id":"1","last_text":"Hola!\nSoy empleada del sector privado"}'));
+    assert.ok(p, 'el mensaje del lead NO se puede perder');
+    assert.match(p.last_text, /^Hola!\nSoy empleada/);
+  });
+
+  test('un cuerpo vacio o ilegible devuelve null, no un payload inventado', async () => {
+    assert.equal(await leerPayload(pedir('')), null);
+    assert.equal(await leerPayload(pedir('no soy json')), null);
+    assert.equal(await leerPayload(pedir('"una cadena"')), null);
+  });
+
+  test('⚠️ el codigo no vuelve a clonar el Request en ningun sitio', async () => {
+    // Es la regla que cierra el bug: en Workers, clonar y leer bloquea el
+    // original. Si alguien reintroduce un clone para "leerlo dos veces", este
+    // test lo para aqui y no en produccion tres horas despues.
+    const { readFileSync } = await import('node:fs');
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    const sinComentarios = fuente
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    assert.equal(/request\.clone\s*\(/.test(sinComentarios), false,
+      'request.clone() bloquea el cuerpo en Workers: leer UNA vez y repartir');
+  });
+});
