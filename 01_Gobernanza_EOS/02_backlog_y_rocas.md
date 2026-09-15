@@ -5,7 +5,56 @@
 
 ---
 
-# ⏭️ RETOMAR AQUÍ — bot ARTF V4.2 + dashboard (cierre del 11-sep-2026)
+# ⏭️ RETOMAR AQUÍ — bot ARTF V4.2 (cierre del 15-sep-2026)
+
+## Estado en una línea (15-sep, 22:15 UTC)
+
+Worker **`3ecdad4b` desplegado** con los seis arreglos del 14-15 sep. El bot
+funciona, pero **se está quedando sin cupo de Groq a diario**: 69 turnos de las
+últimas 24 h acabaron en HANDOFF por `error_tecnico` (el LLM no respondió).
+
+### Verificado EN PRODUCCIÓN tras el despliegue
+
+El mensaje multilínea que perdía leads (Jean Carlo, Juliana, la empleada del
+sector privado) ya no se pierde:
+
+```
+antes (23d70ac0):  {"ok":false,...,"handoff_razon":"error_tecnico"}   ⛔
+ahora (3ecdad4b):  {"ok":true,"responder":false,"action":"encolado"}  ✅
+```
+
+Autenticación: 401 sin secreto, encolado con secreto. Durable Object activo
+(procesó la prueba). Base sana: **+3.187 rollbacks en 24 h** (0,04/s; el bucle
+del 11-sep iba a 1.617/s).
+
+### 🔴 El problema dominante: el cupo
+
+| Llave | Organización | Tokens hoy | % del cupo | Errores |
+|---|---|---|---|---|
+| respaldo_1 | `org_01kksfh…` | 208.342 | **104 %** ⛔ | 49 |
+| principal | `org_01kyebn…` | 180.880 | 90 % | 83 × 429 |
+| respaldo_2 | `org_01krccx…` | 20.647 | **10 %** | 1 |
+
+**Dos de tres organizaciones sin cupo, y la tercera casi sin usar** — porque
+hasta `c7837e7` el `break` impedía llegar a ella. Ese arreglo ya está
+desplegado: hay que **vigilar si `respaldo_2` empieza a subir**.
+
+**La cuenta que importa:** 102 leads/día × ~5 turnos con LLM × ~6.900 tokens
+≈ **3,5 M tokens/día** contra **600.000** disponibles (3 × 200.000).
+Falta ~6× de capacidad. Sumar una organización ayuda, pero **no cierra la brecha
+por sí sola**: el prompt por etapa (pendiente 0b) es lo que cambia el orden de
+magnitud.
+
+### Lo que queda por ver funcionar
+
+1. Un lead real escribiendo **"Hola!" + Enter** (la prueba que cierra el caso).
+2. Un lead respondiendo con la cuenta hecha (`3.000.000/6.000.000x100=50%`).
+3. Una **descalificación completa**: que lleguen las 5 burbujas, link incluido.
+4. Que `respaldo_2` se use cuando las otras dos fallen.
+
+---
+
+# ⏭️ Cierre anterior — bot ARTF V4.2 + dashboard (11-sep-2026)
 
 > Inyección de memoria para la sesión siguiente. Leer esto **antes** que nada.
 > Incidente completo de concurrencia → `artf-pipeline-app/.claude/INCIDENTE_BUCLE_CONCURRENCIA.md`
