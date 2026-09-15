@@ -454,10 +454,23 @@ export class LoteDeLead {
 
     const datos = await this.procesarConPipeline(payload);
 
+    // ⚠️ SE LEEN TODAS LAS BURBUJAS, NO LAS CUATRO DEL FLOW (15-sep-2026).
+    //
+    // `msg..msg4` existen porque el Flow de ManyChat solo sabe leer cuatro
+    // campos. Una DESCALIFICACION genera CINCO burbujas -- las cuatro del texto
+    // y el link del reel, que por R1_LINK_AISLADO va SOLO y de ULTIMO -- asi que
+    // la que se caia por el borde era siempre EL RECURSO. El lead descalificado
+    // se quedaba sin lo unico que el playbook le promete.
+    //
+    // Aqui no hay tope: se envia por la API, una llamada por burbuja.
+    //
     // Optional chaining a proposito: si el pipeline devolviera algo inesperado,
     // un TypeError aqui saldria de `alarm()` y Cloudflare reintentaria el turno
     // entero -- otra vez el LLM. Mejor tratarlo como "no hay nada que decir".
-    const burbujas = [datos?.msg, datos?.msg2, datos?.msg3, datos?.msg4]
+    const crudas = Array.isArray(datos?.mensajes) && datos.mensajes.length
+      ? datos.mensajes
+      : [datos?.msg, datos?.msg2, datos?.msg3, datos?.msg4];
+    const burbujas = crudas
       .map((x) => String(x ?? '').trim())
       .filter(Boolean);
 

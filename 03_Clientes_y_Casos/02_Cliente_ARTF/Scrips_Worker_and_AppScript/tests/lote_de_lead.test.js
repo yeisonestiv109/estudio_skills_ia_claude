@@ -679,3 +679,52 @@ describe('BARRIDO: lo que encontre revisando el resto del flujo', () => {
     assert.equal(JSON.stringify(cuerpo).includes('sensible'), false, 'el texto no se expone');
   });
 });
+
+describe('EL LINK QUE NO LLEGABA: la quinta burbuja (15-sep-2026)', () => {
+  // Una DESCALIFICACION genera CINCO burbujas: cuatro de texto y el link del
+  // reel, que por R1_LINK_AISLADO va SOLO y de ULTIMO. El Flow de ManyChat solo
+  // lee msg..msg4, asi que la que se caia por el borde era SIEMPRE el recurso --
+  // lo unico que el playbook le promete al lead descalificado
+  // ("no quiero que te vayas sin nada").
+
+  test('⚠️ con 5 burbujas se envian las CINCO, incluido el link', async () => {
+    const { lote, storage } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    const cinco = ['Gracias por la sinceridad.', 'Con el nivel de endeudamiento...',
+      'Igual, no quiero que te vayas sin nada.', 'Te recomiendo este recurso:',
+      'https://www.instagram.com/reel/DMmAfHqt3a7/'];
+    lote.procesarConPipeline = async () => ({
+      responder: true, mensajes: cinco,
+      msg: cinco[0], msg2: cinco[1], msg3: cinco[2], msg4: cinco[3],
+    });
+    const enviadas = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      enviadas.push(JSON.parse(opts.body).data.content.messages[0].text);
+      return { ok: true, text: async () => '' };
+    };
+    try {
+      await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: '95%' }));
+      await lote.alarm();
+    } finally { globalThis.fetch = original; }
+
+    assert.equal(enviadas.length, 5, 'las cinco, no las cuatro del Flow');
+    assert.match(enviadas[4], /instagram\.com\/reel/, 'y la ultima es el link');
+  });
+
+  test('sin `mensajes` (respuesta vieja) se cae a msg..msg4 y no rompe', async () => {
+    const { lote } = loteFalso({ MANYCHAT_API_TOKEN: 'tok' });
+    lote.procesarConPipeline = async () => ({ responder: true, msg: 'uno', msg2: 'dos' });
+    const enviadas = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      enviadas.push(JSON.parse(opts.body).data.content.messages[0].text);
+      return { ok: true, text: async () => '' };
+    };
+    try {
+      await lote.fetch(peticion({ manychat_subscriber_id: '123', last_text: 'hola' }));
+      await lote.alarm();
+    } finally { globalThis.fetch = original; }
+
+    assert.deepEqual(enviadas, ['uno', 'dos']);
+  });
+});

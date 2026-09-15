@@ -5924,3 +5924,71 @@ lo hay, y entonces es el único sitio que lee la petición.
 ### Estado
 
 720 tests, compuerta 5/5, `--dry-run` compila.
+
+## 🔧 15-sep-2026 — Cuatro fallos reportados desde producción, cuatro causas distintas
+
+Worker desplegado: `23d70ac0` (21:29). **Nada de lo de abajo está desplegado.**
+
+### 1. El lead escribe la CUENTA y acaba en HANDOFF — **bug mío del 14-sep**
+
+Kevin (`kevinnietov`) y Ángela (`783993996`), los dos calificando, los dos en
+HANDOFF el mismo día. Responden con la operación hecha:
+
+```
+"4.840.000/9.500.000x100= 50,94"   →  el LLM extrajo 50,94  ✅
+                                      el ancla devolvió 9.500.000  ⛔
+```
+
+Mi regla del 14-sep —*"en deuda se toma el techo del literal"*, puesta para
+resolver los rangos tipo "entre 7 y 15"— **no distingue un rango de una
+operación aritmética**. Cogía el número más grande, que resulta ser **el propio
+ingreso del lead copiado dentro de la fórmula**. Salía "endeudamiento 9500000%",
+imposible → `M2_DEUDA_TOTAL` → HANDOFF. Y encima lo marcaba como
+`llm_cambio_la_cifra`, **culpando al modelo**: exactamente lo que escribí que no
+había que volver a hacer.
+
+**Arreglo:** `cifraDelLiteral()` reconoce **qué clase de texto** escribió el lead.
+Con `=`, la cifra es lo que hay tras el último igual. Con operadores pero sin
+`=`, ninguna cifra del literal es la respuesta y manda el LLM. Con marca de
+rango, el techo (regla del 13-sep, intacta).
+
+### 2. El link del reel no llegaba a los descalificados
+
+Una descalificación genera **5 burbujas** (verificado ejecutando el router), y la
+quinta es el link — por `R1_LINK_AISLADO` viaja solo y de último. El Durable
+Object leía `[msg, msg2, msg3, msg4]`: **la que se caía por el borde era siempre
+el recurso**, lo único que el playbook le promete al lead que se va.
+
+**Arreglo:** la respuesta lleva ahora el array `mensajes` completo. El Flow sigue
+con sus cuatro campos porque es lo que sabe leer, pero el DO envía por API y no
+tiene ese tope.
+
+### 3. `principal:429 > respaldo_1:error` y la tercera llave SIN PROBAR
+
+Había un `break` ante cualquier 4xx que no fuera 429/401/403. El lead acababa en
+HANDOFF con una llave entera sin tocar.
+
+**No se derogó la regla vieja, se acotó.** Si el 400 llega en la **primera**
+llave, el pedido está mal y ninguna lo arregla: se corta, como siempre —gastar
+cupo ahí es tirarlo, que es lo que protegía el test original. Si llega **después**
+de un 429 o un 5xx, el pedido ya fue aceptado en forma y ese 400 es **de esa
+organización** (cuota diaria, modelo no habilitado, cuenta suspendida): se sigue
+rotando.
+
+### 4. El salto de línea: ya estaba desplegado
+
+`request.clone()` y la reparación del JSON entraron en `23d70ac0`. **Falta
+confirmarlo con una prueba real**: un mensaje que empiece con "Hola!" + Enter.
+
+### Estado
+
+731 tests, compuerta 5/5, `--dry-run` compila.
+
+### ⚠️ Pendiente de decisión
+
+- **"$16 Mlls"**: el glosario cubre `millones`, `mill`, `palos`, `lucas` y el
+  apóstrofo, pero **no `Mlls`**. Hace falta la lista de abreviaturas que se ven
+  de verdad en los DMs.
+- **Qué devolvió exactamente `respaldo_1`**: la traza guarda el `detalle` del
+  error. Saberlo diría si esa llave tiene cuota diaria agotada, el modelo no
+  habilitado o está suspendida — y eso se arregla en la cuenta, no en el código.

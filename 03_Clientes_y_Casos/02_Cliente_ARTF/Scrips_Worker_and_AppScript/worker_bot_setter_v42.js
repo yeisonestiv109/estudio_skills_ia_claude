@@ -1040,6 +1040,20 @@ export async function manejar(request, env, ctx, payloadPrevio = null) {
     msg2: mensajes[1] || '',
     msg3: mensajes[2] || '',
     msg4: mensajes[3] || '',
+    // ⚠️ EL ARRAY COMPLETO, ADEMAS DE msg..msg4 (15-sep-2026).
+    //
+    // El Flow de ManyChat solo sabe leer cuatro campos, y una DESCALIFICACION
+    // genera CINCO burbujas: las cuatro del texto y el link del reel, que por
+    // R1_LINK_AISLADO viaja SOLO y de ULTIMO. O sea que la burbuja que se caia
+    // por el borde era siempre EL RECURSO -- justo lo que el playbook promete
+    // ("no quiero que te vayas sin nada") y lo unico que el lead descalificado
+    // se lleva.
+    //
+    // El camino del webhook sigue limitado a cuatro porque el Flow es asi, pero
+    // el Durable Object envia por la API y no tiene ese tope: lee `mensajes` y
+    // las manda todas. Cuando el agrupamiento este en todos los turnos, este es
+    // el campo que manda.
+    mensajes,
     handoff: Boolean(plan.handoffRazon),
     handoff_razon: plan.handoffRazon,
     etapa: resultado?.out_etapa_bot ?? plan.etapaNueva,

@@ -67,6 +67,61 @@ const FACTOR_DE_ESCALA_MINIMO = 1000;
 
 const UNIDADES = ['porcentaje', 'pesos', 'ninguna'];
 
+/** El lead escribio una cuenta, no una cifra: "3.000.000/6.000.000 x 100 = 50%". */
+const OPERADORES = /[\/×xX*÷+]/;
+/** Marcas de rango: "entre 7 y 15", "del 20 al 30", "20-30". */
+const MARCA_DE_RANGO = /(entre|del?|desde|hasta|al?)|\d\s*[-–]\s*\d|\d+\s+y\s+\d+/i;
+
+/**
+ * Cual de las cifras del literal es LA cifra.
+ *
+ * ⚠️ AQUI VIVEN DOS BUGS REALES, Y TIRAN EN DIRECCIONES OPUESTAS.
+ *
+ * 1. RANGO (13-sep): "Entre 7 y 15" entraba como 7 -- se anclaba en la PRIMERA
+ *    cifra -- y el lead pasaba el filtro con la mitad de su deuda. Con la deuda
+ *    hay que tomar el TECHO, que es el escenario menos favorable para el lead.
+ *
+ * 2. OPERACION (15-sep): al tomar el techo, un lead que responde con la cuenta
+ *    hecha -- "4.840.000/9.500.000x100= 50,94" -- veia como el ancla elegia
+ *    9.500.000, que es SU PROPIO INGRESO copiado dentro de la formula. El
+ *    endeudamiento salia "9500000%", imposible, y el lead acababa en HANDOFF.
+ *    Dos casos reales el mismo dia (Kevin y Angela), los dos calificando.
+ *
+ * El arreglo no es elegir mejor entre las cifras: es reconocer QUE clase de
+ * texto escribio el lead.
+ *
+ *   · Con "=", la respuesta es lo que hay DESPUES del ultimo igual. Quien
+ *     escribe una cuenta pone el resultado al final, siempre.
+ *   · Con operadores pero sin "=", el literal es una cuenta a medias y ninguna
+ *     de sus cifras es la respuesta: ahi manda el LLM, que entiende el lenguaje.
+ *     Abstenerse es mejor que elegir al azar entre el ingreso y la deuda.
+ *   · Con marca de rango, el techo (la regla del 13-sep, intacta).
+ *   · Con una sola cifra, esa. Con varias y sin pistas, el techo.
+ */
+export function cifraDelLiteral(literal, cifras, pctDelLlm = null) {
+  if (!cifras.length) return null;
+  if (cifras.length === 1) return cifras[0];
+
+  const texto = String(literal || '');
+
+  const igual = texto.lastIndexOf('=');
+  if (igual !== -1) {
+    const despues = numerosDelTexto(texto.slice(igual + 1));
+    if (despues.length) return despues[0];
+  }
+
+  if (OPERADORES.test(texto)) {
+    // Una cuenta sin resultado escrito. Si el LLM entendio una cifra y esa cifra
+    // esta en el texto, es la suya; si no, no se ancla y decide el LLM.
+    if (pctDelLlm !== null && cifras.includes(pctDelLlm)) return pctDelLlm;
+    return null;
+  }
+
+  if (MARCA_DE_RANGO.test(texto)) return Math.max(...cifras);
+
+  return Math.max(...cifras);
+}
+
 const LETRA = /\p{L}/u;
 
 /**
@@ -122,7 +177,7 @@ export function leerDeuda(c = {}, textoLead = '', etapa = null, ingreso = null) 
     // Con UNA sola cifra el maximo es esa misma cifra, asi que ningun caso que
     // ya funcionaba cambia de comportamiento.
     const cifrasDelLiteral = numerosDelTexto(literal);
-    const v = cifrasDelLiteral.length ? Math.max(...cifrasDelLiteral) : null;
+    const v = cifraDelLiteral(literal, cifrasDelLiteral, llm.pct);
     if (v === null) {
       // "setenta", "la mitad": no hay digitos que comprobar. Convertir palabras
       // en numeros es lenguaje, y eso es del LLM.

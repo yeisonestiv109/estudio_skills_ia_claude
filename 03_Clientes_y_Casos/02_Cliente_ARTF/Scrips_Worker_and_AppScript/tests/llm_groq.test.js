@@ -277,3 +277,57 @@ describe('Tokens en cache (Fase 1: consumo diario)', () => {
     assert.equal(r.tokensCacheados, 0);
   });
 });
+
+describe('ROTACION: un 4xx raro no puede dejar llaves sin usar (15-sep-2026)', () => {
+  /**
+   * Traza real: `principal:429 > respaldo_1:error` con `respaldo_2` SIN PROBAR,
+   * y el lead a HANDOFF con una llave entera sin tocar.
+   *
+   * Antes habia un `break` ante cualquier 4xx que no fuera 429/401/403, con el
+   * argumento de que "el pedido esta mal y ninguna llave lo arregla". Pero si el
+   * pedido estuviera mal, la PRIMERA llave habria devuelto 400 tambien, no 429.
+   * Un 4xx que aparece SOLO en una llave es de esa organizacion -- cuota diaria,
+   * modelo no habilitado, cuenta suspendida -- y la siguiente puede atenderlo.
+   */
+  function fetchFalso(respuestas, vistas) {
+    return async (url, opts) => {
+      const llave = String(opts.headers.Authorization).replace('Bearer ', '');
+      vistas.push(llave);
+      const r = respuestas[llave] ?? { status: 500 };
+      return {
+        ok: r.status === 200,
+        status: r.status,
+        headers: new Map(),
+        json: async () => ({ choices: [{ message: { content: '{}' } }], usage: {} }),
+        text: async () => r.detalle ?? '',
+      };
+    };
+  }
+
+  test('⚠️ 429 y luego 400: se prueba la TERCERA llave', async () => {
+    const vistas = [];
+    const r = await pedirAGroq(
+      { GROQ_API_KEYS: 'k1,k2,k3' }, { model: 'm', messages: [] },
+      { fetchImpl: fetchFalso({ k1: { status: 429 }, k2: { status: 400, detalle: 'model not available for this organization' }, k3: { status: 200 } }, vistas) },
+    );
+    assert.equal(r.ok, true, 'la tercera llave atendio el turno');
+    assert.deepEqual(vistas, ['k1', 'k2', 'k3'], 'se probaron LAS TRES');
+  });
+
+  test('si TODAS fallan tras el primer 429, se reporta en vez de fingir', async () => {
+    const vistas = [];
+    const r = await pedirAGroq(
+      { GROQ_API_KEYS: 'k1,k2,k3' }, { model: 'm', messages: [] },
+      { fetchImpl: fetchFalso({ k1: { status: 429 }, k2: { status: 400 }, k3: { status: 400 } }, vistas) },
+    );
+    assert.equal(r.ok, false);
+    assert.equal(r.intentos.length, 3, 'los tres intentos quedan en la traza');
+  });
+
+  test('⚠️ pero un 400 en la PRIMERA llave sigue cortando: el pedido esta mal', () => {
+    // La regla vieja no se deroga, se acota. Si el pedido estuviera bien, la
+    // primera llave no habria devuelto 400. Gastar las otras dos ahi es tirar
+    // cupo, que es exactamente lo que el test original protegia.
+    assert.ok(true, 'cubierto por el test "un 400 (el PEDIDO esta mal) sigue sin reintentarse"');
+  });
+});

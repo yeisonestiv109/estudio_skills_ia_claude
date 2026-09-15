@@ -314,3 +314,66 @@ describe('CASO 9 — RANGOS DE DEUDA: manda el techo, no el piso (14-sep-2026)',
     assert.equal(r.plausibilidad, 'imposible');
   });
 });
+
+describe('CASO 10 — el lead escribe la CUENTA, no la cifra (15-sep-2026)', () => {
+  /**
+   * Dos casos reales el mismo dia, Kevin y Angela, los dos calificando y los dos
+   * en HANDOFF.
+   *
+   * Responden con la operacion hecha: "4.840.000/9.500.000x100= 50,94". El LLM
+   * extrajo bien el 50,94, pero el ancla -- que desde el 14-sep tomaba el TECHO
+   * del literal para resolver los rangos -- elegia 9.500.000, que es SU PROPIO
+   * INGRESO copiado dentro de la formula. Salia "endeudamiento 9500000%",
+   * imposible, y el router lo mandaba a M2_DEUDA_TOTAL y de ahi a HANDOFF.
+   *
+   * La leccion: "toma el numero mas grande" no distingue un RANGO de una CUENTA.
+   * Hay que reconocer que clase de texto escribio el lead.
+   */
+  test('⚠️ Kevin: "4.840.000/9.500.000x100= 50,94" es 50,94, no su ingreso', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 50.94, deuda_literal: '4.840.000/9.500.000x100= 50,94', deuda_unidad_dicha: 'porcentaje' },
+      '4.840.000/9.500.000x100= 50,94', 'M2_ENVIADO', 9_500_000);
+    assert.equal(r.endeudamiento_pct, 50.94);
+    assert.equal(r.plausibilidad, 'plausible');
+    assert.equal(r.diagnostico['deuda.discrepancia'], null, 'y no se acusa al LLM de cambiarla');
+  });
+
+  test('⚠️ Angela: "3.000.000/6.000.000 x 100 =50%" es 50', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 50, deuda_literal: '3.000.000/6.000.000 x 100 =50%', deuda_unidad_dicha: 'porcentaje' },
+      '3.000.000/6.000.000 x 100 =50%', 'M2_ENVIADO', 6_000_000);
+    assert.equal(r.endeudamiento_pct, 50);
+    assert.equal(r.plausibilidad, 'plausible');
+  });
+
+  test('manda lo que hay tras el ULTIMO igual', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 30, deuda_literal: '3.000.000 / 10.000.000 = 0,3 = 30%', deuda_unidad_dicha: 'porcentaje' },
+      '3.000.000 / 10.000.000 = 0,3 = 30%', 'M2_ENVIADO', 10_000_000);
+    assert.equal(r.endeudamiento_pct, 30);
+  });
+
+  test('una cuenta SIN resultado escrito: no se ancla al azar, manda el LLM', () => {
+    // Entre el 3.000.000 y el 6.000.000 ninguno es la respuesta. Elegir uno
+    // seria inventar; el LLM entiende el lenguaje y aqui es quien decide.
+    const r = leerDeuda(
+      { endeudamiento_pct: 50, deuda_literal: '3.000.000 de 6.000.000 / al mes', deuda_unidad_dicha: 'porcentaje' },
+      '3.000.000 de 6.000.000 / al mes', 'M2_ENVIADO', 6_000_000);
+    assert.equal(r.endeudamiento_pct, 50);
+  });
+
+  test('⚠️ el RANGO sigue tomando el techo: el arreglo no deroga al anterior', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 15, deuda_literal: 'entre 7 y 15', deuda_unidad_dicha: 'ninguna' },
+      'Entre 7 y 15', 'M2_ENVIADO', 22_000_000);
+    assert.equal(r.endeudamiento_pct, 15);
+  });
+
+  test('y una cifra absurda sigue sin corregirse', () => {
+    const r = leerDeuda(
+      { endeudamiento_pct: 1200, deuda_literal: '1200', deuda_unidad_dicha: 'ninguna' },
+      '1200', 'M2_ENVIADO', 22_000_000);
+    assert.equal(r.endeudamiento_pct, 1200);
+    assert.equal(r.plausibilidad, 'imposible');
+  });
+});

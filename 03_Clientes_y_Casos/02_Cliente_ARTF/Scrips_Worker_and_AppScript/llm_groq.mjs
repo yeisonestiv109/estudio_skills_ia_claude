@@ -91,8 +91,13 @@ const huellaDe = (llave) => String(llave || '').slice(-4);
  * 401/403 (12-sep-2026): antes cortaban el pool. Pero son errores de ESA
  * llave (revocada, mal pegada), no del pedido: no consumen cupo y la siguiente
  * es otra credencial. Con el corte, revocar una llave en la consola antes de
- * sacarla de GROQ_API_KEYS dejaba al bot sin LLM con dos respaldos sanos. Un
- * 400 si sigue cortando: es el cuerpo el que esta mal y ninguna llave lo arregla.
+ * sacarla de GROQ_API_KEYS dejaba al bot sin LLM con dos respaldos sanos.
+ *
+ * UN 400 CORTA SOLO SI ES EL PRIMER INTENTO (15-sep-2026). Si la primera llave
+ * lo rechaza por forma, ninguna lo arregla y gastar cupo ahi es tirarlo. Pero si
+ * llega DESPUES de un 429 o un 5xx, el pedido ya fue aceptado en forma y ese 400
+ * es de esa organizacion -- cuota diaria, modelo no habilitado, cuenta
+ * suspendida -- asi que la siguiente llave puede atenderlo.
  *
  * @returns {Promise<{ok, datos?, intentos, alias?, tokensSalida, capacidad?, estado?, detalle?}>}
  */
@@ -136,8 +141,25 @@ export async function pedirAGroq(env, cuerpo, { timeoutMs = 8000, fetchImpl = fe
         estado: resp.status, detalle, capacidad, tokensSalida: 0, tokensEntrada: 0,
         limite: leerLimiteDelError(detalle), latenciaMs: Date.now() - t0,
       });
-      if (!reintentable) break;      // 400: el pedido esta mal, ninguna llave lo arregla
-      console.warn(`[groq] ${alias} devolvio ${resp.status}; se prueba la siguiente llave.`);
+      // ⚠️ UN 4xx RARO YA NO CORTA LA ROTACION SI NO ES EL PRIMER INTENTO
+      // (15-sep-2026). En produccion se vieron trazas con
+      // `principal:429 > respaldo_1:error` y `respaldo_2` SIN PROBAR: el lead
+      // acababa en HANDOFF con una llave entera sin tocar.
+      //
+      // La clave es CUANDO llega ese 4xx:
+      //   · en la PRIMERA llave -> el pedido esta mal formado y ninguna llave lo
+      //     arregla. Se corta, como siempre: gastar cupo ahi es tirarlo.
+      //   · DESPUES de que otra llave devolviera 429 o 5xx -> el pedido ya fue
+      //     aceptado en forma por el sistema, asi que este 4xx es de ESTA
+      //     organizacion (cuota diaria, modelo no habilitado, cuenta suspendida)
+      //     y la siguiente llave puede atenderlo perfectamente.
+      const esElPrimerIntento = i === 0;
+      if (!reintentable && esElPrimerIntento) break;
+      if (!reintentable) {
+        console.warn(`[groq] ${alias} devolvio ${resp.status} tras fallar otra llave: es de esa organizacion, no del pedido. Se prueba la siguiente.`);
+      } else {
+        console.warn(`[groq] ${alias} devolvio ${resp.status}; se prueba la siguiente llave.`);
+      }
     } catch (e) {
       intentos.push({
         alias, huella, resultado: 'error', detalle: String(e?.message || e).slice(0, 200),
