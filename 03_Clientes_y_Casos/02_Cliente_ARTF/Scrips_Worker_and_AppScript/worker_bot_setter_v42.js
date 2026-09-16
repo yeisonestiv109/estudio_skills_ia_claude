@@ -298,6 +298,15 @@ export function reparaJsonConSaltos(crudo) {
  *   siquiera tras reparar los saltos.
  */
 export async function leerPayload(request) {
+  const url = new URL(request.url);
+  if (url.searchParams.has('manychat_subscriber_id')) {
+    const obj = Object.fromEntries(url.searchParams.entries());
+    if (obj.solo_registro === 'false') obj.solo_registro = false;
+    if (obj.solo_registro === 'true') obj.solo_registro = true;
+    if (obj.manychat_subscriber_id) obj.manychat_subscriber_id = Number(obj.manychat_subscriber_id);
+    return obj;
+  }
+
   let crudo;
   try { crudo = await request.text(); } catch { return null; }
   if (!crudo) return null;
