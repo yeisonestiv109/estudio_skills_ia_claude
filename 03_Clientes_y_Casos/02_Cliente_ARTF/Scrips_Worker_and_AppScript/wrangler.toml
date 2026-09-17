@@ -59,7 +59,7 @@ LOTE_AGRUPAMIENTO = "true"
 #
 # 25 s desde el 14-sep-2026 (decision del fundador, subida desde 7 s): la gente
 # escribe por pedazos y 7 s partia mensajes que eran uno solo.
-LOTE_VENTANA_MS = "25000"
+LOTE_VENTANA_MS = "35000"
 
 # Tope duro desde la PRIMERA burbuja del lote. Sin el, un lead que escribe una
 # palabra cada 5 s renovaria la ventana para siempre y el bot no contestaria
