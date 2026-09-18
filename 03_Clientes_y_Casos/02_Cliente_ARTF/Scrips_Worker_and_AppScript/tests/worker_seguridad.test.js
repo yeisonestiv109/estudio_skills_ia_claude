@@ -10,6 +10,19 @@
 
 import { test, describe } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { construirReglas } from '../prompt_por_etapa.js';
+
+// ⚠️ LAS REGLAS DEL PROMPT YA NO VIVEN EN worker_bot_setter_v42.js (18-sep-2026).
+// Se mudaron a prompt_por_etapa.js, donde cada una viaja solo a las etapas cuyo
+// esquema declara el campo que esa regla explica. Por eso la "fuente" de estos
+// tests es el archivo MAS el prompt ensamblado completo.
+//
+// El cambio los hace MAS fuertes, no mas laxos: antes probaban que una frase
+// existia en un archivo -- lo que pasaba igual aunque la regla no llegara nunca
+// al modelo -- y ahora prueban que esta en el prompt que se arma de verdad.
+// La garantia por etapa (que cada regla alcance al menos una etapa, y las que
+// importan a la suya) vive en tests/prompt_por_etapa.test.js.
+const REGLAS_COMPLETAS = construirReglas('', true);
 import assert from 'node:assert/strict';
 
 import {
@@ -628,7 +641,7 @@ describe('las guardas del LLM respetan el pool GROQ_API_KEYS', () => {
   });
 
   test('ninguna guarda del Worker vuelve a mirar la llave singular', () => {
-    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
     assert.doesNotMatch(fuente, /!\s*env\.GROQ_API_KEY\b/,
       'usar llavesDeGroq(env).length: la singular es solo el respaldo del pool');
   });
@@ -749,11 +762,15 @@ describe('El esquema no puede pedir enums que el prompt no explica', () => {
   test('"pregunta_por_que" exige que el lead PREGUNTE algo, no que dude', () => {
     // Fija la regla en el prompt: si alguien la borra, "me gustaria" vuelve a
     // leerse como una pregunta y el bot vuelve a repetirse.
-    const src = readFileSync(
-      new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
-    assert.match(src, /Un "me gustaria" es un SI, no una duda/,
+    //
+    // Se comprueba sobre el prompt QUE SE ARMA PARA M4 -- no sobre el archivo.
+    // Con las reglas enrutadas por etapa, que el texto exista en algun lado ya
+    // no garantiza que el modelo lo vea: la garantia es que llegue a la etapa
+    // donde se decide la urgencia.
+    const promptM4 = construirReglas(ESQUEMA_POR_ETAPA.M4_ENVIADO);
+    assert.match(promptM4, /Un "me gustaria" es un SI, no una duda/,
       'se perdio la regla que distingue responder de preguntar');
-    assert.match(src, /Tiene que haber una pregunta de verdad/);
+    assert.match(promptM4, /Tiene que haber una pregunta de verdad/);
   });
 });
 
@@ -769,7 +786,7 @@ describe('El esquema no puede pedir enums que el prompt no explica', () => {
 // Cada una viene de un caso real, no de una hipotesis.
 // ===========================================================================
 describe('El prompt conserva las reglas que sostenian los regex borrados', () => {
-  const prompt = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+  const prompt = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
 
   test('glosario colombiano: "integral" es ingreso ALTO, no el minimo', () => {
     // Costo una lead real de $22M descartada.
@@ -1070,7 +1087,7 @@ describe('En M1-M4 la pregunta del embudo no se omite nunca', () => {
   });
 
   test('la regla vive en el codigo, no solo en un comentario', () => {
-    const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
     assert.match(src, /antesDeLosFiltros/,
       'se perdio la guarda que impide omitir la pregunta del embudo en M1-M4');
     assert.match(src, /d\.accion === 'omitir' && !antesDeLosFiltros/);
@@ -1088,7 +1105,7 @@ describe('En M1-M4 la pregunta del embudo no se omite nunca', () => {
 // del prompt, que es donde se pierden en silencio si alguien lo poda.
 // ===========================================================================
 describe('El prompt sostiene las reglas nuevas del Filtro 2', () => {
-  const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
 
   test('la etapa M2_VERIFICAR_CALCULO tiene esquema propio', () => {
     // Sin entrada en ESQUEMA_POR_ETAPA el LLM NO corre en esa etapa y se apagan
@@ -1161,7 +1178,7 @@ describe('Idempotencia: identifica el MENSAJE, no el texto', () => {
   });
 
   test('el Worker solo consulta y escribe la cache cuando hay llave', () => {
-    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
     assert.match(fuente, /const cacheado = claveIdem \? await cache\.match\(claveIdem\) : null;/);
     assert.match(fuente, /if \(claveIdem && ctx\?\.waitUntil\)/);
     assert.doesNotMatch(fuente, /idem\/\$\{encodeURIComponent\(subId\)\}\/\$\{await hash\(lastText\)\}/,
@@ -1218,7 +1235,7 @@ describe('Fase 2B: la perilla del agrupamiento', () => {
 import { respuestaDeConflicto } from '../worker_bot_setter_v42.js';
 
 describe('Fase 1: el Worker exige la etapa que leyo', () => {
-  const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+  const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
 
   test('la escritura del turno manda la etapa leida y pide verificarla', () => {
     assert.match(fuente, /p_etapa_esperada: estado\?\.etapa_bot \?\? null,/);
@@ -1352,7 +1369,7 @@ describe('leerPayload: el cuerpo se lee UNA vez', () => {
     // original. Si alguien reintroduce un clone para "leerlo dos veces", este
     // test lo para aqui y no en produccion tres horas despues.
     const { readFileSync } = await import('node:fs');
-    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+    const fuente = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
     const sinComentarios = fuente
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');

@@ -51,7 +51,10 @@ describe('Con qwen (default) nada cambia', () => {
   for (const [nombre, estado, texto, hist] of CASOS) {
     test(`el cuerpo enviado es identico al de antes: ${nombre}`, async () => {
       const esperado = JSON.parse(readFileSync(new URL(`./fixtures/prompts/${nombre}.json`, import.meta.url), 'utf8'));
-      const c = await cuerpoEnviado({ GROQ_API_KEY: 'k' }, estado, texto, hist);
+      // PROMPT_POR_ETAPA='false' = la perilla de reversa. Que los fixtures de
+      // ANTES del enrutado sigan cuadrando byte a byte es lo que prueba que
+      // apagarla devuelve el prompt de siempre, no uno parecido.
+      const c = await cuerpoEnviado({ GROQ_API_KEY: 'k', PROMPT_POR_ETAPA: 'false' }, estado, texto, hist);
       assert.equal(c.model, esperado.model);
       assert.equal(c.max_tokens, esperado.max_tokens);
       assert.equal(c.temperature, esperado.temperature);
@@ -93,17 +96,37 @@ describe('Con gpt-oss-120b: parte fija primero para aprovechar la cache', () => 
     assert.deepEqual(c.response_format, { type: 'json_object' });
   });
 
-  test('el prefijo fijo es identico entre etapas y conversaciones distintas', async () => {
+  test('el prefijo fijo es identico entre turnos de la MISMA etapa', async () => {
+    // ⚠️ CAMBIO DELIBERADO (18-sep-2026). Antes se exigia un prefijo unico para
+    // TODAS las etapas. Con las reglas enrutadas eso ya no es cierto ni deseable:
+    // cada etapa manda solo sus reglas, asi que hay un prefijo cacheable POR
+    // ETAPA en vez de uno solo. La cache de Groq sigue sirviendo -- reutiliza el
+    // prefijo entre turnos de la misma etapa, que es como avanzan los leads --
+    // y ademas cada prefijo es mas corto. Lo que se perderia es cache al SALTAR
+    // de etapa, y eso vale mucho menos que los 2.242 tokens que ahorra el
+    // enrutado en cada turno.
+    const mismaEtapa = [CASOS[0][1], CASOS[0][2], 'LEAD: hola\nTU: buenas'];
     const a = (await cuerpoEnviado(env, CASOS[0][1], CASOS[0][2], CASOS[0][3])).messages[0].content;
-    const b = (await cuerpoEnviado(env, CASOS[1][1], CASOS[1][2], CASOS[1][3])).messages[0].content;
+    const b = (await cuerpoEnviado(env, mismaEtapa[0], mismaEtapa[1], mismaEtapa[2])).messages[0].content;
     const fin = a.indexOf('<estado_actual>');
-    assert.ok(fin > 10000, 'el estado va DESPUES de todas las reglas fijas');
+    assert.ok(fin > 5000, 'el estado va DESPUES de todas las reglas fijas');
     assert.equal(b.slice(0, fin), a.slice(0, fin), 'mismo prefijo = cache reutilizable entre turnos');
+  });
+
+  test('etapas distintas traen prefijos distintos: eso ES el enrutado', async () => {
+    const m2 = (await cuerpoEnviado(env, CASOS[0][1], CASOS[0][2], CASOS[0][3])).messages[0].content;
+    const m5 = (await cuerpoEnviado(env, CASOS[1][1], CASOS[1][2], CASOS[1][3])).messages[0].content;
+    assert.ok(m5.length < m2.length, 'M5 no necesita las reglas de plata y tiene que pesar menos');
+    assert.match(m2, /RANGOS DE DEUDA/, 'M2 si lleva las reglas de deuda');
+    assert.doesNotMatch(m5, /RANGOS DE DEUDA/, 'M5 no las necesita: no extrae deuda');
   });
 
   test('conserva TODAS las reglas: solo cambia el orden', async () => {
     const qwen = JSON.parse(readFileSync(new URL('./fixtures/prompts/m2_con_historial.json', import.meta.url), 'utf8')).system;
-    const oss = (await cuerpoEnviado(env, CASOS[0][1], CASOS[0][2], CASOS[0][3])).messages[0].content;
+    // Con el enrutado apagado a ambos lados: lo que este test vigila es que el
+    // ORDEN 'cache' no pierda reglas, no el enrutado (que tiene su propio test).
+    const oss = (await cuerpoEnviado({ ...env, PROMPT_POR_ETAPA: 'false' },
+      CASOS[0][1], CASOS[0][2], CASOS[0][3])).messages[0].content;
     for (const etiqueta of ['<rol_y_contexto>', '<estado_actual>', '<conversacion_previa>', '<reglas_de_oro>',
       '<definicion_de_intenciones>', '<campos_a_extraer>', '<redaccion>', '<ejemplos>',
       '<cierre_de_conversacion>', '<seguridad>', '<formato_de_salida>']) {

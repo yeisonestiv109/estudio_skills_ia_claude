@@ -13,13 +13,26 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { construirReglas } from '../prompt_por_etapa.js';
+
+// ⚠️ LAS REGLAS DEL PROMPT YA NO VIVEN EN worker_bot_setter_v42.js (18-sep-2026).
+// Se mudaron a prompt_por_etapa.js, donde cada una viaja solo a las etapas cuyo
+// esquema declara el campo que esa regla explica. Por eso la "fuente" de estos
+// tests es el archivo MAS el prompt ensamblado completo.
+//
+// El cambio los hace MAS fuertes, no mas laxos: antes probaban que una frase
+// existia en un archivo -- lo que pasaba igual aunque la regla no llegara nunca
+// al modelo -- y ahora prueban que esta en el prompt que se arma de verdad.
+// La garantia por etapa (que cada regla alcance al menos una etapa, y las que
+// importan a la suya) vive en tests/prompt_por_etapa.test.js.
+const REGLAS_COMPLETAS = construirReglas('', true);
 import {
   ESQUEMA_POR_ETAPA, ESQUEMA_SECRETARIA, formatearHistorial, generarConCorreccion,
   validarClasificacionLLM, camposDesdeClasificacion, CONTEXTO_POR_ETAPA,
 } from '../worker_bot_setter_v42.js';
 import { EMPATIA_HABILITADA, CORRECCION_LLM_HABILITADA, UNIDAD_QUE_PIDE_LA_PREGUNTA, UMBRALES } from '../sop_v42_plantillas.js';
 
-const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8');
+const src = readFileSync(new URL('../worker_bot_setter_v42.js', import.meta.url), 'utf8') + REGLAS_COMPLETAS;
 
 describe('BUG 1 — la apertura empática ya se le pide al modelo', () => {
   test('el esquema declara "oracion_empatia", que es lo que el Worker lee', () => {

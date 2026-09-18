@@ -100,3 +100,23 @@ class_name = "LoteDeLead"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["LoteDeLead"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REGLAS DEL PROMPT ENRUTADAS POR ETAPA (18-sep-2026)
+#
+# "true"  = cada regla del clasificador viaja solo a las etapas cuyo esquema
+#           declara el campo que esa regla explica (ver prompt_por_etapa.js).
+#           Ademas el historial se presupuesta en tokens contra el techo de
+#           ITPM, en vez de cortarse en un numero fijo de turnos.
+# "false" = el prompt COMPLETO de siempre, byte a byte, y el historial sin
+#           presupuestar. Es la reversa, y hay un test que lo prueba contra el
+#           fixture del prompt anterior.
+#
+# Por que existe: el prompt pesaba ~6.900 tokens contra un ITPM de 7.000. Los
+# 429 de produccion decian "Limit 7000, Requested 7103". Medido con 12 turnos
+# de historial, ANTES rebotaban las tres etapas mas transitadas (M2 7.545,
+# M5 7.493, HANDOFF 7.683) y con el enrutado quedan en 5.178 / 3.862 / 6.593.
+#
+# ⚠️ Apagarla devuelve el prompt que rebota. Es reversa de emergencia por si el
+# enrutado degradara la clasificacion, no una opcion equivalente.
+PROMPT_POR_ETAPA = "true"
