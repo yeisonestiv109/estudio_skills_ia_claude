@@ -1016,7 +1016,12 @@ export function decidirTurno(estado, clasificacion = {}, textoLead = '') {
           motivoPerdida: `Descalificado - Ingreso bajo (< $${UMBRALES.INGRESO_MINIMO / 1e6}M)`,
           campos: { profesion: c.profesion ?? null, salario_monto: ing, ingreso_confirmado: true, califica: false },
           permitirEmpatia: false,
-          summary: `Filtro 1 no superado: ingreso ${ing} < $7M. Descalificacion con valor.`,
+          // El umbral se interpola desde UMBRALES (como `motivoPerdida` dos lineas
+          // arriba): estuvo escrito a mano en $7M y quedo desfasado cuando el piso
+          // bajo a $6M el 4-sep. La DECISION siempre uso $6M -- se verifico en
+          // produccion: 41 descalificados, ingreso maximo 5.706.000, cero leads en
+          // la banda $6M-$7M. Era el resumen el que mentia, no el filtro.
+          summary: `Filtro 1 no superado: ingreso ${ing} < $${UMBRALES.INGRESO_MINIMO / 1e6}M. Descalificacion con valor.`,
         };
       }
 

@@ -15,6 +15,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   evaluarIngreso,
@@ -2002,5 +2003,41 @@ describe('Fallos reportados en vivo (11-sep-2026)', () => {
       'pago 3 millones al mes',
     );
     assert.notEqual(p.etapaNueva, 'M2_DEUDA_TOTAL');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Los resumenes no pueden tener el umbral escrito a mano (18-sep-2026)
+//
+// Caso real: el `summary` del Filtro 1 decia "< $7M" cuando el piso llevaba dos
+// semanas en $6M. La DECISION siempre uso UMBRALES.INGRESO_MINIMO -- se
+// verifico contra produccion: 41 descalificados, ingreso maximo 5.706.000, cero
+// leads en la banda $6M-$7M. O sea que nadie quedo mal descalificado; lo que
+// estaba roto era el panel, que le mostraba al equipo un umbral que no existe.
+//
+// Ese es justo el bug caro: no rompe nada visible, y el dia que alguien audite
+// por que se descarto a un lead va a leer una razon falsa. El umbral se
+// interpola SIEMPRE desde UMBRALES.
+// ---------------------------------------------------------------------------
+describe('Ningun summary del router escribe un umbral a mano', () => {
+  const fuente = readFileSync(new URL('../bot_router_v42.js', import.meta.url), 'utf8');
+
+  test('no queda ningun "$NM" literal en un summary o motivoPerdida', () => {
+    const sospechosas = fuente.split('\n')
+      .map((linea, i) => [i + 1, linea])
+      .filter(([, l]) => /^\s*(summary|motivoPerdida):/.test(l))
+      // `${...}` es interpolacion, que es lo correcto. Se busca el literal.
+      .filter(([, l]) => /\$\d+(\.\d+)?M\b/.test(l.replace(/\$\{[^}]*\}/g, '')));
+
+    assert.deepEqual(sospechosas, [],
+      'interpola el umbral desde UMBRALES en vez de escribirlo:\n'
+      + sospechosas.map(([n, l]) => `  linea ${n}: ${l.trim()}`).join('\n'));
+  });
+
+  test('el summary del Filtro 1 sigue al piso real, sea cual sea', () => {
+    const p = decidirTurno(estadoEn('M1_ENVIADO', {}), { ingreso_cop: 3_000_000, profesion: 'docente' }, 'gano 3 millones');
+    assert.equal(p.etapaNueva, 'DESCALIFICADO');
+    assert.match(p.summary, new RegExp(`< \\$${UMBRALES.INGRESO_MINIMO / 1e6}M`),
+      'el resumen tiene que nombrar el umbral que de verdad se aplico');
   });
 });
