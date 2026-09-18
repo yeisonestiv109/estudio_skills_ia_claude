@@ -16,7 +16,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
+
 import { pedirAGroq, llavesDeGroq, aliasDeLlave, leerCapacidad, leerLimiteDelError } from '../llm_groq.mjs';
+import { clasificar, crearObservadorLLM } from '../worker_bot_setter_v42.js';
 
 const headersFalsos = (extra = {}) => new Map(Object.entries({
   'x-ratelimit-limit-requests': '1000',
@@ -329,5 +331,97 @@ describe('ROTACION: un 4xx raro no puede dejar llaves sin usar (15-sep-2026)', (
     // primera llave no habria devuelto 400. Gastar las otras dos ahi es tirar
     // cupo, que es exactamente lo que el test original protegia.
     assert.ok(true, 'cubierto por el test "un 400 (el PEDIDO esta mal) sigue sin reintentarse"');
+  });
+});
+
+// ===========================================================================
+// EL PANEL TIENE QUE VER EL POOL, NO SOLO LAS LLAVES YA USADAS (18-sep-2026)
+//
+// El fundador puso 5 llaves y el panel seguia mostrando 3. No era que el panel
+// fuera estatico: llm_telemetria solo aprendia de una llave cuando esa llave se
+// usaba, y la rotacion es por FAILOVER -- respaldo_3 y respaldo_4 solo se tocan
+// si las anteriores rebotan el mismo minuto. En un dia tranquilo no aparecian
+// nunca, y el panel no podia distinguir "no existe" de "esta en reserva".
+// ===========================================================================
+describe('El Worker declara su pool completo en cada turno', () => {
+  test('manda TODOS los alias, no solo el que atendio la llamada', async () => {
+    const rpcs = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/rpc/')) {
+        rpcs.push({ fn: u.split('/rpc/')[1], body: JSON.parse(opts.body) });
+        return { ok: true, status: 200, headers: new Map(), json: async () => ([]) };
+      }
+      return {
+        ok: true, status: 200, headers: new Map(),
+        json: async () => ({ choices: [{ message: { content: '{}' } }], usage: {} }),
+      };
+    };
+    const env = {
+      SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k',
+      GROQ_API_KEYS: 'a1,b2,c3,d4,e5',
+    };
+    const espera = [];
+    try {
+      await clasificar(env, { etapa_bot: 'M5_ENVIADO', estado_codigo: 'calificado' },
+        'dale', { waitUntil: (p) => espera.push(p) }, '',
+        crearObservadorLLM(env, { waitUntil: (p) => espera.push(p) }, null));
+      await Promise.all(espera);
+    } finally { globalThis.fetch = original; }
+
+    const pool = rpcs.find((r) => r.fn === 'fn_registrar_pool_llm');
+    assert.ok(pool, 'no se declaro el pool: las llaves en reserva serian invisibles');
+    assert.deepEqual(pool.body.p_alias,
+      ['principal', 'respaldo_1', 'respaldo_2', 'respaldo_3', 'respaldo_4'],
+      'tienen que ir las 5, aunque solo una haya atendido');
+    assert.equal(pool.body.p_proveedor, 'groq');
+  });
+
+  test('con una sola llave declara una sola, sin inventar respaldos', async () => {
+    const rpcs = [];
+    const original = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/rest/v1/rpc/')) {
+        rpcs.push({ fn: u.split('/rpc/')[1], body: JSON.parse(opts.body) });
+        return { ok: true, status: 200, headers: new Map(), json: async () => ([]) };
+      }
+      return {
+        ok: true, status: 200, headers: new Map(),
+        json: async () => ({ choices: [{ message: { content: '{}' } }], usage: {} }),
+      };
+    };
+    const env = {
+      SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k',
+      GROQ_API_KEY: 'solo-una',
+    };
+    const espera = [];
+    try {
+      await clasificar(env, { etapa_bot: 'M5_ENVIADO', estado_codigo: 'calificado' },
+        'dale', { waitUntil: (p) => espera.push(p) }, '',
+        crearObservadorLLM(env, { waitUntil: (p) => espera.push(p) }, null));
+      await Promise.all(espera);
+    } finally { globalThis.fetch = original; }
+    const pool = rpcs.find((r) => r.fn === 'fn_registrar_pool_llm');
+    assert.deepEqual(pool.body.p_alias, ['principal']);
+  });
+});
+
+describe('El panel distingue una llave en reserva de una retirada', () => {
+  const dash = readFileSync(new URL('../telemetria/index.html', import.meta.url), 'utf8');
+
+  test('tiene un estado para la llave que ya no esta en el pool', () => {
+    assert.match(dash, /retirada:\s*\{[^}]*Fuera del pool/,
+      'sin esto una llave quitada de GROQ_API_KEYS se seguia viendo en verde');
+    assert.match(dash, /fila\.en_pool === false/);
+  });
+
+  test('la capacidad se cuenta solo con las llaves vivas', () => {
+    // "Cupos reales" es el numero con el que se decide si hay red suficiente.
+    // Contar ahi una llave retirada es peor que no mostrarla: miente hacia
+    // arriba justo en la metrica de capacidad.
+    assert.match(dash, /const activas = reales\.filter\(\(f\) => f\.en_pool !== false\)/);
+    assert.match(dash, /new Set\(activas\.map/);
   });
 });

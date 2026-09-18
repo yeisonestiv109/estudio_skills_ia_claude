@@ -72,7 +72,7 @@ import {
   verificarTextoGenerado, verificarAdaptacionObjecion, verificarRespuestaLibre,
   verificarMensajes, formatearFallas,
 } from './verificador_cumplimiento.js';
-import { pedirAGroq, llavesDeGroq } from './llm_groq.mjs';
+import { pedirAGroq, llavesDeGroq, aliasDeLlave } from './llm_groq.mjs';
 import { construirReglas } from './prompt_por_etapa.js';
 import { aNumero } from './lectura_deuda.js';
 import { notificarSetterGoogleChat } from './notificador_google_chat.js';
@@ -2122,6 +2122,23 @@ export function atributosLlamadaLLM(funcion, r) {
  */
 function registrarTelemetria(env, ctxLLM, r) {
   const enviar = async () => {
+    // EL POOL COMPLETO, NO SOLO LA LLAVE QUE SE USO (18-sep-2026).
+    //
+    // llm_telemetria solo aprendia de una llave cuando esa llave se usaba, y la
+    // rotacion es por FAILOVER: respaldo_3 y respaldo_4 solo se tocan si las
+    // anteriores rebotan el mismo minuto. En un dia tranquilo el panel no las
+    // veia nunca y parecia que "no era dinamico" -- no podia distinguir "esa
+    // llave no existe" de "existe y esta en reserva", que es justo lo que uno
+    // quiere ver.
+    //
+    // Declarar el pool cuesta un INSERT ... ON CONFLICT DO NOTHING dentro del
+    // waitUntil que ya estaba mandando la telemetria, y nunca pisa contadores.
+    await rpc(env, 'fn_registrar_pool_llm', {
+      p_proveedor: 'groq',
+      p_modelo: r.modelo || GROQ_MODEL,
+      p_alias: llavesDeGroq(env).map((_, i) => aliasDeLlave(i)),
+    }, TIMEOUT_RPC_MS).catch((e) => console.error('[telemetria] pool:', e?.message));
+
     for (const intento of r.intentos || []) {
       const cap = intento.capacidad || {};
       await rpc(env, 'fn_registrar_telemetria_llm', {

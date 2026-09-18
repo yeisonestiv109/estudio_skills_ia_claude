@@ -412,6 +412,7 @@ const ESTADOS_LLAVE = {
   llave_invalida: { icono: '🔴', etiqueta: 'Llave inválida',       clase: 'text-red-300 border-red-600' },
   error:          { icono: '🔴', etiqueta: 'Error',                clase: 'text-red-300 border-red-600' },
   reserva:        { icono: '⚪', etiqueta: 'En reserva',           clase: 'text-neutral-400 border-neutral-700' },
+  retirada:       { icono: '⚫', etiqueta: 'Fuera del pool',       clase: 'text-neutral-500 border-neutral-800' },
 };
 
 let rotacion = [];        // spans con llm.intentos, más nuevos primero
@@ -432,6 +433,10 @@ function ultimoResultadoPorAlias() {
 }
 
 function estadoDeLlave(fila, ultimo) {
+  // `en_pool` la mantiene fn_registrar_pool_llm con lo que hay HOY en
+  // GROQ_API_KEYS. Sin esto, quitar una llave dejaba su tarjeta en verde para
+  // siempre y el panel decia que habia mas red de la que habia.
+  if (fila.en_pool === false) return 'retirada';
   const total = Number(fila.llamadas_ok) + Number(fila.llamadas_429) + Number(fila.llamadas_error);
   if (!total) return 'reserva';
   const hace429 = fila.ultimo_429_at ? Date.now() - new Date(fila.ultimo_429_at).getTime() : Infinity;
@@ -509,20 +514,25 @@ function tarjetaLlave(fila, ultimo, compartida) {
 }
 
 function pintarLlaves(filas) {
+  // `reales` = lo que se pinta (incluye las retiradas, para no borrar historia).
+  // `activas` = lo que cuenta como capacidad disponible AHORA.
   const reales = filas.filter((f) => !MODELOS_DE_PRUEBA.includes(f.modelo));
+  const activas = reales.filter((f) => f.en_pool !== false);
   const ultimo = ultimoResultadoPorAlias();
 
   const proveedores = [...new Set(reales.map((f) => f.proveedor))];
   const modelos = [...new Set(reales.map((f) => f.modelo))];
+  const retiradas = reales.length - activas.length;
   $('llmProveedor').textContent = reales.length
-    ? `${proveedores.join(' + ')} · ${modelos.join(', ')} · ${reales.length} llave(s) en el pool`
+    ? `${proveedores.join(' + ')} · ${modelos.join(', ')} · ${activas.length} llave(s) en el pool`
+      + (retiradas ? ` · ${retiradas} retirada(s)` : '')
     : 'Todavía no hay llamadas registradas.';
   $('llmActualizado').textContent = `actualizado ${new Date().toLocaleTimeString('es-CO', { hour12: false })}`;
 
   // Organizaciones: dos alias con la misma = un solo cupo.
   const porOrg = {};
   for (const f of reales) if (f.organizacion) (porOrg[f.organizacion] ||= []).push(f.llave_alias);
-  const orgs = new Set(reales.map((f) => f.organizacion || `sin_observar_${f.llave_alias}`));
+  const orgs = new Set(activas.map((f) => f.organizacion || `sin_observar_${f.llave_alias}`));
 
   const resumen = $('llmResumen');
   resumen.replaceChildren();
@@ -537,7 +547,7 @@ function pintarLlaves(filas) {
   };
   resumen.append(caja('Llamadas atendidas', nf.format(ok), `${nf.format(err)} con error`));
   resumen.append(caja('Rebotes 429', nf.format(r429), ok + r429 + err ? `${Math.round((r429 / (ok + r429 + err)) * 100)}% del total` : null));
-  resumen.append(caja('Cupos reales', `${orgs.size}`, `${reales.length} llaves · 1 cupo por organización`));
+  resumen.append(caja('Cupos reales', `${orgs.size}`, `${activas.length} llaves · 1 cupo por organización`));
   // Capacidad estimada: suma de ITPM de organizaciones distintas / tokens promedio por llamada.
   const entradaTotal = sum('tokens_entrada_total');
   const promedio = ok ? entradaTotal / ok : 0;
