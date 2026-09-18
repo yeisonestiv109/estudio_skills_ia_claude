@@ -6141,3 +6141,44 @@ Cuatro caminos, y solo uno es gratis:
 3. **Más organizaciones** en el pool: cada una son 200.000 TPD más.
 4. **Modelo con caché de prompt**: medido el 14-sep, `gpt-oss-120b` da 86 % de
    acierto y solo 9 % de caché. Hoy no compensa.
+
+---
+
+## 18-sep-2026 — ✅ RESUELTO: el camino 1 (prompt por etapa) está implementado
+
+Se ejecutó la opción 1 de la decisión de arriba, aprobada por el fundador. La
+estimación era "de ~5.800 a ~2.000 tokens en etapas simples"; lo medido quedó
+cerca en las etapas simples (M5: 2.883) pero **el ahorro ponderado por tráfico
+real es 34%, no 60%**, porque M1, M2 y HANDOFF son el grueso de las llamadas y
+son justo las que menos ahorran.
+
+Lo que importa no es el porcentaje sino el margen: el prompt pasa de ~6.900 a
+~4.658 tokens contra un ITPM de 7.000, así que **el aire bajo el techo pasa de
+~100 tokens a 2.342**.
+
+Verificado con 12 turnos de historial: antes rebotaban las tres etapas más
+transitadas (M2 7.545, M5 7.493, HANDOFF 7.683 contra el límite de 7.000) y
+ahora quedan en 5.178 / 3.862 / 6.593.
+
+Detalle completo en `03_Clientes_y_Casos/02_Cliente_ARTF/AUDITORIA_LOGICA_BOT_V42.md`,
+hallazgos H10 a H14.
+
+### Lo que sigue pendiente de decisión
+
+1. **HANDOFF es el nuevo cuello de botella.** Solo ahorra 14% porque acepta
+   cifras de ingreso *y* de deuda, así que carga los dos juegos de reglas. Es el
+   22,6% de las llamadas reales y le quedan ~765 caracteres de historial (unos 5
+   turnos), justo en la etapa donde el lead está volviendo. Hay un test que falla
+   si empeora.
+2. **Caminos 2 y 3 (pagar tier / más organizaciones)** siguen abiertos. Con el
+   enrutado, una organización pasa de 28 a 42 turnos/día; con las 5 llaves
+   actuales son ~210 turnos/día. Falta el cálculo de costo por lead para decidir.
+3. **Camino 4 (caché de prompt) sigue descartado** por el eval del 14-sep: 86%
+   de acierto y 9% de caché. Además, con las reglas enrutadas el prefijo
+   cacheable pasa a ser *por etapa*, así que la caché rendiría todavía menos al
+   saltar de etapa — aunque cada prefijo es más corto.
+4. **`fecha_handoff` no se escribe desde el 16-ago** (H14). Sin resolver.
+5. **Bug de renderizado de Reels en DMs**: diagnosticado, aplazado por decisión
+   del fundador. ManyChat solo envía `text` e `image` por Instagram; la tarjeta
+   nativa de reel necesita `MEDIA_SHARE`, que la API de Meta sí permite para
+   medios propios pero ManyChat no expone. Opciones en el reporte del 18-sep.

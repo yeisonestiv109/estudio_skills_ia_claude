@@ -210,3 +210,105 @@ Hay que tocar **estas piezas juntas**, porque están encadenadas y un test vigil
 **No hace falta tocar:** el motivo de pérdida que se guarda en la base (`Descalificado - Ingreso bajo (< $6M)`) ya se arma solo a partir de `INGRESO_MINIMO`.
 
 **Si algún día se baja de $6M:** revisar el Filtro 2. El rescate por remanente de $2,5M empieza a pesar más con ingresos bajos (con $5M y 50% de deuda quedan justo $2,5M).
+
+---
+
+# Sesión del 18-sep-2026 — el techo de tokens, la compuerta y el panel
+
+Todo lo de abajo está **medido contra producción**, no estimado. Cinco hallazgos, cuatro resueltos.
+
+## H10 — El prompt no cabía en el límite, y el historial no era la causa
+
+**Síntoma reportado:** el bot "crasheaba" en el turno 5. Se bajó `leerHistorial` de 6 a 4 turnos y *siguió igual*.
+
+**Por qué no sirvió:** el historial pesa ~550 caracteres (~150 tokens) sobre prompts de 3.000-7.000. Bajar dos turnos ahorraba ~2% del prompt. Era la parte barata.
+
+**La causa real:** el system prompt medía 20.270 caracteres ≈ **6.900 tokens** (relación real de este texto: 2,94 chars/token, no los 4 de la regla general) y viajaba completo en cada turno, contra un **ITPM de 7.000 por organización**. No estábamos cerca del techo: lo raspábamos. Los 429 de producción lo dicen literal: `Limit 7000, Requested 7103` y `Requested 7239`.
+
+Y había un segundo techo ya reventado que nadie miraba: **TPD 200.000 por organización**.
+
+| Día | Tokens | % de cuota |
+|---|---:|---:|
+| 15-sep | 214.819 | **107%** |
+| 16-sep | 209.127 | **105%** |
+
+Desglose del prompt (caracteres): `campos_a_extraer` 7.256 · `definicion_de_intenciones` 4.480 · `ejemplos` 3.765 (13 ejemplos) · `redaccion` 1.582 · resto 3.187.
+
+**La solución: enrutar, no podar** (`prompt_por_etapa.js`). Un item entra al prompt si alguno de sus campos aparece en el esquema de la etapa. Ninguna regla se borró — el archivo se **generó** partiendo el literal original sin retipear una letra, y un test prueba que armarlas todas reproduce el prompt anterior carácter por carácter.
+
+Verificado de punta a punta con 12 turnos de historial:
+
+| Etapa | Antes | Ahora |
+|---|---|---|
+| M2_ENVIADO | 7.545 tok — **rebota** | 5.178 tok ✅ |
+| M5_ENVIADO | 7.493 tok — **rebota** | 3.862 tok ✅ |
+| HANDOFF | 7.683 tok — **rebota** | 6.593 tok ✅ |
+
+Ponderado por tráfico real (501 llamadas / 7 días): reglas de 6.514 → 4.272 tokens (**34% menos**). Turnos/día por organización: 28 → 42.
+
+**Efecto lateral que resultó lo más valioso:** como la selección se deriva del esquema, una etapa nueva hereda sus reglas sola. El bug que ya pasó **cuatro veces** — alguien agrega una etapa y algo se apaga en silencio — deja de ser posible por construcción.
+
+**Perilla de reversa:** `PROMPT_POR_ETAPA="false"` devuelve el prompt viejo byte a byte (hay test contra un fixture congelado).
+
+## H11 — El historial se mide en tokens, no en turnos
+
+Un número fijo de turnos es la herramienta equivocada: el enrutado deja etapas de tamaños muy distintos, así que el mismo número ahoga a una y desperdicia cupo en otra. Ahora se arma el prompt, se mira cuánto sobra bajo el techo y se llena con los turnos **más recientes** que quepan.
+
+Presupuesto resultante: M1/M2 alcanzan para **35-37 turnos típicos**; HANDOFF para ~5.
+
+**El dato que lo justifica** (14 días, 900 conversaciones):
+
+| Turnos del bot | Leads | Califican | % |
+|---|---:|---:|---:|
+| 1–3 | 672 | 1 | 0,1% |
+| 4–6 | 93 | 1 | 1,1% |
+| **7–9** | 47 | **11** | **23,4%** |
+| **10–14** | 32 | **16** | **50,0%** |
+
+**27 de los 28 leads que califican vienen de conversaciones de 7+ turnos.** Con `limite = 4`, *todos* los leads valiosos corrían con amnesia justo en el tramo donde está la plata.
+
+## H12 — La compuerta rechazaba su propio copy, por una coma
+
+42 rechazos `R8_COPY_NO_APROBADO` desde el 12-sep (no 6), sobre **25 plantillas**.
+
+Las huellas se calculaban sobre la plantilla cruda, pero al lead le llega lo que devuelve `render`:
+
+```
+plantilla  : "Ok, {nombre}, ese calculo..."  -> huella "ok,, ese calculo"
+render('')  : "Ok, ese calculo..."            -> huella "ok, ese calculo"
+```
+
+`render` colapsa `, {nombre}` a nada y deja **una** coma; `huella` borraba solo el placeholder y dejaba **dos**.
+
+Le pasaba al **4% de los leads** (348 de 8.402). No son leads sin nombre — en la base no hay ninguno — sino leads cuyo nombre `sanearNombre` descarta con razón: handles (`juan123`), marcas (`EccoloComunicaciones`), siglas sin vocales, emojis, y los `Lead 1781911719` que genera ManyChat. Esos leads caían al camino de rescate y recibían el plan determinista en vez del mensaje que les tocaba.
+
+**Arreglo:** las huellas se generan con el mismo `render` que produce los mensajes, así que ya no pueden divergir.
+
+**Queda sin explicar:** un rechazo suelto en M2 sobre una respuesta generada ("Entiendo la sorpresa, Fausto...") no se reproduce con el código actual. No se tocó.
+
+## H13 — El panel mostraba 3 llaves habiendo 5
+
+No era el panel: era la tabla. `llm_telemetria` solo aprende de una llave **cuando se usa**, y la rotación es por **failover**, no round-robin — `respaldo_3` y `respaldo_4` solo se tocan si las tres primeras rebotan el mismo minuto. El panel no podía distinguir "esa llave no existe" de "existe y está en reserva", que es justo lo que uno quiere ver.
+
+Ahora el Worker declara su pool completo en cada turno (`fn_registrar_pool_llm`) y la columna `en_pool` se sincroniza en ambos sentidos, para que una llave retirada no siga contando como capacidad en "Cupos reales".
+
+## H14 — `fecha_handoff` lleva sin escribirse desde el 16-ago ⚠️ SIN RESOLVER
+
+Alguien editó una migración **ya aplicada** (`20260901120200_fn_bot_procesar_turno.sql`) y dejó el cambio sin commitear:
+
+```sql
+-  fecha_handoff = case when ... then coalesce(fecha_handoff, now()) else fecha_handoff end,
++  -- fecha_handoff (removido para evitar crash)
+```
+
+Verificado en producción: la función **no escribe** `fecha_handoff`. Hay 5.507 gestiones con `handoff_razon` y solo 124 con fecha; la última es del **16-ago**.
+
+Impacto: el campo sale vacío en el panel del Setter y cualquier métrica de tiempo-hasta-handoff está muerta. Editar una migración aplicada es además un problema aparte: el archivo ya no describe la base.
+
+**No se tocó** — está fuera del encargo y hay que decidir si el "crash" que motivó el parche sigue vivo.
+
+## Ruido de telemetría que conviene saber
+
+- **El 44% de los spans `GROQ_CLASIFICADOR` son fantasma**: 399 de 901 en 7 días, con 0 ms y cero tokens. El span se abre en `worker_bot_setter_v42.js:636` *antes* de saber si habrá llamada, y para un lead nuevo `clasificar` retorna sin llamar al LLM. El panel sobreestima el uso del LLM casi al doble.
+- Dos filas fantasma en `llm_telemetria` con `modelo` `ping` y `smoke-test`, de sondas viejas. **El panel ya las filtra** (`MODELOS_DE_PRUEBA`); quedan por decidir si se borran.
+- El `summary` del Filtro 1 decía `< $7M` con el piso en `$6M`. **Nadie fue mal descalificado** — 41 descartes, ingreso máximo 5.706.000, cero leads en la banda $6M-$7M — pero el panel mostraba una razón que no era la aplicada. Corregido e interpolado desde `UMBRALES`, con test de invariante.
