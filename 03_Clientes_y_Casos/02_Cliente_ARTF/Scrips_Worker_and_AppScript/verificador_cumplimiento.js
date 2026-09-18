@@ -27,6 +27,7 @@
 
 import {
   PLANTILLAS as P, OBJECIONES, OBJECIONES_PRE_PITCH, OBJ_6_EN_M1, CALENDAR_LINK, REELS, partirEnBurbujas,
+  render, sanearNombre,
 } from './sop_v42_plantillas.js';
 
 // ---------------------------------------------------------------------------
@@ -82,10 +83,13 @@ const MENCIONA_PRECIO = /(\$\s?\d|\d+\s?(usd|d[oó]lares|millones\s+de\s+pesos\s
 /** Normaliza para comparar: sin nombre, sin dobles espacios, minusculas. */
 function huella(texto, nombre = '') {
   let t = String(texto || '');
-  if (nombre) {
-    const primero = nombre.trim().split(/\s+/)[0];
-    if (primero) t = t.split(primero).join('');
-  }
+  // ⚠️ Se quita el nombre que `render` PUSO, no el que trae la base. Son cosas
+  // distintas: `sanearNombre` descarta handles, marcas, siglas y emojis, asi
+  // que para el 4% de los leads con un nombre no usable el mensaje sale SIN
+  // nombre y buscar el crudo aqui no encuentra nada -- o peor, si ese nombre
+  // crudo aparece por casualidad dentro de la plantilla, la mutila.
+  const usado = sanearNombre(nombre);
+  if (usado) t = t.split(usado).join('');
   return t
     .replace(/\{nombre\}/g, '')
     .replace(/\s+/g, ' ')
@@ -121,6 +125,32 @@ const HUELLAS_APROBADAS = (() => {
   for (const texto of fuentes) {
     set.add(huella(texto));
     for (const burbuja of partirEnBurbujas(texto)) set.add(huella(burbuja));
+
+    // ⚠️ BUG REAL QUE ESTO CIERRA (18-sep-2026): 42 rechazos R8 en produccion
+    // desde el 12-sep, sobre 25 plantillas.
+    //
+    // La huella se sacaba de la PLANTILLA cruda, pero al lead le llega lo que
+    // devuelve `render`, y las dos no coinciden cuando no hay nombre usable:
+    //
+    //   plantilla : "Ok, {nombre}, ese calculo..."   -> huella "ok,, ese calculo"
+    //   render('') : "Ok, ese calculo..."            -> huella "ok, ese calculo"
+    //
+    // `render` colapsa ", {nombre}" a nada y deja UNA coma; la huella de la
+    // plantilla borraba solo el placeholder y dejaba DOS. Una coma de
+    // diferencia y la compuerta declaraba "copy no aprobado" su propio copy.
+    //
+    // Pasaba con el 4% de los leads: `sanearNombre` descarta con razon handles
+    // ("juan123"), marcas ("EccoloComunicaciones"), siglas sin vocales, emojis
+    // y "Lead 178191...", y esos leads reciben la version sin nombre.
+    //
+    // Se resuelve generando las huellas con el MISMO `render` que produce los
+    // mensajes, asi que ya no pueden divergir: si alguien cambia `render`,
+    // cambian las dos a la vez.
+    const sinNombre = render(texto, '');
+    if (sinNombre && sinNombre !== texto) {
+      set.add(huella(sinNombre));
+      for (const burbuja of partirEnBurbujas(sinNombre)) set.add(huella(burbuja));
+    }
   }
   return set;
 })();

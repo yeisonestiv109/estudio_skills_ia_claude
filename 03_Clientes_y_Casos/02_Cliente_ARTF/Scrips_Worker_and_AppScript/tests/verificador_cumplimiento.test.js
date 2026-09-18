@@ -21,7 +21,7 @@ import {
 import {
   PLANTILLAS as P, CALENDAR_LINK, render, OBJECIONES_CON_PREGUNTA_PROPIA,
   PLAYBOOK_OBJECIONES, OBJECIONES, OBJECIONES_HABILITADAS, OBJECIONES_PRE_PITCH,
-  DISPARADORES_OBJECIONES, UMBRALES, sanearNombre,
+  DISPARADORES_OBJECIONES, UMBRALES, sanearNombre, partirEnBurbujas,
 } from '../sop_v42_plantillas.js';
 import { decidirTurno, reencauzar } from '../bot_router_v42.js';
 
@@ -864,5 +864,79 @@ describe('sanearNombre: el saludo no puede sonar a robot', () => {
 
   test('con nombre usable, el saludo lo lleva capitalizado', () => {
     assert.match(render(P.M1_GENERAL, 'LAURA'), /Laura/);
+  });
+});
+
+// ===========================================================================
+// LA COMPUERTA RECHAZABA SU PROPIO COPY (18-sep-2026)
+//
+// 42 rechazos R8_COPY_NO_APROBADO en produccion desde el 12-sep, sobre 25 de
+// las plantillas de la biblioteca. No era copy malo: era la compuerta.
+//
+// Las huellas se calculaban sobre la PLANTILLA cruda, pero al lead le llega lo
+// que devuelve `render`, y no coinciden cuando no hay nombre usable:
+//
+//   plantilla  : "Ok, {nombre}, ese calculo..."  -> huella "ok,, ese calculo"
+//   render('') : "Ok, ese calculo..."            -> huella "ok, ese calculo"
+//
+// `render` colapsa ", {nombre}" a nada y deja UNA coma; la huella de la
+// plantilla borraba solo el placeholder y dejaba DOS. Una coma.
+//
+// Y le pasaba al 4% de los leads, porque `sanearNombre` descarta con razon los
+// handles ("juan123"), las marcas ("EccoloComunicaciones"), las siglas sin
+// vocales, los emojis y los "Lead 1781911719" que genera ManyChat. A todos
+// ellos les llega la version sin nombre.
+//
+// Consecuencia real: el turno caia al camino de rescate y el lead recibia el
+// plan determinista en vez del mensaje que le tocaba.
+// ===========================================================================
+describe('La compuerta aprueba su propio copy, haya nombre o no', () => {
+  const NOMBRES_QUE_SANEAR_DESCARTA = [
+    ['vacio', ''],
+    ['nulo', null],
+    ['handle con digitos', 'juan123'],
+    ['marca pegada', 'EccoloComunicaciones'],
+    ['sigla sin vocales', 'MTB'],
+    ['solo emojis', '🦋🅰🅳🅸🆂 🅼🅸🅻🅴🦋'],
+    ['basura de ManyChat', 'Lead 1781911719'],
+  ];
+
+  test('ninguna plantilla con {nombre} se rechaza a si misma', () => {
+    for (const [etiqueta, nombre] of [['nombre normal', 'Ana'], ...NOMBRES_QUE_SANEAR_DESCARTA]) {
+      const rotas = [];
+      for (const [clave, plantilla] of Object.entries(P)) {
+        if (typeof plantilla !== 'string' || !plantilla.includes('{nombre}')) continue;
+        const r = verificarMensajes([render(plantilla, nombre)], { nombre });
+        if (r.fallas.some((f) => f.regla === 'R8_COPY_NO_APROBADO')) rotas.push(clave);
+      }
+      assert.deepEqual(rotas, [], `con ${etiqueta} la compuerta rechaza su propio copy`);
+    }
+  });
+
+  test('tambien burbuja por burbuja, que es como se envia', () => {
+    // DESC_INGRESO sale en 5 burbujas y la primera es "Gracias por la
+    // sinceridad, {nombre}." -- la que se rompia sin nombre.
+    for (const [, nombre] of NOMBRES_QUE_SANEAR_DESCARTA) {
+      const burbujas = partirEnBurbujas(render(P.DESC_INGRESO, nombre));
+      const r = verificarMensajes(burbujas, { nombre });
+      assert.ok(!r.fallas.some((f) => f.regla === 'R8_COPY_NO_APROBADO'),
+        `burbujas de DESC_INGRESO rechazadas con nombre ${JSON.stringify(nombre)}`);
+    }
+  });
+
+  test('los dos mensajes exactos que produccion rechazo ahora pasan', () => {
+    const m2 = 'Ok, ese cálculo ¿lo sacaste con lo que pagas al mes en cuotas, o con el '
+      + 'total de la deuda? Ten presente que los gastos en arriendo, servicios o mercado '
+      + 'no son deudas, NO SE INCLUYEN en el cálculo.';
+    assert.ok(verificarMensajes([m2], { nombre: 'Lead 90785277' }).pasa);
+  });
+
+  test('y esto NO abre la puerta a texto inventado', () => {
+    // El arreglo agrega la variante sin nombre de las plantillas, nada mas.
+    // Un texto que no sale de la biblioteca se sigue rechazando.
+    const inventado = 'Hola, te escribo para ofrecerte un descuento especial de hoy.';
+    const r = verificarMensajes([inventado], { nombre: '' });
+    assert.ok(r.fallas.some((f) => f.regla === 'R8_COPY_NO_APROBADO'),
+      'la compuerta tiene que seguir atajando lo que no es copy aprobado');
   });
 });
