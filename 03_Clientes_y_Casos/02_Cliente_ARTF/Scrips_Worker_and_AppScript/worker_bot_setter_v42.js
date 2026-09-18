@@ -2607,7 +2607,7 @@ export function parseJsonLLM(raw) {
  * turnos: 213 tokens de promedio, 455 el peor caso -- menos que el peso
  * muerto que ya tenia el prompt.
  */
-async function leerHistorial(env, gestionLeadId, limite = 6) {
+async function leerHistorial(env, gestionLeadId, limite = 4) {
   if (!gestionLeadId) return [];
   const url = `${env.SUPABASE_URL}/rest/v1/activity_log`
     + `?gestion_lead_id=eq.${encodeURIComponent(gestionLeadId)}`

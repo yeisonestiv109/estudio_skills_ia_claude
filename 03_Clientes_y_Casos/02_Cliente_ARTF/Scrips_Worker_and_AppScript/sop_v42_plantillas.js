@@ -390,7 +390,7 @@ P.M1_PEDIR_CIFRA = `Para calcularlo bien, ¿me confirmas el número aproximado q
 // ---------------------------------------------------------------------------
 // MENSAJE 2 — Empatia + Validacion de Endeudamiento
 // ---------------------------------------------------------------------------
-P.M2 = `Ok, {nombre}. Para asegurar que mi método te aplique perfecto y puedas ver resultados rápidos, necesito validar algo clave: ¿Sabes aproximadamente cuál es tu nivel de endeudamiento hoy? 🤔
+P.M2 = `Para asegurar que mi método te aplique perfecto y puedas ver resultados rápidos, necesito validar algo clave: ¿Sabes aproximadamente cuál es tu nivel de endeudamiento hoy? 🤔
 
 Para calcularlo suma todo lo que pagas al mes en créditos, tarjetas, préstamos o deudas con alguien. El arriendo, servicios y mercado NO CUENTAN — esos son gastos fijos.
 
@@ -421,9 +421,7 @@ P.M2_VERIFICAR_CALCULO = `Ok, {nombre}, ese cálculo ¿lo sacaste con lo que pag
 // ---------------------------------------------------------------------------
 // MENSAJE 3 — Validacion de Dolor
 // ---------------------------------------------------------------------------
-P.M3 = `Perfecto, {nombre}.
-
-Ahora, si tuvieras que elegir, ¿cuál es tu mayor frustración hoy con tu dinero?
+P.M3 = `Ahora, si tuvieras que elegir, ¿cuál es tu mayor frustración hoy con tu dinero?
 
 A) No me alcanza, siempre estoy en cero a fin de mes
 B) No sé en qué se va, es como si se evaporara
@@ -503,13 +501,13 @@ P.M6_CONFIRMAME = `Confirmame cuando te hayas agendado, así te envío un par de
 // ---------------------------------------------------------------------------
 // MENSAJE 7 — Confirmar asistencia (★ NUEVO V4.0, reordenado en V4.2)
 // ---------------------------------------------------------------------------
-P.M7 = `Excelente {nombre}, antes de que separes tu espacio te hago una última pregunta 😊
+P.M7 = `Excelente {nombre}.
 
 ¿A esta sesión de diagnóstico asistirás solo tú o consideras importante que participe alguien más?
 
 Te lo pregunto porque hay personas que prefieren tener presente a alguien con quien suelen hablar sus temas financieros.`;
 
-P.M7_ACOMPANADO = `Perfecto {nombre}, entonces cuando vayas a agendar asegúrate de que esa persona también pueda estar ese día ¿Lo pueden cuadrar?`;
+P.M7_ACOMPANADO = `Perfecto {nombre}, asegúrate de que esa persona también pueda estar ese día ¿Lo pueden cuadrar?`;
 
 /**
  * Acuse cuando el lead dice que asiste solo.
@@ -520,7 +518,7 @@ P.M7_ACOMPANADO = `Perfecto {nombre}, entonces cuando vayas a agendar asegúrate
  * proyecto de Javier: linea corta y calida, sin abrir hilos nuevos y sin
  * volver a vender ("el lead ya dijo que si en M5").
  */
-P.M7_SOLO_ACK = `¡Listo, {nombre}! 🙌 Quedo pendiente de tu confirmación cuando separes tu espacio.`;
+P.M7_SOLO_ACK = `¡Listo, {nombre}! 🙌`;
 
 /** Cuando confirma que agendo -> preguntas pre-llamada. */
 P.CIERRE_PRECALL = `Genial, para nuestra sesión ten listo:
