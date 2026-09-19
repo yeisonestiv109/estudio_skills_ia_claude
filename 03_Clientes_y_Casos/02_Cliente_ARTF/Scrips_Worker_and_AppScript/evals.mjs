@@ -39,6 +39,13 @@ for (const linea of readFileSync(join(AQUI, '.dev.vars'), 'utf8').split('\n')) {
 // produccion: una corrida de qwen consume ~250K tokens y el cupo diario es de
 // 200K por organizacion, asi que una sola llave no alcanza.
 if (process.env.EVAL_MODELO) env.LLM_MODELO_CLASIFICADOR = process.env.EVAL_MODELO;
+// 18-sep-2026: para poder medir el enrutado por etapa contra el prompt viejo
+// sobre EL MISMO corpus, que es lo que exige la regla del corpus dorado
+// (DISENO_DATA_FLYWHEEL_V42.md): "un cambio de prompt solo entra si sube el
+// acierto sin bajar ninguna categoria existente".
+//   PROMPT_POR_ETAPA=false node evals.mjs   -> linea base, prompt completo
+//   node evals.mjs                          -> como corre en produccion
+if (process.env.PROMPT_POR_ETAPA) env.PROMPT_POR_ETAPA = process.env.PROMPT_POR_ETAPA;
 const MODELO = modeloClasificador(env);
 if (process.env.EVAL_MODELO && MODELO !== process.env.EVAL_MODELO) {
   console.error(`EVAL_MODELO="${process.env.EVAL_MODELO}" no tiene perfil en PERFILES_MODELO.`);
@@ -62,6 +69,7 @@ for (const [i, k] of llaves.entries()) {
   }
 }
 console.log(`Modelo: ${MODELO} · ${llaves.length} llave(s) en el pool`);
+console.log(`Prompt: ${String(env.PROMPT_POR_ETAPA ?? 'true') !== 'false' ? 'ENRUTADO por etapa' : 'COMPLETO (linea base)'}`);
 
 // 28s y no menos: cada clasificacion son ~2200 tokens de entrada y el
 // limite de Groq es 8000 por minuto. Con 21s se pasaba y los 429 se contaban
